@@ -28,12 +28,15 @@ export const website = {
   publisher: { "@id": `${SITE.org.url}/#organization` },
 };
 
-export const faqPage = {
+/** FAQPage JSON-LD for a list of plain-text questions and answers shown on the same page. */
+export const faqSchema = (items: readonly { q: string; a: string }[]) => ({
   "@context": "https://schema.org",
   "@type": "FAQPage",
-  mainEntity: FAQ.map((f) => ({
+  mainEntity: items.map((f) => ({
     "@type": "Question",
     name: f.q,
     acceptedAnswer: { "@type": "Answer", text: f.a },
   })),
-};
+});
+
+export const faqPage = faqSchema(FAQ);

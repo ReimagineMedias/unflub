@@ -34,6 +34,7 @@ function sitemapPaths() {
 test("sitemap lists every public page and not the 404", () => {
   assert.deepEqual(sitemapPaths().sort(), [
     "/",
+    "/autocorrect-not-working/",
     "/autocorrect-windows/",
     "/download/",
     "/privacy/",

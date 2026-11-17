@@ -1,0 +1,86 @@
+---
+import Subpage from "../layouts/Subpage.astro";
+import { faqSchema } from "../data/schema";
+
+const faq = [
+  {
+    q: "Why does Windows autocorrect work in some apps and not others?",
+    a: "The Autocorrect misspelled words switch only reaches apps that use Windows' own text services. Apps that draw their own text boxes, which includes most browsers and the chat apps built on them, never hear from it.",
+  },
+  {
+    q: "Does Windows autocorrect work in Chrome, Discord or Teams?",
+    a: "Usually not. Chrome, Edge and apps built on the same engine, such as Discord, Slack and Teams, handle text themselves. They can underline a misspelled word, but they don't fix it as you type.",
+  },
+  {
+    q: "Can I add my own words to Windows' dictionary?",
+    a: "Yes. Right-click an underlined word and choose Add to dictionary. Windows keeps that list for you. What it can't do is skip a particular app, change how eager it is, or expand a shortcut into a phrase.",
+  },
+  {
+    q: "Is there a way to get autocorrect in every app?",
+    a: "Yes, with a system-wide tool that works at the keyboard instead of inside each app. unflub is one: it is free, open source, and fixes a typo the moment you finish the word, in any app on Windows 10 and 11.",
+  },
+];
+---
+
+<Subpage
+  title="Windows autocorrect not working? Here's why it skips most apps"
+  description="Windows 11 autocorrect seems to do nothing? Check the setting first, then see why it only reaches some apps, and how to get autocorrect in every app on your PC."
+  crumb="Autocorrect not working"
+  schema={[faqSchema(faq)]}
+>
+  <h1>Windows autocorrect not working? Here's why it skips most apps.</h1>
+  <p class="lead">
+    Most of the time nothing is broken. The setting is off, or the app you're typing in never asks Windows for help. Check the
+    setting first, then the app.
+  </p>
+
+  <h2>1. Check the setting</h2>
+  <ol>
+    <li>Open <span class="path">Settings</span>, then <span class="path">Time &amp; language</span>, then <span class="path">Typing</span>.</li>
+    <li>Turn on <strong>Autocorrect misspelled words</strong>.</li>
+    <li>Turn on <strong>Highlight misspelled words</strong> too, so you can see what Windows catches.</li>
+    <li>Close and reopen the app you're typing in, then try a typo like <em>teh</em> followed by a space.</li>
+  </ol>
+  <p class="small">These are the names in Windows 11 version 25H2 and later. Windows 10 has the same two switches.</p>
+
+  <h2>2. Check the language</h2>
+  <p>
+    Windows corrects in the language of the keyboard you're using. If you type English with another keyboard selected, or the
+    language has no spell checker installed, nothing gets fixed. See <span class="path">Time &amp; language</span>, then
+    <span class="path">Language &amp; region</span>, and check the language you type in is listed.
+  </p>
+
+  <h2>3. Check the app</h2>
+  <p>
+    This is the usual answer. Windows' autocorrect switch only reaches apps that use Windows' own text services. Many apps draw
+    their own text boxes and never ask Windows for help, so the switch does nothing there:
+  </p>
+  <ul>
+    <li>Browsers, including Chrome, Edge and Firefox. They underline misspellings, but you right-click to fix each one.</li>
+    <li>Apps built on a browser engine, such as Discord, Slack, Microsoft Teams and Visual Studio Code.</li>
+    <li>Word and Outlook, which use their own AutoCorrect under <span class="path">File</span>, <span class="path">Options</span>, <span class="path">Proofing</span>, separate from the Windows switch.</li>
+  </ul>
+  <p>
+    Microsoft doesn't publish a list of apps the switch reaches. If a typo isn't fixed after the steps above, assume that app
+    handles text itself. There is no setting that changes it.
+  </p>
+
+  <h2>4. Get autocorrect in every app</h2>
+  <p>
+    To fix typos everywhere, the fix has to happen at the keyboard, not inside each app. That is what
+    <a href="/">unflub</a> does. It is free and open source, works on Windows 10 and 11, and fixes a typo the moment you finish
+    the word, in chat apps, browsers, email and AI prompt boxes alike. Press Backspace right after a fix and your word comes
+    back. More on <a href="/autocorrect-windows/">how autocorrect on Windows works</a> and
+    <a href="/spell-check-everywhere/">spell check in every app</a>.
+  </p>
+
+  <h2>Questions</h2>
+  {
+    faq.map((f) => (
+      <>
+        <h3>{f.q}</h3>
+        <p>{f.a}</p>
+      </>
+    ))
+  }
+</Subpage>
