@@ -76,6 +76,12 @@ pub enum FromEngine {
     HookReinstalled,
     /// The corrector panicked; keys pass through until the engine restarts.
     CorrectorPanicked,
+    /// `active`: our injected input stopped coming back (another program is interfering with
+    /// keyboard input), so the engine paused itself: keys pass through, nothing is corrected.
+    /// `!active`: it works again.
+    InputInterference {
+        active: bool,
+    },
 }
 
 /// What the engine runs with: the core config plus the pill. The app has already applied the
@@ -199,6 +205,7 @@ mod tests {
             },
             FromEngine::HookReinstalled,
             FromEngine::CorrectorPanicked,
+            FromEngine::InputInterference { active: true },
         ] {
             round_trip(m);
         }

@@ -62,6 +62,11 @@ pub enum Observed {
     HookReinstalled,
     /// The engine process ended without being asked to. It is restarted with backoff.
     EngineCrashed,
+    /// The engine paused itself because its injected input stopped coming back (another
+    /// program is interfering with keyboard input), or (`!active`) it works again.
+    InputInterference {
+        active: bool,
+    },
 }
 
 pub type Observer = Arc<dyn Fn(Observed) + Send + Sync>;
@@ -519,6 +524,9 @@ mod host {
                 }
                 FromEngine::HookReinstalled => observer(Observed::HookReinstalled),
                 FromEngine::CorrectorPanicked => observer(Observed::CorrectorPanicked),
+                FromEngine::InputInterference { active } => {
+                    observer(Observed::InputInterference { active })
+                }
                 FromEngine::Ready { hooked } => {
                     if !hooked {
                         eprintln!("autocorrect: the engine couldn't install the keyboard hook");

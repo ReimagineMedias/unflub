@@ -242,6 +242,8 @@ export const en = {
   "banner.crash.send": "Send",
   "banner.crash.dontSend": "Don't send",
   "banner.crash.always": "Always send",
+  "banner.interference":
+    "unflub paused itself: another app is interfering with keyboard input. It starts again on its own once that stops.",
   "banner.critical": "An important update is ready: unflub {version} fixes a problem in your version.",
   "banner.critical.install": "Update now",
   "banner.critical.details": "Details",

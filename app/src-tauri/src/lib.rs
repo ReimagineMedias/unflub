@@ -54,7 +54,21 @@ struct AppState {
     /// Words learned by undo since the settings window last saved. The window may still hold
     /// settings from before they were learned, so its next save gets them merged back in.
     pending_learned: Mutex<Vec<String>>,
+    /// The engine paused itself because another program interferes with keyboard input.
+    interference: Mutex<Interference>,
 }
+
+/// See [`AppState::interference`]. Counted here only: the usage stats contract has no field
+/// for it yet.
+#[derive(Debug, Default)]
+struct Interference {
+    active: bool,
+    /// Times it started since unflub started.
+    times: u64,
+}
+
+/// Emitted with `true`/`false` when the engine pauses itself or resumes.
+const INTERFERENCE_EVENT: &str = "input-interference";
 
 /// Facts about this copy of unflub, fixed at startup.
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -247,6 +261,32 @@ fn answer_crash_report(app: AppHandle, answer: crash::Answer) {
 }
 
 #[tauri::command]
+fn input_interference(app: AppHandle) -> bool {
+    app.state::<AppState>().interference.lock().unwrap().active
+}
+
+/// The engine paused itself (`active`) or works again: tray, settings window.
+fn set_interference(app: &AppHandle, active: bool) {
+    let state = app.state::<AppState>();
+    {
+        let mut i = state.interference.lock().unwrap();
+        if i.active == active {
+            return;
+        }
+        i.active = active;
+        if active {
+            i.times += 1;
+            eprintln!(
+                "autocorrect: paused itself, another program is interfering with keyboard input ({} times)",
+                i.times
+            );
+        }
+    }
+    refresh_tray(app, current_settings(app).enabled);
+    let _ = app.emit(INTERFERENCE_EVENT, active);
+}
+
+#[tauri::command]
 fn remote_message(app: AppHandle) -> Option<RemoteMessage> {
     app.state::<Remote>().message()
 }
@@ -280,6 +320,10 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
         sync_autostart(app, next.start_at_login);
     }
     if prev.enabled != next.enabled {
+        if !next.enabled {
+            // Pausing ends the engine, and with it the interference.
+            set_interference(app, false);
+        }
         refresh_tray(app, next.enabled);
         refresh_window_icon(app, next.enabled);
     }
@@ -356,7 +400,9 @@ fn observe(app: &AppHandle, event: Observed) {
         }
         Observed::CorrectorPanicked => usage.crash(),
         Observed::HookReinstalled => usage.hook_reinstall(),
+        Observed::InputInterference { active } => set_interference(app, active),
         Observed::EngineCrashed => {
+            set_interference(app, false);
             usage.crash();
             // A panic left a marker for the opt-in crash report; other exits leave none.
             crash::take_engine_report(app);
@@ -453,18 +499,20 @@ fn tray_image(enabled: bool) -> Image<'static> {
     Image::from_bytes(bytes).expect("bundled tray icon is a valid PNG")
 }
 
-fn tooltip(enabled: bool) -> &'static str {
-    if enabled {
-        strings::TOOLTIP
-    } else {
-        strings::TOOLTIP_PAUSED
+fn tooltip(enabled: bool, interference: bool) -> &'static str {
+    match (enabled, interference) {
+        (true, false) => strings::TOOLTIP,
+        (true, true) => strings::TOOLTIP_INTERFERENCE,
+        (false, _) => strings::TOOLTIP_PAUSED,
     }
 }
 
 fn refresh_tray(app: &AppHandle, enabled: bool) {
+    let interference = app.state::<AppState>().interference.lock().unwrap().active;
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_icon(Some(tray_image(enabled)));
-        let _ = tray.set_tooltip(Some(tooltip(enabled)));
+        // Paused by itself looks paused.
+        let _ = tray.set_icon(Some(tray_image(enabled && !interference)));
+        let _ = tray.set_tooltip(Some(tooltip(enabled, interference)));
     }
     if let Some(item) = app.state::<AppState>().toggle.lock().unwrap().as_ref() {
         let _ = item.set_checked(enabled);
@@ -594,7 +642,7 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
     let menu = tray_menu(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_image(enabled))
-        .tooltip(tooltip(enabled))
+        .tooltip(tooltip(enabled, false))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -712,6 +760,7 @@ pub fn run() {
                 toggle: Mutex::new(None),
                 engine: Mutex::new(None),
                 pending_learned: Mutex::new(Vec::new()),
+                interference: Mutex::default(),
             });
             let handle = app.handle();
             let learner = handle.clone();
@@ -774,7 +823,8 @@ pub fn run() {
             crash_report_pending,
             answer_crash_report,
             remote_message,
-            dismiss_message
+            dismiss_message,
+            input_interference
         ])
         .build(tauri::generate_context!())
         .expect("error while building unflub");
@@ -800,6 +850,14 @@ mod tests {
         let mut from_window = vec!["rmgn".to_string()];
         merge_learned(&mut from_window, &learned);
         assert_eq!(from_window, ["rmgn", "unflub", "Teh"]);
+    }
+
+    #[test]
+    fn the_tray_says_when_unflub_paused_itself() {
+        assert_eq!(tooltip(true, false), strings::TOOLTIP);
+        assert_eq!(tooltip(true, true), strings::TOOLTIP_INTERFERENCE);
+        // The user's pause wins.
+        assert_eq!(tooltip(false, true), strings::TOOLTIP_PAUSED);
     }
 
     #[test]

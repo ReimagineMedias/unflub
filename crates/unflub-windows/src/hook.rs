@@ -85,9 +85,13 @@ const INPUT_RECHECK_DELAY: Duration = Duration::from_millis(50);
 /// Posted by the injector thread: results are waiting in the channel.
 const WM_APP_SENT: u32 = WM_APP + 1;
 
-/// If an injection or replay hasn't come back after this long, replay the held keys anyway.
+/// If an injection or replay hasn't come back after this long, give up on it: replay the held
+/// keys once and stop holding or correcting until a probe comes back (see [`inject::Pipeline`]).
 const STALE_AFTER: Duration = Duration::from_millis(500);
 const STALE_CHECK_MS: u32 = 100;
+/// The first degraded spell probes after this long; each later one waits twice as long.
+const FIRST_DEGRADE_BACKOFF: Duration = Duration::from_secs(30);
+const MAX_DEGRADE_BACKOFF: Duration = Duration::from_secs(30 * 60);
 
 /// Posted by the session window: the computer resumed or the session was unlocked.
 const WM_APP_REARM: u32 = WM_APP + 2;
@@ -145,6 +149,11 @@ pub enum HookEvent {
     /// (`"watchdog"`), or the computer resumed or the session was unlocked (`"resume"`,
     /// `"unlock"`).
     HooksReinstalled { reason: &'static str },
+    /// `active`: our injected input stopped coming back through our hook (another program is
+    /// interfering with keyboard input, or Windows dropped the hook mid-correction). Keys now
+    /// pass straight through and nothing is corrected. `!active`: a probe came back; back to
+    /// normal. See [`inject::Pipeline`].
+    InputInterference { active: bool },
 }
 
 /// Where the time of one correction went.
@@ -269,6 +278,8 @@ struct Batch {
 enum JobKind {
     Inject,
     Replay,
+    /// One harmless tagged key-up to see whether our injections reach our hook again.
+    Probe,
 }
 
 /// Work for the injector thread.
@@ -333,6 +344,12 @@ struct State {
     /// Thread timer id while the pipeline is busy (0 when none).
     timer: usize,
     broken: bool,
+    /// While degraded: no probe before this time.
+    probe_after: Option<Instant>,
+    /// How long the next degraded spell waits before probing (doubles while it keeps
+    /// happening, so a program that eats only some of our input can't make us flap).
+    degrade_backoff: Duration,
+    next_probe: u16,
 }
 
 thread_local! {
@@ -425,6 +442,9 @@ fn run(
         batches: Vec::new(),
         timer: 0,
         broken: false,
+        probe_after: None,
+        degrade_backoff: FIRST_DEGRADE_BACKOFF,
+        next_probe: 0,
     };
     state.refresh_focus(None, Duration::ZERO);
     STATE.with(|s| *s.borrow_mut() = Some(state));
@@ -459,6 +479,7 @@ fn run(
                     with_state(State::on_results);
                 }
                 WM_TIMER if msg.hwnd.is_invalid() && msg.wParam.0 == watch_timer => {
+                    with_state(|s| s.maybe_probe(false));
                     let now = tick_now();
                     if watchdog
                         .should_reinstall(now, hooks_missed_input(last_input(), last_callback()))
@@ -682,6 +703,14 @@ impl Installed {
         with_state(|s| {
             s.reset();
             let _ = s.events.send(HookEvent::HooksReinstalled { reason });
+            // Echoes of a batch in flight may have been lost with the old hook: don't wait for
+            // them. A probe right away tells whether our input comes back now.
+            if s.pipeline.busy() {
+                s.pipeline.abandon();
+                s.enter_degraded(Duration::ZERO);
+                s.pump();
+            }
+            s.maybe_probe(true);
         });
     }
 
@@ -871,6 +900,17 @@ impl State {
     fn on_keyboard(&mut self, msg: u32, kb: &KBDLLHOOKSTRUCT, start: Instant) -> bool {
         let injected = kb.flags.0 & LLKHF_INJECTED.0 != 0;
         let tag = injected.then(|| Tag::decode(kb.dwExtraInfo)).flatten();
+        if let Some(Tag::Probe(_)) = tag {
+            // Our injections reach our hook: leave degraded. No app ever sees the probe.
+            if self.pipeline.degraded() {
+                self.pipeline.recover();
+                self.probe_after = None;
+                let _ = self
+                    .events
+                    .send(HookEvent::InputInterference { active: false });
+            }
+            return true;
+        }
         if let Some(Tag::Inject(batch)) = tag {
             // One of our own correction events coming back: count it and let it through.
             if let Some(f) = self.pipeline.on_injected(batch) {
@@ -949,6 +989,11 @@ impl State {
         ime: bool,
         start: Instant,
     ) -> bool {
+        if self.pipeline.degraded() {
+            // Nothing is injected while our input doesn't come back (the corrector was reset
+            // on the way in).
+            return false;
+        }
         let blocked = self.focus.secure() || ime || self.excluded();
         match self.gate.decide(key, blocked) {
             GateDecision::Feed => {}
@@ -1016,6 +1061,7 @@ impl State {
                         self.finished(f);
                     }
                 }
+                JobKind::Probe => {}
                 JobKind::Replay => {
                     let lost = self.pipeline.on_replay_sent(r.batch, r.sent, r.total);
                     if lost > 0 {
@@ -1033,13 +1079,41 @@ impl State {
     /// The stale-batch timer fired.
     fn on_timer(&mut self) {
         if self.pipeline.tick(Instant::now(), STALE_AFTER) {
-            self.reset();
-            let _ = self.events.send(HookEvent::Warning(format!(
-                "a correction took over {} ms to land; replayed the keys held behind it",
-                STALE_AFTER.as_millis()
-            )));
+            let wait = self.degrade_backoff;
+            self.degrade_backoff = (wait * 2).min(MAX_DEGRADE_BACKOFF);
+            self.enter_degraded(wait);
         }
         self.pump();
+    }
+
+    /// The pipeline gave up waiting for our own events: stop correcting, tell the app, and
+    /// probe again after `wait`.
+    fn enter_degraded(&mut self, wait: Duration) {
+        self.reset();
+        // Abandoned batches will never be reported.
+        self.batches.clear();
+        self.probe_after = Some(Instant::now() + wait);
+        let _ = self
+            .events
+            .send(HookEvent::InputInterference { active: true });
+    }
+
+    /// While degraded, send one probe when it is due (`now`: don't wait).
+    fn maybe_probe(&mut self, now: bool) {
+        if !self.pipeline.degraded() {
+            return;
+        }
+        if !now && self.probe_after.is_some_and(|t| Instant::now() < t) {
+            return;
+        }
+        self.next_probe = self.next_probe.wrapping_add(1);
+        let job = Job {
+            kind: JobKind::Probe,
+            batch: self.next_probe,
+            inputs: inject::probe_inputs(self.next_probe),
+            handed_over: Instant::now(),
+        };
+        let _ = self.jobs.send(job);
     }
 
     /// An injection batch is over: report it.

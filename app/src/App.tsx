@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   answerCrashReport, appInfo, appVersion, checkForUpdates, crashReportPending, dismissMessage, getSettings, inTauri,
+  inputInterference, onInputInterference,
   installUpdate, onCrashReport, onOpenPage, onRemoteMessage, onSettingsChanged, onUpdateStatus, remoteMessage,
   resetSettings, setSettings, systemLook, updateStatus,
 } from "./api";
@@ -69,9 +70,11 @@ function useResolvedMode(appearance: Settings["appearance"] | undefined) {
   return systemDark ? "dark" : "light";
 }
 
-/** Shown above every page: a crash report waiting for an answer, or an important update. */
-function Banners({ crash, onCrash, update, autoUpdate, onInstall, onDetails }: {
+/** Shown above every page: a crash report waiting for an answer, unflub pausing itself, or an
+ * important update. */
+function Banners({ crash, onCrash, interference, update, autoUpdate, onInstall, onDetails }: {
   crash: boolean;
+  interference: boolean;
   onCrash: (a: "send" | "dont-send" | "always-send") => void;
   update: UpdateStatus;
   autoUpdate: boolean;
@@ -79,9 +82,14 @@ function Banners({ crash, onCrash, update, autoUpdate, onInstall, onDetails }: {
   onDetails: () => void;
 }) {
   const critical = update.state === "available" && update.critical && !autoUpdate;
-  if (!crash && !critical) return null;
+  if (!crash && !interference && !critical) return null;
   return (
     <div className="banners">
+      {interference && (
+        <div className="banner important" role="status">
+          <span>{t("banner.interference")}</span>
+        </div>
+      )}
       {crash && (
         <div className="banner" role="status">
           <span>{t("banner.crash")}</span>
@@ -113,6 +121,7 @@ export default function App() {
   const [updateState, setUpdateState] = useState<UpdateStatus>({ state: "idle" });
   const [laterFor, setLaterFor] = useState<string | null>(null);
   const [crash, setCrash] = useState(false);
+  const [interference, setInterference] = useState(false);
   const [message, setMessage] = useState<RemoteMessage | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [touring, setTouring] = useState(() => new URLSearchParams(window.location.search).get("page") === "tour");
@@ -130,12 +139,14 @@ export default function App() {
     appVersion().then(setVersion);
     updateStatus().then(setUpdateState);
     crashReportPending().then(setCrash);
+    inputInterference().then(setInterference);
     remoteMessage().then(setMessage);
     appInfo().then(setInfo);
     const offs: Promise<() => void>[] = [
       onSettingsChanged(setLocal),
       onUpdateStatus(setUpdateState),
       onCrashReport(setCrash),
+      onInputInterference(setInterference),
       onRemoteMessage(setMessage),
       onOpenPage((p) => {
         if (p === "tour") setTouring(true);
@@ -206,7 +217,7 @@ export default function App() {
       </nav>
 
       <main>
-        <Banners crash={crash} onCrash={answerCrash} update={u} autoUpdate={s.autoUpdate}
+        <Banners crash={crash} onCrash={answerCrash} interference={interference} update={u} autoUpdate={s.autoUpdate}
           onInstall={install} onDetails={() => setPage("about")} />
 
         {page === "general" && (

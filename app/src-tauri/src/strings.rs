@@ -3,6 +3,9 @@
 
 pub const TOOLTIP: &str = "unflub";
 pub const TOOLTIP_PAUSED: &str = "unflub (paused)";
+/// The engine paused itself: its own input stopped coming back (`InputInterference`).
+pub const TOOLTIP_INTERFERENCE: &str =
+    "unflub paused itself: another app is interfering with keyboard input";
 
 pub const MENU_AUTOCORRECT: &str = "Autocorrect";
 pub const MENU_SETTINGS: &str = "Settings…";

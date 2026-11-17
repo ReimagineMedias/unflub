@@ -66,8 +66,15 @@ COM multithreaded apartment:
   as Unicode packets (`\n` and `\t` as real Enter and Tab), tagged with a batch number so our
   hook can tell when the whole batch has landed. Until then the user's keys (downs and ups,
   modifiers too) are held in a queue of up to 64 events, then replayed with a replay tag and
-  handled as normal keys. A full queue, a 500 ms timeout or a failed send replays what is
-  held; a send that typed nothing gives the triggering key back. Input injected by
+  handled as normal keys. A full queue or a failed send replays what is held; a send that
+  typed nothing gives the triggering key back. If our own events haven't all come back after
+  500 ms (Windows dropped our hook mid-batch, or another program's low-level hook eats
+  injected input), we stop waiting: what is held is replayed once and unflub **pauses
+  itself**. Keys then pass straight through, nothing is held or corrected, and the tray and
+  settings window say "unflub paused itself: another app is interfering with keyboard input".
+  It probes with one tagged key-up of an unassigned key (which our hook swallows) after 30 s,
+  doubling to 30 minutes while it keeps happening, and right after the hooks are reinstalled;
+  when the probe comes back it resumes. No key is ever held longer than one timeout. Input injected by
   other programs (dictation tools, macro tools) resets the word. We don't inject, and let the
   key through instead, when Ctrl, Alt or Win is held (Ctrl+Backspace would delete a word), when
   the key is an auto-repeat (swallowing it would leave a key stuck down), or on Shift+Enter (a

@@ -272,6 +272,12 @@ mod win {
             }
             HookEvent::Warning(w) => eprintln!("warning: {w}"),
             HookEvent::HooksReinstalled { reason } => eprintln!("hooks reinstalled ({reason})"),
+            HookEvent::InputInterference { active: true } => eprintln!(
+                "our injected input isn't coming back: corrections paused, keys pass through"
+            ),
+            HookEvent::InputInterference { active: false } => {
+                eprintln!("our injected input comes back again: corrections resumed")
+            }
         }
     }
 }

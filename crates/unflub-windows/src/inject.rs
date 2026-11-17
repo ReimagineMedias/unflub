@@ -89,6 +89,9 @@ const BATCH_MASK: u16 = 0x3FFF;
 /// Our mark in `dwExtraInfo`: which batch an event belongs to and why we sent it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tag {
+    /// A harmless key-up that only checks our injections come back through our own hook
+    /// (see [`Pipeline::degraded`]). The hook swallows it, so no app ever sees it.
+    Probe(u16),
     /// Part of a correction or undo.
     Inject(u16),
     /// A user key we held back and sent again. `foreign` keeps the fact that another program
@@ -99,6 +102,7 @@ pub enum Tag {
 impl Tag {
     pub fn encode(self) -> usize {
         let (kind, batch) = match self {
+            Tag::Probe(b) => (0, b),
             Tag::Inject(b) => (1, b),
             Tag::Replay { batch, foreign } => (if foreign { 3 } else { 2 }, batch),
         };
@@ -111,16 +115,16 @@ impl Tag {
         }
         let batch = (extra as u16) & BATCH_MASK;
         match (extra >> 14) & 3 {
+            0 => Some(Tag::Probe(batch)),
             1 => Some(Tag::Inject(batch)),
             2 => Some(Tag::Replay {
                 batch,
                 foreign: false,
             }),
-            3 => Some(Tag::Replay {
+            _ => Some(Tag::Replay {
                 batch,
                 foreign: true,
             }),
-            _ => None,
         }
     }
 }
@@ -209,6 +213,14 @@ struct Flight {
 /// and are handled as normal keys (one may trigger the next correction). User keys that
 /// arrive while a replay is in flight are held too, behind it. Nothing is dropped or reordered:
 /// a full queue, a timeout or a failed send replays what we have.
+///
+/// If our own events stop coming back (Windows dropped our hook mid-batch, or another
+/// program's low-level hook eats injected input), waiting for them would hold every key
+/// forever. So the first time anything is still outstanding after the timeout
+/// ([`Pipeline::tick`]), the pipeline gives up on it, replays what it holds once, and turns
+/// **degraded**: from then on it never holds a key and the hook makes no corrections, until a
+/// probe shows our injections come back again ([`Pipeline::recover`]). No key is ever held
+/// longer than one timeout.
 #[derive(Debug, Default)]
 pub struct Pipeline {
     next_batch: u16,
@@ -220,6 +232,7 @@ pub struct Pipeline {
     swallow: SwallowTracker,
     outbox: Vec<Replay>,
     busy_since: Option<std::time::Instant>,
+    degraded: bool,
 }
 
 impl Pipeline {
@@ -230,6 +243,36 @@ impl Pipeline {
     /// Anything pending, in flight or held back.
     pub fn busy(&self) -> bool {
         self.pending.is_some() || !self.flights.is_empty() || !self.queue.is_empty()
+    }
+
+    /// Our injected events stopped coming back: keys pass straight through and nothing may be
+    /// injected (no [`Pipeline::begin`]) until [`Pipeline::recover`].
+    pub fn degraded(&self) -> bool {
+        self.degraded
+    }
+
+    /// Our events come back again (a probe returned): hold and inject as usual.
+    pub fn recover(&mut self) {
+        self.degraded = false;
+        self.flights.clear();
+        self.busy_since = None;
+    }
+
+    /// Stop waiting for anything outstanding, replay what is held once, and turn degraded.
+    /// The hook also calls this when its hooks were reinstalled in the middle of a batch.
+    pub fn abandon(&mut self) {
+        self.claim_trigger_up();
+        if let Some(p) = self.pending.take() {
+            // The app never saw the trigger's key-down: swallow its key-up when it comes.
+            if p.trigger_up == TriggerUp::Waiting {
+                self.swallow.swallowed(p.trigger.vk);
+            }
+        }
+        self.degraded = true;
+        self.start_replay();
+        // Nothing is awaited while degraded.
+        self.flights.clear();
+        self.busy_since = None;
     }
 
     fn alloc_batch(&mut self) -> u16 {
@@ -245,11 +288,13 @@ impl Pipeline {
             self.count_replay(batch);
         }
         // A replay is older than anything still held, so only a new injection holds it back.
-        let hold = if replayed {
-            self.pending.is_some()
-        } else {
-            self.busy()
-        };
+        // Degraded, nothing is ever held.
+        let hold = !self.degraded
+            && if replayed {
+                self.pending.is_some()
+            } else {
+                self.busy()
+            };
         if hold {
             self.enqueue(ev, replayed);
             return Input::Queued;
@@ -293,6 +338,7 @@ impl Pipeline {
     /// only processed when none is.
     pub fn begin(&mut self, trigger: RawEvent, total: usize) -> u16 {
         debug_assert!(self.pending.is_none(), "one injection at a time");
+        debug_assert!(!self.degraded, "no injections while degraded");
         let batch = self.alloc_batch();
         self.pending = Some(Pending {
             batch,
@@ -417,23 +463,26 @@ impl Pipeline {
         std::mem::take(&mut self.outbox)
     }
 
-    /// Busy for longer than `limit`: stop waiting for flights that never came back and replay
-    /// what is held. Returns true if it did. Call [`Pipeline::pump`] afterwards.
+    /// Busy for longer than `limit`: our events aren't coming back. Give up on them, replay
+    /// what is held, and turn degraded ([`Pipeline::abandon`]). Returns true if it did. Call
+    /// [`Pipeline::pump`] afterwards.
     pub fn tick(&mut self, now: std::time::Instant, limit: std::time::Duration) -> bool {
-        let stale = self
-            .busy_since
-            .is_some_and(|since| now.duration_since(since) > limit);
+        let stale = !self.degraded
+            && self
+                .busy_since
+                .is_some_and(|since| now.duration_since(since) > limit);
         if stale {
-            self.flights.clear();
-            self.flush();
-            self.busy_since = Some(now);
+            self.abandon();
         }
         stale
     }
 }
 
 #[cfg(windows)]
-pub use win::{replay_inputs, send, to_inputs};
+pub use win::{probe_inputs, replay_inputs, send, to_inputs};
+
+/// The probe's key: unassigned in Windows, so even a program that sees it ignores it.
+pub const PROBE_VK: u16 = 0xE8;
 
 #[cfg(windows)]
 mod win {
@@ -471,6 +520,16 @@ mod win {
             out.push(key(vk, scan, flags | KEYEVENTF_KEYUP, tag));
         }
         out
+    }
+
+    /// One key-up of an unassigned key, tagged as probe `batch`. Our hook swallows it.
+    pub fn probe_inputs(batch: u16) -> Vec<INPUT> {
+        vec![key(
+            super::PROBE_VK,
+            0,
+            KEYEVENTF_KEYUP,
+            Tag::Probe(batch).encode(),
+        )]
     }
 
     /// Held-back user keys, as they were, tagged as replay `batch`.
@@ -608,7 +667,8 @@ mod tests {
         assert_eq!(Tag::decode(0), None);
         assert_eq!(Tag::decode(0x554E_464C), None, "old fixed tag");
         assert_eq!(Tag::decode(0xFFFF_FFFF), None);
-        assert_eq!(Tag::decode(TAG_MAGIC << 16), None, "kind 0");
+        assert_eq!(Tag::decode(TAG_MAGIC << 16), Some(Tag::Probe(0)));
+        assert_eq!(Tag::decode(Tag::Probe(9).encode()), Some(Tag::Probe(9)));
     }
 
     fn down(vk: u16) -> RawEvent {
@@ -668,6 +728,68 @@ mod tests {
             .iter()
             .map(|e| p.on_input(*e, Origin::Replay(r.batch), false))
             .collect()
+    }
+
+    /// Review blocker B1: a batch whose echo never comes back must not hold keys forever.
+    #[test]
+    fn a_lost_echo_degrades_to_pass_through_after_one_timeout() {
+        let mut p = Pipeline::new();
+        let b = inject(&mut p, down(SPACE), 8);
+        let start = now();
+        assert_eq!(user(&mut p, down(N)), Input::Queued);
+        // Only half the echo comes back, then nothing.
+        for _ in 0..4 {
+            assert_eq!(p.on_injected(b), None);
+        }
+        assert!(!p.tick(start, Duration::from_millis(500)), "not stale yet");
+        assert!(p.tick(
+            start + Duration::from_millis(600),
+            Duration::from_millis(500)
+        ));
+        assert!(p.degraded());
+        // The held key goes out once, and nothing waits for it.
+        let r = p.pump(now());
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].events, vec![down(N)]);
+        assert!(!p.busy());
+        // The trigger's key-up is eaten; from now on keys are never held, user or replayed.
+        assert_eq!(user(&mut p, up(SPACE)), Input::Consumed);
+        for _ in 0..20 {
+            assert_eq!(user(&mut p, down(O)), Input::Process { repeat: false });
+            assert_eq!(user(&mut p, up(O)), Input::Process { repeat: false });
+            let later = now() + Duration::from_secs(5);
+            assert!(!p.tick(later, Duration::from_millis(500)));
+            assert!(p.pump(now()).is_empty());
+        }
+        assert_eq!(
+            replay(&mut p, &r[0]),
+            vec![Input::Process { repeat: false }]
+        );
+        // A late echo from the abandoned batch changes nothing.
+        assert_eq!(p.on_injected(b), None);
+
+        p.recover();
+        assert!(!p.degraded());
+        let b = inject(&mut p, down(SPACE), 2);
+        assert_eq!(user(&mut p, down(N)), Input::Queued, "holding again");
+        come_back(&mut p, b, 2);
+    }
+
+    /// Replays that never come back degrade the same way.
+    #[test]
+    fn lost_replays_degrade_too() {
+        let mut p = Pipeline::new();
+        let b = inject(&mut p, down(SPACE), 2);
+        assert_eq!(user(&mut p, down(N)), Input::Queued);
+        come_back(&mut p, b, 2);
+        let r = p.pump(now());
+        assert_eq!(r.len(), 1);
+        // The replay never returns; the user keeps typing.
+        assert_eq!(user(&mut p, down(O)), Input::Queued);
+        let later = now() + Duration::from_millis(600);
+        assert!(p.tick(later, Duration::from_millis(500)));
+        assert_eq!(p.pump(now())[0].events, vec![down(O)]);
+        assert_eq!(user(&mut p, up(O)), Input::Process { repeat: false });
     }
 
     #[test]

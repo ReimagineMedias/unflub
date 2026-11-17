@@ -301,6 +301,9 @@ impl State {
             HookEvent::InjectFailed { sent, total, .. } => {
                 eprintln!("unflub-engine: SendInput sent {sent}/{total} events")
             }
+            HookEvent::InputInterference { active } => {
+                self.out.send(&FromEngine::InputInterference { active })
+            }
             _ => {}
         }
     }
