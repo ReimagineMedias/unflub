@@ -24,9 +24,13 @@ app stay the same.
    the middle of a word we never saw; correction resumes after the next boundary key.
 3. On a boundary key (space, punctuation, Enter) the engine decides whether the word is wrong
    and what it should be. If it is confident, it returns `Action::Replace`.
-4. The adapter swallows the boundary key and injects backspaces plus the fixed word and the
-   boundary. Because this happens inside the hook, the injected text lands before any key the
-   user presses next, so fast typing can't interleave with a correction.
+4. The adapter swallows the boundary key and hands backspaces plus the fixed word and the
+   boundary to its injector thread, which sends them with `SendInput`. The hook never sends
+   input itself: injected events pass through every low-level hook on the system, ours
+   included, so sending from inside the hook stalled typing for tens of milliseconds. Keys the
+   user presses before the correction has landed are held back and replayed right after it,
+   in order, so fast typing can't interleave with a correction. Mouse clicks aren't held back:
+   a click in the few milliseconds before a correction lands moves the caret first.
 5. If the very next key is Backspace, the engine returns `Action::Undo`: the original word comes
    back and, by default, that word is never corrected again.
 
@@ -35,11 +39,13 @@ engine never calls slow APIs on this path.
 
 ## The Windows adapter
 
-`crates/unflub-windows` runs three threads, all in the COM multithreaded apartment:
+`crates/unflub-windows` runs these threads (all but the injector in the COM multithreaded
+apartment):
 
 | Thread | Does |
 |---|---|
-| `unflub-hook` | `WH_KEYBOARD_LL` and `WH_MOUSE_LL` hooks, focus WinEvents, calls the engine, `SendInput` |
+| `unflub-hook` | `WH_KEYBOARD_LL` and `WH_MOUSE_LL` hooks, focus WinEvents, calls the engine, holds and replays keys |
+| `unflub-inject` | `SendInput` for corrections and replayed keys, in hand-over order |
 | `unflub-uia` | Asks UI Automation whether the focused field is a password field |
 | `unflub-spell` | Slow `ComprehensiveCheck` lookups for the OS auto-replace cache, and adding learned words |
 
@@ -47,8 +53,12 @@ engine never calls slow APIs on this path.
   in the foreground window's layout without changing the kernel's dead-key state, so accents
   keep working in the user's app. We can't see what a dead key composes with, so the key after
   a dead key resets the word instead of guessing.
-- **Injection.** One `SendInput` per action: backspaces, then the text as Unicode packets
-  (`\n` and `\t` as real Enter and Tab), all tagged so our hook skips them. Input injected by
+- **Injection.** One `SendInput` per action, on the injector thread: backspaces, then the text
+  as Unicode packets (`\n` and `\t` as real Enter and Tab), tagged with a batch number so our
+  hook can tell when the whole batch has landed. Until then the user's keys (downs and ups,
+  modifiers too) are held in a queue of up to 64 events, then replayed with a replay tag and
+  handled as normal keys. A full queue, a 500 ms timeout or a failed send replays what is
+  held; a send that typed nothing gives the triggering key back. Input injected by
   other programs (dictation tools, macro tools) resets the word. We don't inject, and let the
   key through instead, when Ctrl, Alt or Win is held (Ctrl+Backspace would delete a word), when
   the key is an auto-repeat (swallowing it would leave a key stuck down), or on Shift+Enter (a
