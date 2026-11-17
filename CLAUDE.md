@@ -30,7 +30,7 @@ Repo is private until v0.1, then flipped public.
 - Windows `ComprehensiveCheck` measured 2026-11-16 (Windows 11 26300, en-US): ~3 ms per typo, and its auto-replace list
   has `recieve`->`receive`, `becuase`->`because` but nothing for `teh`. `CORRECTIVE_ACTION_REPLACE` is rare; don't rely on it.
 - `unflub-windows` tests call the real `ISpellChecker` but never install hooks or inject input. Try the hook live with
-  `cargo run --release --bin unflub -- --demo` (rules teh/adn/recieve). Never run it in automation on a machine someone
+  `cargo run --release --bin unflub-cli -- --demo` (rules teh/adn/recieve). Never run it in automation on a machine someone
   is typing on, except with `--dry-run`.
 - Windows `ISpellChecker::Check` reports any word of 64+ UTF-16 units as correct.
 - The tray app runs the hook in-process (`app/src-tauri/src/engine.rs`), so `npm run tauri dev` installs a real keyboard
@@ -43,7 +43,7 @@ Repo is private until v0.1, then flipped public.
 - Perf gate (`docs/performance.md`, limits in `perf/limits.toml` with measured values in comments): core bench
   `cargo run --release -p unflub-core --example bench -- --check perf/limits.toml [--json]`, Windows idle footprint
   `pwsh perf/idle.ps1`, low-end sim `pwsh perf/lowend.ps1` (Job Object via `examples/jobrun.rs`). The scripts run
-  `unflub --dry-run --pill off`: hook and engine live, but every action is vetoed (`policy::DRY_RUN`), so nothing is
+  `unflub-cli --dry-run --pill off`: hook and engine live, but every action is vetoed (`policy::DRY_RUN`), so nothing is
   injected or swallowed. Safe on a machine someone is typing on; they stop only processes they started.
 - Idle measured 2026-11-16 (dry run, pill off): private 18.8 MB, working set 38-40 MB, ~0.03 s CPU per 20 s, 12
   threads dropping to 9 after ~1 min (Windows thread-pool workers from DLL loading retire), ~210 handles.
@@ -51,6 +51,21 @@ Repo is private until v0.1, then flipped public.
   fits in one burst (index build) runs at full speed; it doesn't simulate a slower clock.
 - Windows PowerShell 5.1: `$PSScriptRoot` can be empty in `param()` defaults, and a native command's stderr throws
   under `$ErrorActionPreference = 'Stop'`. The perf scripts handle both.
+- Releases: see `docs/releasing.md`. A `v*.*.*` tag runs `.github/workflows/release.yml`, which only ever makes a draft.
+  Matrix jobs just build; one job writes `latest.json` with `scripts/updater-manifest.mjs`, because tauri-action's
+  per-job latest.json upload races in parallel matrices (tauri-action#1270). `node scripts/bump-version.mjs <v>` keeps
+  the five version locations in sync (CI runs `--check`). macOS/Linux matrix rows exist with `"enabled": false`.
+- Updater signing keypair: `D:\Code\unflub\.local\updater\unflub-updater.key` and `.password` (git-ignored; never print
+  or commit). Only the public key is in `tauri.conf.json`. Updater artifacts are on only with
+  `--config src-tauri/tauri.release.conf.json`, so a plain `npm run tauri build` needs no key.
+- Updates run in Rust (`updates.rs`): a daily check when `autoUpdate` is on; download, verify and install only on the
+  About page's Restart (nothing is held in memory while an update waits). Release builds only; dev builds never check in the background or install.
+- Uninstall: Tauri's NSIS template already deletes `HKCU\...\Run\unflub` (not on `/UPDATE`) and has a "Delete the
+  application data" checkbox; `app/src-tauri/windows/installer-hooks.nsh` removes the StartupApproved value and
+  `HKCU\Software\RMGN\unflub`, `uninstall-cleanup.wxs` does the login entry for the MSI. Start at login is reconciled
+  with the registry at startup and whenever the settings window loads (release builds only).
+- Binaries: the tray app's executable is `unflub.exe` (`[[bin]] name = "unflub"` in `app/src-tauri/Cargo.toml`; the
+  package stays `unflub-app`); the headless developer runner is `unflub-cli` (`crates/unflub-windows/src/bin/unflub-cli`).
 - Site (`site/`): Astro static, hosted on Vercel through its Git integration (Root Directory `site`); headers, CSP,
   trailing slashes and caching live in `site/vercel.json`, which `scripts/serve.mjs` and the tests also read. CI only
   checks, builds and tests. Performance figures live in `site/src/data/performance.ts`; keep them in step with

@@ -1,6 +1,7 @@
 mod engine;
 mod settings;
 mod system;
+mod updates;
 
 use engine::EngineHost;
 use settings::{Settings, Store};
@@ -9,9 +10,10 @@ use tauri::{
     image::Image,
     menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use updates::{UpdateStatus, Updates};
 
 const SETTINGS_WINDOW: &str = "settings";
 const TRAY_ID: &str = "main";
@@ -37,8 +39,10 @@ struct SystemLook {
 }
 
 #[tauri::command]
-fn get_settings(state: State<'_, AppState>) -> Settings {
-    state.settings.lock().unwrap().clone()
+fn get_settings(app: AppHandle) -> Settings {
+    // Task Manager may have turned the login entry off since the window last looked.
+    sync_login_truth(&app, false);
+    current_settings(&app)
 }
 
 #[tauri::command]
@@ -77,11 +81,30 @@ fn merge_learned(words: &mut Vec<String>, learned: &[String]) {
 }
 
 #[tauri::command]
+fn update_status(app: AppHandle) -> UpdateStatus {
+    app.state::<Updates>().status()
+}
+
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) -> UpdateStatus {
+    updates::check(&app).await
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    updates::install(&app).await
+}
+
+#[tauri::command]
 fn system_look() -> SystemLook {
     SystemLook {
         accent: system::accent_color(),
         platform: std::env::consts::OS,
     }
+}
+
+fn current_settings(app: &AppHandle) -> Settings {
+    app.state::<AppState>().settings.lock().unwrap().clone()
 }
 
 /// Persist, sync side effects (login item, tray), then tell every window.
@@ -149,6 +172,55 @@ fn sync_autostart(app: &AppHandle, on: bool) {
     };
     if let Err(e) = result {
         eprintln!("start at login: {e}");
+    }
+}
+
+/// Make `start_at_login` say what the OS will do at the next login. Turning the entry off in Task
+/// Manager or Windows Settings wins. At startup, an entry that is missing while the setting is on
+/// is put back: an upgrade that uninstalls the old version first removes it. Dev builds never
+/// register, so they leave the setting alone.
+fn sync_login_truth(app: &AppHandle, at_startup: bool) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let wanted = current_settings(app).start_at_login;
+    if at_startup && wanted && !login_entry_exists(app) {
+        sync_autostart(app, true);
+        return;
+    }
+    let actual = match app.autolaunch().is_enabled() {
+        Ok(on) => on,
+        Err(e) => {
+            eprintln!("start at login: {e}");
+            return;
+        }
+    };
+    if actual == wanted {
+        return;
+    }
+    // Record the OS's answer without writing it back, so a Task Manager "Disable" stays
+    // re-enableable from Task Manager.
+    let state = app.state::<AppState>();
+    let next = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.start_at_login = actual;
+        settings.clone()
+    };
+    if let Err(e) = state.store.save(&next) {
+        eprintln!("start at login: {e}");
+    }
+    let _ = app.emit("settings-changed", &next);
+}
+
+/// Whether our login entry exists at all, enabled or not.
+fn login_entry_exists(app: &AppHandle) -> bool {
+    #[cfg(windows)]
+    {
+        system::login_entry_exists(&app.package_info().name)
+    }
+    #[cfg(not(windows))]
+    {
+        app.autolaunch().is_enabled().unwrap_or(false)
     }
 }
 
@@ -261,8 +333,11 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec![BACKGROUND_ARG]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let store = Store::new(app.path().app_config_dir()?);
+            let config_dir = app.path().app_config_dir()?;
+            app.manage(Updates::new(config_dir.clone()));
+            let store = Store::new(config_dir);
             let first_run = !store.exists();
             let settings = store.load();
             let enabled = settings.enabled;
@@ -283,7 +358,10 @@ pub fn run() {
             if first_run {
                 let _ = app.state::<AppState>().store.save(&settings);
                 sync_autostart(handle, start_at_login);
+            } else {
+                sync_login_truth(handle, true);
             }
+            updates::spawn_daily(handle.clone());
             let background = std::env::args().any(|a| a == BACKGROUND_ARG);
             if first_run || !background {
                 open_settings(handle);
@@ -294,7 +372,10 @@ pub fn run() {
             get_settings,
             set_settings,
             reset_settings,
-            system_look
+            system_look,
+            update_status,
+            check_for_updates,
+            install_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building unflub");

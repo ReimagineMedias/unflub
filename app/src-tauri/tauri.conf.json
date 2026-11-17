@@ -31,7 +31,20 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "nsis": { "installMode": "currentUser" }
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows/installer-hooks.nsh"
+      },
+      "wix": {
+        "fragmentPaths": ["windows/uninstall-cleanup.wxs"],
+        "componentGroupRefs": ["UnflubUninstallCleanup"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA3QjVDODgzRTgzMjk3RjEKUldUeGx6TG9nOGkxQitMUkR1ZWdFeFFLd0lhRUVVYUpEN2hLMVN4N3pTY1hzb0dsQlhYb3V1NUQK",
+      "endpoints": ["https://github.com/ReimagineMedias/unflub/releases/latest/download/latest.json"]
     }
   }
 }

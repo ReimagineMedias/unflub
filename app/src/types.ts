@@ -8,6 +8,8 @@ export type Appearance = "auto" | "light" | "dark";
 export interface Settings {
   enabled: boolean;
   startAtLogin: boolean;
+  /** Check for updates once a day and download them quietly. Installing waits for the user. */
+  autoUpdate: boolean;
   mode: EngineMode;
   confidence: number;
   minWordLen: number;
@@ -26,6 +28,12 @@ export interface Settings {
   language: string;
 }
 
+/** Mirrors `UpdateStatus` in src-tauri/src/updates.rs. */
+export type UpdateStatus =
+  | { state: "idle" | "checking" | "up-to-date" }
+  | { state: "available" | "installing"; version: string }
+  | { state: "error"; message: string };
+
 export interface SystemLook {
   accent: string | null;
   platform: string;
@@ -34,6 +42,7 @@ export interface SystemLook {
 export const defaultSettings: Settings = {
   enabled: true,
   startAtLogin: true,
+  autoUpdate: true,
   mode: "both",
   confidence: 0.6,
   minWordLen: 2,

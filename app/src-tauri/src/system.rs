@@ -1,4 +1,4 @@
-//! What the OS says about its look: accent colour, and whether the taskbar and apps are dark.
+//! What the OS says: its look (accent colour, dark taskbar and apps) and our login entry.
 
 /// The OS accent colour as `#RRGGBB`, if the platform exposes one.
 pub fn accent_color() -> Option<String> {
@@ -50,10 +50,35 @@ pub fn apps_use_dark() -> bool {
     }
 }
 
+/// True when the per-user `Run` key has an entry called `name`, enabled or not. Task Manager's
+/// "Disable" keeps the entry and marks it off elsewhere; uninstalling removes it.
+#[cfg(windows)]
+pub fn login_entry_exists(name: &str) -> bool {
+    windows_impl::value_exists(r"Software\Microsoft\Windows\CurrentVersion\Run", name)
+}
+
 #[cfg(windows)]
 mod windows_impl {
     use windows::core::HSTRING;
-    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    use windows::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, RRF_RT_ANY, RRF_RT_REG_DWORD,
+    };
+
+    pub fn value_exists(key: &str, value: &str) -> bool {
+        // SAFETY: no data buffer is passed, so only the value's presence is read.
+        unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                &HSTRING::from(key),
+                &HSTRING::from(value),
+                RRF_RT_ANY,
+                None,
+                None,
+                None,
+            )
+        }
+        .is_ok()
+    }
 
     pub fn read_dword(key: &str, value: &str) -> Option<u32> {
         let mut data: u32 = 0;
