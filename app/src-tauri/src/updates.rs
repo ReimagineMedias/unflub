@@ -284,7 +284,7 @@ async fn find_update(app: &AppHandle) -> Result<Option<Found>, String> {
         .ok_or_else(|| "The update server has no valid release list.".to_string())?;
     // A frozen copy of an old manifest must not pin this app to what it offered.
     if manifest.expired(time::OffsetDateTime::now_utc()) {
-        return Err("The update server's release list is out of date.".into());
+        return Err("unflub will try again later.".into());
     }
     let current = app.package_info().version.clone();
     let bucket = app.state::<net::Rollout>().bucket(&current.to_string());

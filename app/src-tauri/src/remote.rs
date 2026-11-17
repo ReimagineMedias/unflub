@@ -320,42 +320,79 @@ impl Remote {
         client: &reqwest::Client,
         channel: &str,
     ) -> Result<bool, RefreshError> {
-        let net = |e: reqwest::Error| RefreshError::Network(e.without_url().to_string());
-        let response = manifest_request(client, channel, self.etag(channel).as_deref())
-            .send()
-            .await
-            .map_err(net)?;
-        if response.status() == StatusCode::NOT_MODIFIED {
+        let etag = self.etag(channel);
+        let Some((body, sig, etag)) = fetch(client, channel, etag.as_deref(), None).await? else {
             return Ok(false);
-        }
-        if !response.status().is_success() {
-            return Err(RefreshError::Network(format!(
-                "the update server answered {}",
-                response.status()
-            )));
-        }
-        let etag = response
-            .headers()
-            .get(header::ETAG)
-            .and_then(|v| v.to_str().ok())
-            .map(String::from);
-        let body = read_limited(response, manifest::MAX_BYTES).await?;
-        let sig = client
-            .get(manifest::signature_url(channel))
-            .send()
-            .await
-            .map_err(net)?;
-        let sig = match sig.status() {
-            s if s.is_success() => read_limited(sig, manifest::MAX_SIG_BYTES).await?,
-            StatusCode::NOT_FOUND => Vec::new(),
-            s => {
-                return Err(RefreshError::Network(format!(
-                    "the update server answered {s}"
-                )))
-            }
         };
-        self.accept(channel, &body, &sig, etag)
-            .map_err(RefreshError::Rejected)
+        match self.accept(channel, &body, &sig, etag) {
+            // The two files are cached apart and can disagree for a few minutes after a
+            // change: try once more past the cache (contract section 1), then keep the last
+            // accepted manifest.
+            Err(Rejected::BadSignature | Rejected::Unsigned) => {
+                let minute = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() / 60);
+                match fetch(client, channel, None, Some(minute)).await? {
+                    Some((body, sig, etag)) => self
+                        .accept(channel, &body, &sig, etag)
+                        .map_err(RefreshError::Rejected),
+                    None => Ok(false),
+                }
+            }
+            other => other.map_err(RefreshError::Rejected),
+        }
+    }
+}
+
+/// The manifest and its signature, or `None` when the manifest is unchanged (304). `bust` adds
+/// `?t=<unix minute>` to both URLs.
+async fn fetch(
+    client: &reqwest::Client,
+    channel: &str,
+    etag: Option<&str>,
+    bust: Option<u64>,
+) -> Result<Option<(Vec<u8>, Vec<u8>, Option<String>)>, RefreshError> {
+    let net = |e: reqwest::Error| RefreshError::Network(e.without_url().to_string());
+    let response = manifest_request(client, channel, etag, bust)
+        .send()
+        .await
+        .map_err(net)?;
+    if response.status() == StatusCode::NOT_MODIFIED {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(RefreshError::Network(format!(
+            "the update server answered {}",
+            response.status()
+        )));
+    }
+    let etag = response
+        .headers()
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+    let body = read_limited(response, manifest::MAX_BYTES).await?;
+    let sig = client
+        .get(with_bust(manifest::signature_url(channel), bust))
+        .send()
+        .await
+        .map_err(net)?;
+    let sig = match sig.status() {
+        s if s.is_success() => read_limited(sig, manifest::MAX_SIG_BYTES).await?,
+        StatusCode::NOT_FOUND => Vec::new(),
+        s => {
+            return Err(RefreshError::Network(format!(
+                "the update server answered {s}"
+            )))
+        }
+    };
+    Ok(Some((body, sig, etag)))
+}
+
+fn with_bust(url: String, bust: Option<u64>) -> String {
+    match bust {
+        Some(t) => format!("{url}?t={t}"),
+        None => url,
     }
 }
 
@@ -364,9 +401,10 @@ fn manifest_request(
     client: &reqwest::Client,
     channel: &str,
     etag: Option<&str>,
+    bust: Option<u64>,
 ) -> reqwest::RequestBuilder {
     let mut request = client
-        .get(manifest::manifest_url(channel))
+        .get(with_bust(manifest::manifest_url(channel), bust))
         .header(header::ACCEPT, "application/json");
     if let Some(etag) = etag {
         request = request.header(header::IF_NONE_MATCH, etag);
@@ -593,13 +631,27 @@ mod tests {
         );
 
         let client = crate::net::client(Vec::new()).unwrap();
-        let req = manifest_request(&client, "stable", again.etag("stable").as_deref())
+        let req = manifest_request(&client, "stable", again.etag("stable").as_deref(), None)
             .build()
             .unwrap();
         assert_eq!(req.url().as_str(), manifest::manifest_url("stable"));
         assert_eq!(req.headers()[header::IF_NONE_MATCH], "\"abc\"");
-        let fresh = manifest_request(&client, "stable", None).build().unwrap();
+        let fresh = manifest_request(&client, "stable", None, None)
+            .build()
+            .unwrap();
         assert!(fresh.headers().get(header::IF_NONE_MATCH).is_none());
+        // The retry after a signature mismatch goes past the cache.
+        let busted = manifest_request(&client, "beta", None, Some(29_915_280))
+            .build()
+            .unwrap();
+        assert_eq!(
+            busted.url().as_str(),
+            "https://dl.rmgn.net/unflub/manifest/beta.json?t=29915280"
+        );
+        assert_eq!(
+            with_bust(manifest::signature_url("beta"), Some(1)),
+            "https://dl.rmgn.net/unflub/manifest/beta.json.sig?t=1"
+        );
 
         // Without its manifest, an ETag is never sent (a 304 would leave nothing to use).
         fs::remove_file(dir.join("stable.json")).unwrap();

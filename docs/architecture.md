@@ -340,7 +340,7 @@ Releases; the only thing unflub posts is usage stats to api.rmgn.net (contract:
 | Signed manifest (`dl.rmgn.net/unflub/manifest/{channel}.json` + `.sig`) | at launch, then with each update check (~2 min after launch, then daily) | `User-Agent: unflub/<version>`, `If-None-Match`. The rollout bucket (random 0 to 99, redrawn per version) stays on the computer | Policy `DisableUpdates` and `DisableRemoteConfig` together; `DisableRemoteConfig` alone ignores its flags and message |
 | Release file (`dl.rmgn.net/unflub/{version}/tauri-{target}-{arch}.json`) | only when the manifest offers this copy a release | `User-Agent` | Policy `DisableUpdates` |
 | Update download (GitHub Release asset, possibly through a dl.rmgn.net redirect) | when an update is found (auto) or on Restart now | nothing extra | Automatic updates, policy |
-| Usage stats | once a day | counts, settings snapshot, p99 latencies, health counters; no headers (`usage.rs`, allowlist test) | Privacy > Anonymous usage stats (on by default), policy `DisableUsageStats` |
+| Usage stats | once a day | counts, settings snapshot, p99 latencies, health counters; no identity headers, only `X-First: week,month` on the first report of an ISO week or month (`usage.rs`, `net.rs`, allowlist test). These reports are the only active-install count | Privacy > Anonymous usage stats (on by default), policy `DisableUsageStats` |
 | Crash report | next start after a crash, or after an engine crash | scrubbed Sentry event: location, stack, modules, OS and app version (`crash.rs`); for the engine, from the marker it wrote | Privacy > Crash reports (on by default), policy `DisableCrashReports`; builds without `SENTRY_DSN` |
 
 - **The manifest is signed.** Ed25519 over the exact bytes, keys in `keys.rs`; unsigned,

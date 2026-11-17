@@ -109,6 +109,8 @@ struct Tally {
     inject_us: Vec<u32>,
     /// When counting started (switch turned on, or the last accepted send).
     since: u64,
+    /// When the last report was accepted, for `X-First` (Unix seconds).
+    last_report: Option<u64>,
 }
 
 pub struct Usage {
@@ -257,11 +259,18 @@ impl Usage {
         now < since || now - since >= DAY_SECS + jitter
     }
 
+    /// Which of `week` and `month` this report is the first of (`X-First`, contract section 2).
+    fn first(&self, now: u64) -> Vec<&'static str> {
+        crate::net::first_report(self.tally.lock().unwrap().last_report, now)
+    }
+
     /// Start a new day after an accepted send.
     fn sent(&self) {
         let mut tally = self.tally.lock().unwrap();
+        let now = now_secs();
         *tally = Tally {
-            since: now_secs(),
+            since: now,
+            last_report: Some(now),
             ..Tally::default()
         };
         drop(tally);
@@ -359,8 +368,10 @@ pub fn spawn(app: tauri::AppHandle) {
                 }
                 let settings = crate::current_settings(&app);
                 let version = app.package_info().version.to_string();
-                // No identity headers on stats, not even the version (it is in the body).
-                let Ok(client) = crate::net::client(Vec::new()) else {
+                // No identity headers on stats, not even the version (it is in the body); only
+                // whether this is the first report of the ISO week or month.
+                let headers = crate::net::first_header(&usage.first(now_secs()));
+                let Ok(client) = crate::net::client(headers) else {
                     continue;
                 };
                 let payload = usage.payload(&settings, &version);

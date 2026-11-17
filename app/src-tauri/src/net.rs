@@ -5,7 +5,8 @@
 //! files on dl.rmgn.net are static downloads with only `User-Agent: unflub/{version}`; the
 //! rollout bucket from 0 to 99 (drawn at random for each installed version, so it links nothing
 //! from one release to the next) never leaves the computer: the app compares it with the
-//! manifest's rollout itself. Usage stats to api.rmgn.net carry no identity headers at all.
+//! manifest's rollout itself. Usage stats to api.rmgn.net carry no identity headers, only
+//! `X-First: week,month` on the first report of an ISO week or month ([`first_report`]).
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use std::{fs, path::PathBuf, time::Duration};
@@ -68,6 +69,39 @@ pub fn headers(version: &str) -> Headers {
         .unwrap_or_default()
 }
 
+/// Which periods a stats report at `now` is the first of, given the last accepted report at
+/// `last` (Unix seconds): `week` (ISO week, Monday 00:00 UTC) and `month` (UTC calendar month).
+/// Both when there was none.
+pub fn first_report(last: Option<u64>, now: u64) -> Vec<&'static str> {
+    let date = |secs: u64| {
+        time::OffsetDateTime::from_unix_timestamp(secs as i64)
+            .map(|t| t.date())
+            .ok()
+    };
+    let (Some(last), Some(today)) = (last.and_then(date), date(now)) else {
+        return vec!["week", "month"];
+    };
+    let mut first = Vec::with_capacity(2);
+    let (y1, w1, _) = last.to_iso_week_date();
+    let (y2, w2, _) = today.to_iso_week_date();
+    if (y1, w1) != (y2, w2) {
+        first.push("week");
+    }
+    if (last.year(), last.month()) != (today.year(), today.month()) {
+        first.push("month");
+    }
+    first
+}
+
+/// `X-First: week,month` for a stats report, or nothing when the list is empty.
+pub fn first_header(first: &[&str]) -> Headers {
+    HeaderValue::from_str(&first.join(","))
+        .ok()
+        .filter(|_| !first.is_empty())
+        .map(|v| vec![(HeaderName::from_static("x-first"), v)])
+        .unwrap_or_default()
+}
+
 /// A client with `headers` on every request. It refuses plain-http URLs and redirects.
 pub fn client(headers: Headers) -> reqwest::Result<reqwest::Client> {
     // The updater installs the same provider before its first request; whichever runs first wins.
@@ -101,6 +135,33 @@ mod tests {
         let headers = headers("0.2.0");
         assert_eq!(get(&headers, "user-agent").as_deref(), Some("unflub/0.2.0"));
         assert_eq!(headers.len(), 1);
+    }
+
+    #[test]
+    fn first_report_by_utc_calendar() {
+        // 2026-11-17 (a Tuesday) 12:00 UTC.
+        let tue = 1_794_916_800;
+        let h = 3600;
+        assert_eq!(first_report(None, tue), ["week", "month"]);
+        assert!(first_report(Some(tue - h), tue).is_empty(), "same day");
+        assert!(
+            first_report(Some(tue - 24 * h), tue).is_empty(),
+            "Monday, same week"
+        );
+        assert_eq!(
+            first_report(Some(tue - 36 * h - 1), tue),
+            ["week"],
+            "Sunday 23:59:59"
+        );
+        assert_eq!(
+            first_report(Some(tue - 20 * 24 * h), tue),
+            ["week", "month"]
+        );
+        assert_eq!(
+            get(&first_header(&["week", "month"]), "x-first").as_deref(),
+            Some("week,month")
+        );
+        assert!(first_header(&[]).is_empty());
     }
 
     #[test]

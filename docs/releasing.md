@@ -153,7 +153,10 @@ API, Access and VirusTotal ones as `release` environment secrets.
   without one).
 - The manifest is believed only with a valid Ed25519 signature from a key in
   `app/src-tauri/src/keys.rs`, at most 256 KB, and not older (`generated_at`) than the one
-  already cached; otherwise the last good one stays (`manifest.rs`, `remote.rs`).
+  already cached, and its `expires_at` (7 days, re-signed daily) must be in the future; otherwise
+  the last good one stays (`manifest.rs`, `remote.rs`). A signature mismatch is retried once with
+  `?t=<unix minute>` on both URLs (the two files are cached apart). An expired cached manifest
+  offers no updates; its flags, which can only switch things off, still apply.
 - The app decides itself, with the same rules the server used to apply: kill switch
   (`updates_enabled`); a `blocked` version or one below `min_version` gets the newest release
   with `rollout_percent > 0`, even an older one (shown as an important update); otherwise the

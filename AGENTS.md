@@ -99,7 +99,7 @@ Repo is private until v0.1, then flipped public.
   `dl.rmgn.net/unflub/{version}/tauri-{target}-{arch}.json`, accepts exactly that version (rollbacks work), and its
   URL/signature must equal the manifest's; installer bytes must match the manifest's sha256/size. Installer URLs:
   GitHub Release assets or dl.rmgn.net (302 to them); redirects only to that GitHub path and GitHub's asset hosts
-  (`links.rs`). Requests carry only `User-Agent`; no install id, no `X-First`. `keys.rs` still holds a PLACEHOLDER
+  (`links.rs`). Update requests carry only `User-Agent`; no install id. `X-First: week,month` goes only on the daily stats report (contract v2). `keys.rs` still holds a PLACEHOLDER
   key (verifies nothing); release CI fails until the real one from rmgn-api is in. `autoUpdate` downloads + verifies in the background to `%LOCALAPPDATA%\ca.rmgn.unflub\updates`
   (SHA-256 re-checked before install); install only on Restart now or tray Quit. Only `install-source` = installer or
   winget self-updates (`install.rs`). Release builds only.
