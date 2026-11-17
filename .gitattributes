@@ -1,0 +1,4 @@
+* text=auto eol=lf
+# The quality corpora are measured byte for byte (paragraphs split on blank lines).
+crates/unflub-core/data/quality/*.txt -text
+crates/unflub-core/data/quality/*.tsv -text

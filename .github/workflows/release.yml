@@ -1,0 +1,517 @@
+name: Release
+
+# A version tag builds every installer, signs them for the updater, scans them, attaches them to a
+# draft GitHub Release (where installers live; the owner publishes it) and registers the release
+# with api.rmgn.net, where it lands PAUSED at 0%. Nobody gets it until the owner publishes the
+# draft, activates it in the dashboard (https://api.rmgn.net/dashboard/?product=unflub) and raises
+# the rollout; dl.rmgn.net then lists it in the signed manifest. Run it by hand with "dry run" to
+# build and check everything without publishing or registering anything.
+# How to cut a release: docs/releasing.md.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and check everything, but don't create or touch a release
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      dry_run: ${{ steps.version.outputs.dry_run }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tags and history for the release notes
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Version and tag
+        id: version
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          version=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          node scripts/bump-version.mjs --check "$version"
+          tag="v$version"
+          dry_run=$([ "$DRY_RUN" = true ] && echo true || echo false)
+          if [ "$dry_run" = false ]; then
+            if [ "$GITHUB_REF_TYPE" != tag ]; then
+              echo "::error::A real release runs from a tag. Push $tag, or run this workflow with dry run on."
+              exit 1
+            fi
+            if [ "$GITHUB_REF_NAME" != "$tag" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME doesn't match the app version $version. Run: node scripts/bump-version.mjs ${GITHUB_REF_NAME#v}"
+              exit 1
+            fi
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "dry_run=$dry_run"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Manifest signing key present
+        env:
+          DRY_RUN: ${{ steps.version.outputs.dry_run }}
+        run: |
+          # A release that trusts only the placeholder key could never accept another update.
+          if grep -q 'id: "placeholder"' app/src-tauri/src/keys.rs; then
+            if [ "$DRY_RUN" = true ]; then
+              echo "::warning file=app/src-tauri/src/keys.rs::The manifest public key is still the placeholder. A real release refuses to run."
+            else
+              echo "::error file=app/src-tauri/src/keys.rs::Put the manifest public key from rmgn-api in keys.rs before releasing."
+              exit 1
+            fi
+          fi
+
+      - name: Release notes
+        env:
+          TO: ${{ github.ref_type == 'tag' && github.ref_name || 'HEAD' }}
+        run: node scripts/release-notes.mjs --to "$TO" --repo "$GITHUB_REPOSITORY" > release-notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
+
+      - name: Build matrix
+        id: matrix
+        run: |
+          # macOS and Linux stay off until their adapters (unflub-macos, unflub-linux) exist.
+          # To build one, set its "enabled" to true. Its bundles, latest.json entries and
+          # checksums then follow without other changes (macOS signing and notarisation aside).
+          matrix=$(jq -c '{include: [.[] | select(.enabled)]}' <<'EOF'
+          [
+            { "name": "windows-x64", "os": "windows-latest", "target": "x86_64-pc-windows-msvc",
+              "rust_targets": "x86_64-pc-windows-msvc", "bundles": "nsis,msi", "enabled": true },
+            { "name": "windows-arm64", "os": "windows-latest", "target": "aarch64-pc-windows-msvc",
+              "rust_targets": "aarch64-pc-windows-msvc", "bundles": "nsis,msi", "enabled": true },
+            { "name": "macos-universal", "os": "macos-latest", "target": "universal-apple-darwin",
+              "rust_targets": "aarch64-apple-darwin,x86_64-apple-darwin", "bundles": "app,dmg", "enabled": false },
+            { "name": "linux-x64", "os": "ubuntu-22.04", "target": "x86_64-unknown-linux-gnu",
+              "rust_targets": "x86_64-unknown-linux-gnu", "bundles": "appimage,deb,rpm", "enabled": false }
+          ]
+          EOF
+          )
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Building: $(jq -r '[.include[].name] | join(", ")' <<<"$matrix")"
+
+      - name: Summary
+        run: |
+          {
+            echo "## unflub ${{ steps.version.outputs.version }}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tag | \`${{ steps.version.outputs.tag }}\` |"
+            echo "| Dry run | ${{ steps.version.outputs.dry_run == 'true' && 'yes, nothing will be published' || 'no, a draft release will be created' }} |"
+            echo "| Versions agree | ✅ |"
+            echo
+            echo "<details><summary>Release notes</summary>"
+            echo
+            cat release-notes.md
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_targets }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Updater signing key present
+        shell: bash
+        env:
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != true ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets (docs/releasing.md). Without them the updater can't trust this build."
+            exit 1
+          fi
+
+      - name: Linux libraries for Tauri
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
+
+      - name: Clang for ARM64 (ring's assembly)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: '"C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append'
+
+      - name: Windows code signing (when configured)
+        id: sign
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          # Azure Artifact Signing (formerly Trusted Signing): three secrets plus three variables.
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          # Or a code signing certificate exported as a base64 .pfx.
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $windows = @{}
+          if ($env:AZURE_CLIENT_SECRET -and $env:AZURE_SIGNING_ACCOUNT) {
+            cargo install artifact-signing-cli --version 0.12.0 --locked
+            if ($LASTEXITCODE -ne 0) { throw 'installing artifact-signing-cli failed' }
+            $windows.signCommand = "artifact-signing-cli -e $env:AZURE_SIGNING_ENDPOINT -a $env:AZURE_SIGNING_ACCOUNT -c $env:AZURE_SIGNING_PROFILE -d unflub %1"
+            $mode = 'Azure Artifact Signing'
+          } elseif ($env:WINDOWS_CERTIFICATE) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'unflub-signing.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            Remove-Item $pfx
+            $windows.certificateThumbprint = $cert.Thumbprint
+            $windows.digestAlgorithm = 'sha256'
+            $windows.timestampUrl = 'http://timestamp.digicert.com'
+            $mode = 'certificate'
+          } else {
+            $mode = 'off'
+          }
+          if ($mode -ne 'off') {
+            @{ bundle = @{ windows = $windows } } | ConvertTo-Json -Depth 5 | Set-Content app/src-tauri/tauri.signing.conf.json
+            "args=--config src-tauri/tauri.signing.conf.json" >> $env:GITHUB_OUTPUT
+          }
+          "mode=$mode" >> $env:GITHUB_OUTPUT
+          if ($mode -eq 'off') { "::notice::Windows installers are not code-signed. SmartScreen will warn on first run (docs/releasing.md)." }
+
+      - name: Frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Debug symbols for crash reports (when configured)
+        id: symbols
+        shell: bash
+        env:
+          HAS_SENTRY: ${{ secrets.SENTRY_AUTH_TOKEN != '' && vars.SENTRY_ORG != '' && vars.SENTRY_PROJECT != '' }}
+        run: |
+          # Keep line tables in a separate PDB so Sentry can name the frames of a crash. The exe
+          # itself doesn't grow; the PDB is uploaded below and never shipped.
+          if [ "$HAS_SENTRY" = true ]; then
+            echo "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+            echo "CARGO_PROFILE_RELEASE_STRIP=none" >> "$GITHUB_ENV"
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::SENTRY_AUTH_TOKEN, SENTRY_ORG or SENTRY_PROJECT not set: no debug symbols uploaded."
+          fi
+
+      - name: Build installers
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Compiled into the app (crash.rs). Unset: crash reports are off in this build.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          # Read by artifact-signing-cli when Azure signing is on; empty otherwise.
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        with:
+          # Build only. The release job uploads every platform at once, so parallel jobs never
+          # race to rewrite latest.json on the release.
+          projectPath: app
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json ${{ steps.sign.outputs.args }}
+
+      - name: Collect bundles
+        shell: bash
+        env:
+          BUNDLE: target/${{ matrix.target }}/release/bundle
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p dist
+          case "$RUNNER_OS" in
+            Windows)
+              files=("$BUNDLE"/nsis/*-setup.exe{,.sig} "$BUNDLE"/msi/*.msi{,.sig}) ;;
+            macOS)
+              # Tauri names the updater bundle unflub.app.tar.gz; give it a version and arch like the rest.
+              for f in "$BUNDLE"/macos/*.app.tar.gz{,.sig}; do
+                name=$(basename "$f")
+                cp "$f" "dist/${name/.app.tar.gz/_${VERSION}_universal.app.tar.gz}"
+              done
+              files=("$BUNDLE"/dmg/*.dmg) ;;
+            Linux)
+              files=("$BUNDLE"/appimage/*.AppImage{,.sig} "$BUNDLE"/deb/*.deb{,.sig} "$BUNDLE"/rpm/*.rpm{,.sig}) ;;
+          esac
+          if [ ${#files[@]} -gt 0 ]; then cp "${files[@]}" dist/; fi
+          # Every bundle the updater can install must carry its signature.
+          for f in dist/*-setup.exe dist/*.msi dist/*.AppImage dist/*.deb dist/*.rpm dist/*.app.tar.gz; do
+            [ -f "$f.sig" ] || { echo "::error::$(basename "$f") has no updater signature"; exit 1; }
+          done
+          [ -n "$(ls dist)" ] || { echo "::error::no bundles in $BUNDLE"; exit 1; }
+          ls -l dist
+          # The two executables, for the antivirus scan and the signature check (not published).
+          if [ "$RUNNER_OS" = Windows ]; then
+            mkdir -p binaries
+            for exe in unflub.exe unflub-engine.exe; do
+              cp "target/${{ matrix.target }}/release/$exe" "binaries/${exe%.exe}_${VERSION}_${{ matrix.name }}.exe" \
+                || { echo "::error::$exe was not built"; exit 1; }
+            done
+            ls -l binaries
+          fi
+
+      - name: Both executables in the installers, same publisher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($exe in Get-ChildItem binaries -Filter *.exe) {
+            $v = $exe.VersionInfo
+            if ($v.CompanyName -ne 'Reimagine Media (RMGN)' -or $v.LegalCopyright -ne "$([char]0xA9) 2026 Matias Suxo") {
+              throw "$($exe.Name): CompanyName '$($v.CompanyName)', LegalCopyright '$($v.LegalCopyright)'"
+            }
+          }
+          $setup = Get-ChildItem dist -Filter *-setup.exe | Select-Object -First 1
+          $listing = & 7z l $setup.FullName
+          foreach ($exe in 'unflub.exe', 'unflub-engine.exe') {
+            if (-not ($listing -match "\s$([regex]::Escape($exe))$")) { throw "$exe is not in $($setup.Name)" }
+          }
+          $msi = Get-ChildItem dist -Filter *.msi | Select-Object -First 1
+          $extract = Join-Path $env:RUNNER_TEMP 'msi-extract'
+          Start-Process msiexec -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=`"$extract`"" -Wait
+          foreach ($exe in 'unflub.exe', 'unflub-engine.exe') {
+            if (-not (Get-ChildItem $extract -Recurse -Filter $exe)) { throw "$exe is not in $($msi.Name)" }
+          }
+          "Both executables are in $($setup.Name) and $($msi.Name)."
+
+      - name: Upload debug symbols to Sentry
+        if: steps.symbols.outputs.upload == 'true'
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        # The app and the engine: scripts/build-engine.mjs builds the engine into target/release
+        # when the target is the runner's own.
+        run: npx --yes @sentry/cli@3.8.2 debug-files upload --wait "target/${{ matrix.target }}/release" target/release
+
+      - name: Check Authenticode signatures
+        if: runner.os == 'Windows' && steps.sign.outputs.mode != 'off'
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem dist, binaries -Include *.exe, *.msi -Recurse | Get-AuthenticodeSignature | Where-Object Status -ne 'Valid'
+          if ($bad) { $bad | Format-Table Path, Status; throw 'unsigned or invalid installers or executables' }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Windows'
+        with:
+          name: binaries-${{ matrix.name }}
+          path: binaries/*
+          if-no-files-found: error
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.name }} ${{ job.status == 'success' && '✅' || '❌' }}"
+            echo
+            echo "Windows code signing: ${{ steps.sign.outputs.mode || 'n/a' }}"
+            echo
+            echo "| File | Size |"
+            echo "|---|---|"
+            for f in dist/*; do
+              [ -f "$f" ] && printf '| `%s` | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Draft and register
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    # Holds the release secrets; add required reviewers to it to approve each release.
+    environment: release
+    permissions:
+      contents: write # the draft GitHub Release
+      id-token: write # build provenance attestations
+      attestations: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      DRY_RUN: ${{ needs.prepare.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bundle-*
+          merge-multiple: true
+          path: assets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+      # unflub.exe and unflub-engine.exe per platform: scanned, never published.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binaries-*
+          merge-multiple: true
+          path: binaries
+
+      - name: latest.json, SHA256SUMS.txt and the registration body
+        run: |
+          set -euo pipefail
+          node scripts/updater-manifest.mjs --dir assets --version "$VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" > latest.json
+          # The API body: per platform the setup on this GitHub Release, its signature, SHA-256 and
+          # size. The API's publish step writes the signed manifest and tauri-*.json on dl.rmgn.net.
+          node scripts/register-release.mjs --dir assets --version "$VERSION" --notes-file release-notes.md > register.json
+          mv latest.json assets/
+          (cd assets && sha256sum -- * > ../SHA256SUMS.txt)
+          mv SHA256SUMS.txt assets/
+          cat assets/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: assets/*
+
+      - name: VirusTotal (when configured)
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VT_API_KEY" ]; then
+            echo "::notice::VT_API_KEY not set: installers were not scanned."
+            exit 0
+          fi
+          mapfile -t installers < <(cd assets && ls -- *-setup.exe *.msi 2>/dev/null)
+          (cd assets && node ../scripts/virustotal.mjs --max 2 "${installers[@]}")
+          # The executables too: the tray app and the engine that sees keys, each on its own.
+          mapfile -t exes < <(ls -- binaries/*.exe 2>/dev/null)
+          node scripts/virustotal.mjs --max 2 "${exes[@]}"
+
+      - name: Build provenance
+        if: env.DRY_RUN != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            assets/*-setup.exe
+            assets/*.msi
+
+      - name: Create or update the draft release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != true ]; then
+              echo "::error::$TAG is already published. Releases are never rewritten; bump the version instead."
+              exit 1
+            fi
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --draft --verify-tag "${flags[@]}" --title "unflub $VERSION" --notes-file release-notes.md
+          fi
+          gh release upload "$TAG" assets/* --clobber
+          echo "RELEASE_URL=$(gh release view "$TAG" --json url --jq .url)" >> "$GITHUB_ENV"
+
+      - name: Register with api.rmgn.net (paused, 0%)
+        if: env.DRY_RUN != 'true'
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ADMIN_TOKEN" ] || [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "::error::Add the ADMIN_TOKEN, CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET secrets (docs/releasing.md)."
+            exit 1
+          fi
+          # Headers go through a private file, not the command line, so other processes can't read them.
+          umask 077
+          headers="$RUNNER_TEMP/api-headers"
+          {
+            echo "Authorization: Bearer $ADMIN_TOKEN"
+            echo "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID"
+            echo "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET"
+            echo "Content-Type: application/json"
+          } > "$headers"
+          status=$(curl -sS -o response.json -w '%{http_code}' -X POST -H @"$headers" \
+            --data @register.json https://api.rmgn.net/unflub/v1/admin/releases)
+          rm -f "$headers"
+          case "$status" in
+            200|201) echo "Registered $VERSION, paused at 0%." ;;
+            409) echo "::notice::$VERSION was already registered (a re-run). Nothing changed." ;;
+            *) echo "::error::Registering failed with HTTP $status: $(head -c 500 response.json)"; exit 1 ;;
+          esac
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Release assets"
+            echo
+            if [ "$DRY_RUN" = true ]; then
+              echo "Dry run: nothing was uploaded or registered. The files are in the \`release-assets\` artifact."
+            elif [ -n "${RELEASE_URL:-}" ]; then
+              echo "> [!IMPORTANT]"
+              echo "> $TAG is registered **paused at 0%**; its installers are on the draft $RELEASE_URL."
+              echo "> Publish the draft first (its download URLs only work once it is published), then open"
+              echo "> https://api.rmgn.net/dashboard/?product=unflub, set it active at 5%, watch for a day, then 25% and 100%."
+              echo "> See docs/releasing.md."
+            fi
+            echo
+            echo "| Asset | Size | SHA-256 |"
+            echo "|---|---|---|"
+            for f in assets/*; do
+              [ -f "$f" ] && printf '| `%s` | %s | `%s…` |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)" "$(sha256sum "$f" | cut -c1-16)"
+            done
+            echo
+            echo "| Check | |"
+            echo "|---|---|"
+            echo "| Builds | ${{ needs.build.result == 'success' && '✅' || '❌' }} |"
+            echo "| latest.json, SHA256SUMS.txt | $([ -f assets/latest.json ] && [ -f assets/SHA256SUMS.txt ] && echo ✅ || echo ❌) |"
+          } >> "$GITHUB_STEP_SUMMARY"

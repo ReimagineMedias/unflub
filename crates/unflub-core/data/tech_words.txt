@@ -1,0 +1,117 @@
+# Programming vocabulary: keywords, standard types, tools and jargon that people type in prose
+# to coding agents and colleagues. Loaded as known words with a modest count, so they are never
+# "fixed" and can be suggested for their own typos. Whitespace separated; lowercase letters only.
+
+# Rust
+async await const crate crates dyn enum enums extern fn impl impls let loop mut pub ref struct
+structs trait traits unsafe usize isize bool bools char chars str vec vecs hashmap hashmaps
+hashset btreemap btreeset vecdeque refcell rc arc mutex mutexes rwlock tokio serde clippy rustc
+rustup rustfmt rustdoc println eprintln dbg unwrap unwraps unwrapping derive derives lifetimes
+borrowck axum actix reqwest anyhow thiserror rayon wasm wasmtime bindgen cbindgen nightly msrv
+toolchain toolchains tauri iter iters itertools proc smallvec bytemuck nom regex regexes
+oncelock lazylock sync dyncompat newtype newtypes
+
+# TypeScript and JavaScript
+typeof instanceof undefined nullish readonly keyof infer namespace namespaces tsx jsx tsconfig
+eslint prettier vite vitest jest webpack rollup esbuild swc babel npm npx pnpm yarn bun deno
+nodejs react preact vue nuxt svelte sveltekit nextjs remix astro angular redux zustand
+jotai tanstack trpc zod prisma drizzle supabase firebase vercel netlify cloudflare wrangler hono
+express fastify koa nestjs graphql apollo axios localstorage sessionstorage useeffect usestate
+usememo usecallback useref usecontext usereducer uselayouteffect onclick onchange onsubmit
+props prop jsdoc tsdoc dom vdom ssr csr ssg isr hydration rehydrate tailwind tailwindcss shadcn
+radix chakra mui storybook playwright cypress puppeteer lodash rxjs dayjs nanoid uuid uuids
+polyfill polyfills transpile transpiled transpiler minify minified minifier bundler bundlers
+treeshaking esm cjs commonjs mjs cjs dts tsc deps devdeps devdependencies peerdeps
+
+# Python
+def lambda lambdas elif kwargs args arg cls init dunder pydantic fastapi flask django numpy
+pandas scipy matplotlib seaborn pytest pip pipx venv venvs virtualenv conda poetry ruff mypy
+pyright asyncio dataclass dataclasses namedtuple dict dicts tuple tuples isinstance enumerate
+iterable iterables decorator decorators staticmethod classmethod pyproject setuptools jupyter
+ipynb uvicorn gunicorn celery sqlalchemy alembic pyenv pypi wheel wheels docstring docstrings
+fstring fstrings listcomp pickle unpickle jinja tqdm httpx aiohttp
+
+# Go, Java, Kotlin, C#, C, C++
+func goroutine goroutines chan chans defer gofmt golang goimports nil jvm jdk jre gradle maven
+kotlin springboot javadoc dotnet csharp nuget linq lombok junit xunit nunit msbuild csproj
+sln blazor razor maui xaml winui winforms wpf cpp cmake makefile makefiles malloc calloc
+realloc nullptr typedef typedefs sizeof stdlib stdio iostream ifdef ifndef endif
+pragma constexpr noexcept vtable vtables lvalue rvalue segfault segfaults valgrind gdb lldb
+clang gcc llvm msvc
+
+# SQL and data
+sql nosql postgres postgresql psql mysql sqlite mariadb mongo mongodb redis upsert upserts
+varchar nvarchar bigint smallint tinyint jsonb plpgsql orm orms schema schemas migration
+migrations dataframe dataframes etl elt parquet avro protobuf protobufs grpc kafka rabbitmq
+clickhouse snowflake bigquery dbt duckdb qdrant pinecone pgvector elasticsearch opensearch
+dynamodb cosmosdb timescale
+
+# Shell, ops, cloud
+sudo grep egrep ripgrep rg sed awk curl wget chmod chown chgrp mkdir rmdir rsync scp ssh sshd
+tar gzip gunzip unzip zsh bash fish pwsh powershell cmd stdin stdout stderr cron crontab
+systemd systemctl journalctl nginx dockerfile dockerfiles docker dockerized kubectl kubernetes
+helm terraform ansible pulumi kustomize minikube kind podman containerd buildx compose
+devcontainer devcontainers homebrew brew apt winget scoop choco chocolatey wsl msys cygwin
+env envs dotenv envvar envvars localhost loopback hostname hostnames dns cdn tcp udp http https
+websocket websockets webhook webhooks oauth jwt jwts csrf xss cors ssl tls mtls
+github gitlab bitbucket gitea codeberg vscode neovim nvim vim emacs jetbrains intellij webstorm
+pycharm rider xcode zed
+
+# Git and workflow
+repo repos monorepo monorepos submodule submodules rebase rebased rebasing cherrypick stash
+stashed gitignore gitattributes dotfiles changelog changelogs readme readmes codeowners
+prs mrs ci cicd devops gitops dev devs prod staging qa uat sprint backlog standup linter linters
+linting lint lints formatter formatters precommit githooks semver
+
+# General programming
+config configs configurable auth authn authz cli clis api apis json yaml yml toml csv tsv xml
+html css scss sass less frontend frontends backend backends middleware middlewares refactor
+refactors refactored refactoring codebase codebases codegen runtime runtimes boolean booleans
+bitmask bitmasks bitwise param params argv argc deinit ctor dtor getter getters setter setters
+semaphore semaphores callback callbacks closure closures iterator iterators endpoint endpoints
+serializer serializers deserializer deserialize deserialized deserializing deserialization
+serialize serialized serializing serialization marshal unmarshal parser parsers lexer lexers
+tokenizer tokenizers tokenize tokenized tokenizing embeddings embedding llm llms rag subagent
+subagents agentic mcp sdk sdks ide ides repl stacktrace stacktraces traceback backtrace
+backtraces todo todos fixme wip nan inf crud restful rpc cronjob cronjobs
+enqueue dequeue mutable immutable immutability nullable optionals unsync
+threadpool multithreaded multithreading concurrency parallelism idempotent
+idempotency memoize memoized memoization debounce debounced throttle throttled retry retries
+backoff timeout timeouts keepalive healthcheck healthchecks uptime downtime failover rollback
+rollbacks rollout rollouts redeploy redeployed deploy deploys deployed deploying deployment
+deployments hotfix hotfixes bugfix bugfixes changeset changesets diff diffs patchset codepath
+codepaths hardcode hardcoded hardcoding inline inlined inlining noop noops boilerplate
+scaffold scaffolded scaffolding typecheck typechecks typechecked typechecking
+typesafe untyped generic generics monomorphize polymorphism subclass subclasses superclass
+mixin mixins queue queues dequeued
+hashing hashed hasher rehash checksum checksums sha md base url urls uri uris
+querystring slug slugs subdomain subdomains wildcard wildcards glob globs globbing
+whitespace newline newlines linebreak tabstop indent indents dedent utf ascii unicode
+codepoint codepoints bytestring bytestrings bytecode opcode opcodes assembler compiler
+compilers interpreter interpreters transpilers linker linkers lexing parsing ast asts
+precompiled prebuilt prebuild postbuild buildscript buildscripts
+dockerize containerize containerized orchestrator microservice microservices serverless
+eventloop nonblocking blocking stateless stateful
+statefulness sandbox sandboxed sandboxing jailbreak preload preloaded prefetch prefetched
+lazyload lazily autoload autosave autofill autoformat autoscale autoscaling autoscaler
+upstream downstream fork forked forking pullrequest codereview reviewer reviewers
+approver approvers maintainer maintainers contributor contributors codemod codemods
+openapi swagger postman insomnia ngrok tailscale wireguard zerotier vpn vpns
+
+# AI and data tools
+openai anthropic claude gemini llama ollama mistral huggingface pytorch tensorflow keras
+onnx gguf lora qlora finetune finetuned finetuning vllm langchain langgraph
+llamaindex chromadb faiss weaviate milvus rerank reranker rerankers reranking
+chatbot chatbots copilot copilots codex multimodal
+
+# File types and formats
+txt png jpg jpeg gif webp svg pdf mdx rst ini cfg conf lock dll exe msi dmg deb rpm
+appimage ttf otf woff ico icns plist manifest proto ndjson jsonl
+
+# Common abbreviations in code talk
+src lib libs bin pkg pkgs ctx req reqs res err errs msg msgs buf bufs ptr ptrs len idx val vals
+tmp num nums obj objs arr arrs fmt std usr opt opts dir dirs pwd cb cbs dep rs ts js py rb
+sh ps fns vars consts inits figma grafana kibana sentry
+datadog prometheus loki jaeger otel opentelemetry
+# Found by the quality corpus (examples/quality.rs) as valid words the engine "fixed".
+truthy falsy crypto implementors

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "unflub",
+  "version": "0.1.0",
+  "identifier": "ca.rmgn.unflub",
+  "build": {
+    "beforeDevCommand": "cargo build -p unflub-engine && npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build && node ../scripts/build-engine.mjs",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "publisher": "Reimagine Media (RMGN)",
+    "homepage": "https://unflub.rmgn.net",
+    "category": "Utility",
+    "shortDescription": "Phone-style autocorrect for every text field",
+    "copyright": "© 2026 Matias Suxo",
+    "externalBin": ["binaries/unflub-engine"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows/installer-hooks.nsh"
+      },
+      "wix": {
+        "fragmentPaths": ["windows/uninstall-cleanup.wxs"],
+        "componentGroupRefs": ["UnflubUninstallCleanup"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA3QjVDODgzRTgzMjk3RjEKUldUeGx6TG9nOGkxQitMUkR1ZWdFeFFLd0lhRUVVYUpEN2hLMVN4N3pTY1hzb0dsQlhYb3V1NUQK"
+    }
+  }
+}

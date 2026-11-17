@@ -1,0 +1,59 @@
+# Contractions and the words they stand for. The SymSpell list gives every contraction the
+# same placeholder count (300000); at load time each one gets ten times the count of its
+# expansion instead (bigram count rescaled to the unigram corpus, or the unigram count). The
+# factor reflects that typed text uses contractions far more than the books behind the counts.
+can't cannot
+won't will not
+don't do not
+couldn't could not
+shouldn't should not
+wouldn't would not
+needn't need not
+mustn't must not
+aren't are not
+didn't did not
+doesn't does not
+hadn't had not
+hasn't has not
+haven't have not
+isn't is not
+wasn't was not
+weren't were not
+i'm i am
+i'll i will
+i'd i would
+i've i have
+he'll he will
+he'd he would
+he's he is
+she'll she will
+she'd she would
+she's she is
+it'll it will
+it'd it would
+it's it is
+we'll we will
+we'd we would
+we're we are
+we've we have
+they'll they will
+they'd they would
+they're they are
+they've they have
+you'll you will
+you'd you would
+you're you are
+you've you have
+that's that is
+there's there is
+here's here is
+what's what is
+where's where is
+who's who is
+who'll who will
+who'd who would
+let's let us
+could've could have
+should've should have
+would've would have
+might've might have

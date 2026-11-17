@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.28.0.schema.json
+
+PackageIdentifier: RMGN.unflub
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Reimagine Media (RMGN)
+PublisherUrl: https://rmgn.net
+PublisherSupportUrl: https://github.com/ReimagineMedias/unflub/issues
+Author: RMGN
+PackageName: unflub
+PackageUrl: https://unflub.rmgn.net
+License: MIT
+LicenseUrl: https://github.com/ReimagineMedias/unflub/blob/main/LICENSE
+Copyright: © 2026 Matias Suxo
+ShortDescription: Phone-style autocorrect for every text field.
+Description: |-
+  unflub fixes a typo the moment you finish the word, in any app: chat, browser, editor.
+  Press Backspace right after a fix to put your word back, and unflub remembers.
+  It lives in the tray and needs no account. Nothing you type leaves your computer.
+Moniker: unflub
+Tags:
+  - autocorrect
+  - spelling
+  - spell-checker
+  - typing
+  - typos
+  - productivity
+ReleaseNotesUrl: https://github.com/ReimagineMedias/unflub/releases/tag/v0.1.0
+ManifestType: defaultLocale
+ManifestVersion: 1.28.0
