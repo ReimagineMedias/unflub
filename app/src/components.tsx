@@ -30,7 +30,6 @@ export function Disclosure() {
       <ul>
         <li>{t("privacy.disclosure.usage")}</li>
         <li>{t("privacy.disclosure.crashes")}</li>
-        <li>{t("privacy.disclosure.update")}</li>
       </ul>
     </div>
   );

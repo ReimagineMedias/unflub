@@ -74,13 +74,6 @@ export interface StatsView {
   daysCounted: number;
 }
 
-/** Mirrors `SendPreview` in src-tauri/src/lib.rs. */
-export interface SendPreview {
-  stats: string | null;
-  headers: [string, string][];
-  crashReportsAvailable: boolean;
-}
-
 /** Mirrors `InstallSource` in src-tauri/src/install.rs. */
 export type InstallSource = "installer" | "winget" | "scoop" | "store" | "portable";
 
