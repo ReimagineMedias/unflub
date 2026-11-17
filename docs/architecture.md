@@ -89,6 +89,13 @@ COM multithreaded apartment:
   word writes the user's dictionary, so it also happens in the background.
 - **Elevated windows.** A normal process can't see keys typed into administrator windows or
   inject into them, so unflub does nothing there.
+- **Hook watchdog.** Windows can drop a low-level hook without a word (a callback that took too
+  long, or sometimes across sleep or a locked session). Every 5 s the hook thread compares
+  `GetLastInputInfo` with the time of its last keyboard or mouse callback; input more than 2 s
+  newer than any callback means the hooks are gone, and they are installed again (then at most
+  every 30 s, doubling to 10 min while it keeps happening, since touch input or a secure
+  desktop can look the same). A message-only window also re-arms them on resume from sleep and
+  session unlock. Each reinstall is a `HookEvent::HooksReinstalled`, counted in the usage stats.
 
 ### The pill
 
@@ -123,8 +130,10 @@ forwarder. Every settings change applies without a restart:
 - **Engine settings** reach the hook thread through `LiveEngine` (`live.rs`): the app queues a
   new `Config` on a channel, and the hook thread applies the newest one at the start of the next
   key. Checking an empty channel is one atomic read, so the hook never waits or takes a lock.
-  Excluded apps travel in that `Config` (the engine drops keys from those apps); the hook's own
-  exclude list stays empty, so there is one list to keep current.
+  Excluded apps travel in that `Config` (the engine drops keys from those apps). The hook's own
+  exclude list holds only `unflub.exe`, so nothing typed in unflub's own windows (your words,
+  app names) is ever "fixed". The tour's practice box runs a separate engine instead
+  (`tour.rs`): the web view sends each key over IPC and draws the result and the pill itself.
 - **Pause** removes the keyboard and mouse hooks and closes the pill; resume installs them
   again. While paused unflub sees no keys at all.
 - **Language** changes restart the hook with a spell checker for the new language. If Windows
@@ -196,9 +205,37 @@ count as known words and are never corrected.
 - **Pill**: drawn natively in a click-through, no-activate window on the core process's
   `unflub-overlay` thread, shown briefly after a fix. No web view.
 - **Settings**: a Tauri window created on demand and destroyed when closed.
-- **Updates**: an `unflub-update` thread that wakes hourly and, at most once a day, checks GitHub for a
-  newer version. It downloads, verifies and installs one only when the user asks. See
+- **Updates**: an `unflub-update` thread that checks api.rmgn.ca about two minutes after launch and
+  then daily. With automatic updates on it downloads and verifies a new version in the
+  background; it installs only on Restart now or quit. See
   [releasing.md](releasing.md#how-the-app-updates).
+- **Stats**: an `unflub-stats` thread that saves the local Stats page and usage counts every ten
+  minutes and sends the daily usage stats.
+
+## Network and privacy
+
+Nothing typed ever leaves the computer: words reach only the engine, the pill and, for the local
+Stats page, `stats.json` in the app data folder. Everything unflub sends goes to api.rmgn.ca
+(contract: `D:\Code\rmgn-api\docs\unflub-contract.md`) and carries no identifier.
+
+| What | When | Carries | Off switch |
+|---|---|---|---|
+| Update check | ~2 min after launch, then daily | app and OS version, `X-Rollout-Bucket` (random 0 to 99, redrawn per version), `X-First` (first check of the UTC day/week/month) | Machine policy `DisableUpdates` |
+| Remote config | at launch and with each check | the same headers | Policy `DisableRemoteConfig` |
+| Update download | when an update is found (auto) or on Restart now | nothing extra | Automatic updates, policy |
+| Usage stats | once a day | counts, settings snapshot, p99 latencies, health counters; no headers (`usage.rs`, allowlist test) | Privacy > Anonymous usage stats (on by default), policy `DisableUsageStats` |
+| Crash report | next start after a crash | scrubbed Sentry event: location, stack, modules, OS and app version (`crash.rs`) | Privacy > Crash reports (on by default), policy `DisableCrashReports`; builds without `SENTRY_DSN` |
+
+- **Remote config only takes away.** Its flags (`pill_enabled`, `uia_caret`, `stats_enabled`,
+  `min_check_interval_h`) can switch a feature off or make a limit stricter, never turn on what
+  the user or a policy turned off. Each consumer ANDs the flag with its own setting
+  (`remote.rs` tests every combination).
+- **Machine policy** in `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`) overrides the user's
+  switch; the window shows "Managed by your organization".
+- **Who updates** depends on `install-source` beside `unflub.exe` (`install.rs`): the setup and
+  winget update themselves; Scoop, Store and portable copies are told to use their tool.
+- **Settings file** `settings.json` has a `schemaVersion`; `migrations.rs` upgrades older files
+  step by step and keeps a `.v<N>` copy. Fields from a newer unflub are kept and written back.
 
 ## Later layers
 

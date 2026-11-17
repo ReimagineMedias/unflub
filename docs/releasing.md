@@ -1,17 +1,23 @@
 # Releasing
 
-A version tag builds every installer, signs them for the updater and opens a **draft** GitHub
-Release. Nothing reaches users until someone reviews the draft and publishes it. Publishing is
-also what moves the updater, and (once enabled) what opens the winget pull request.
+A version tag builds every installer, signs them for the updater, scans them, uploads them to R2
+and registers the release with api.rmgn.ca, where it lands **paused at 0%**. Nobody gets it until
+the owner, signed in to the dashboard, activates it and raises the rollout step by step. CI can
+only register; every rollout decision is a person's.
 
 ```
-bump version ─► PR, merge ─► tag vX.Y.Z ─► Release workflow ─► draft release ─► review ─► publish
-                                              │                                          │
-                                              ├ setup.exe + MSI, x64 and arm64           ├ updater sees it within a day
-                                              ├ .sig for each (updater)                  └ winget PR (if enabled)
-                                              ├ latest.json, SHA256SUMS.txt
-                                              └ notes from Conventional Commits
+bump ─► PR, merge ─► tag vX.Y.Z ─► Release workflow ──────────────────────► dashboard (owner)
+                                    ├ build: setup.exe + MSI, x64 and arm64    ├ activate at 5%
+                                    ├ .sig for each (updater signature)        ├ watch a day
+                                    ├ VirusTotal (≤ 2 engines)                 ├ 25%, then 100%
+                                    ├ build provenance attestation             ├ pause or block if needed
+                                    ├ R2: rmgn-releases/unflub/<version>/      └ publish the GitHub draft
+                                    ├ POST /admin/releases (paused, 0%)          at 100% (mirror, winget)
+                                    └ draft GitHub Release (mirror)
 ```
+
+The dashboard is <https://api.rmgn.ca/dashboard/?product=unflub>, behind Cloudflare Access. The API
+contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
 
 ## Cut a release
 
@@ -29,9 +35,9 @@ bump version ─► PR, merge ─► tag vX.Y.Z ─► Release workflow ─► d
    Open the PR, and merge it (squash) once it is approved.
 
 2. **Dry run (optional, recommended for the first few releases).** Actions > Release > Run
-   workflow on `main` with "dry run" ticked. It builds everything, writes `latest.json` and
-   `SHA256SUMS.txt`, and attaches them to the run as the `release-assets` artifact without
-   touching any release.
+   workflow on `main` with "dry run" ticked. It builds everything, scans with VirusTotal (if the
+   key is set), writes `latest.json` and `SHA256SUMS.txt`, and attaches them to the run as the
+   `release-assets` artifact. Nothing is uploaded, registered or drafted.
 
 3. **Tag** the merged commit:
 
@@ -42,33 +48,67 @@ bump version ─► PR, merge ─► tag vX.Y.Z ─► Release workflow ─► d
    ```
 
    The workflow refuses a tag that doesn't match the version in the files. A version with a
-   hyphen (`0.3.0-beta.1`) becomes a pre-release, which the updater and winget ignore.
+   hyphen (`0.3.0-beta.1`) is registered on the `beta` channel and drafted as a GitHub
+   pre-release. The release job runs in the `release` environment; if it has required reviewers,
+   approve it in the run.
 
-4. **Review the draft** (the run summary links to it). Check that:
-   - the notes read well (edit them on GitHub if not; they come from commit subjects),
-   - the assets are there: `unflub_0.2.0_x64-setup.exe`, `unflub_0.2.0_arm64-setup.exe`, both
-     MSIs, a `.sig` for each, `latest.json` and `SHA256SUMS.txt`,
-   - `latest.json` has `windows-x86_64`, `windows-x86_64-nsis`, `windows-x86_64-msi` and the
-     same three for `windows-aarch64`,
-   - the x64 setup installs, starts, shows the new version under About, and uninstalls cleanly
-     (Windows Sandbox is the quickest clean machine).
+4. **What the run does after the builds**, in order, stopping at the first failure:
+   - VirusTotal scans each `*-setup.exe` and `*.msi` and fails the run if more than two engines
+     flag one (skipped, with a notice, without `VT_API_KEY`).
+   - `actions/attest-build-provenance` records which workflow run built each installer
+     (`gh attestation verify <file> --repo ReimagineMedias/unflub` checks it).
+   - `wrangler r2 object put` uploads the installers and their `.sig` files, nothing else, to
+     `rmgn-releases/unflub/<version>/` (`scripts/register-release.mjs --list` picks them).
+   - `POST https://api.rmgn.ca/unflub/v1/admin/releases` registers the release with the bearer
+     `ADMIN_TOKEN` and the Cloudflare Access service token. The body comes from
+     `scripts/register-release.mjs`: version, channel, notes, and per platform the setup file, its
+     signature and the installer the website serves. The API stores it **paused at 0%**. A re-run
+     gets `409` and changes nothing.
+   - The draft GitHub Release gets the same files plus `latest.json` and `SHA256SUMS.txt`.
 
-5. **Publish** the draft. From that moment `releases/latest/download/latest.json` points at it,
-   and installed copies pick it up at their next daily check.
+5. **Check the draft** (the run summary links to it): notes read well, the assets are all there,
+   and the x64 setup installs, starts, shows the new version under About, and uninstalls cleanly
+   (Windows Sandbox is the quickest clean machine).
 
-> [!IMPORTANT]
-> The updater endpoint and every download link need anonymous access, so the repository has to
-> be public before v0.1.0 is published. While it is private, update checks report an error on the
-> About page and nothing else breaks.
+6. **Roll it out from the dashboard**, signed in through Cloudflare Access:
+   1. Set the release **active at 5%**.
+   2. Watch the dashboard for a day: update checks reaching the new version, crash and
+      `hook_reinstalls` counts in the usage stats, Sentry (if set up).
+   3. **25%**, watch again, then **100%**.
+   4. At 100%, **publish the GitHub draft**. That moves `releases/latest` (the mirror and
+      Scoop's `checkver`) and, once enabled, opens the winget pull request.
+
+   **Pause** stops offering a release to anyone who doesn't have it yet. **Block** also offers
+   everyone on it the newest active release, older or newer (the app accepts a rollback). Setting
+   **min_version** in the policy makes everything below it a critical update that ignores the
+   rollout percentage.
+
+7. **Windows Defender.** Submit each new setup to Microsoft for analysis at
+   <https://www.microsoft.com/wdsi/filesubmission> ("Software developer", file type "Incorrectly
+   detected as malware/malicious", or as a new release before anyone reports a false positive).
+   Unsigned installers start with no reputation; a clean verdict there clears Defender's
+   heuristics sooner. Attach the VirusTotal link from the run summary.
+
+The website's download buttons point at `https://api.rmgn.ca/unflub/download/windows?ref=site`,
+which redirects to the newest stable release that is at 100% (the site lives on another branch).
 
 ## Secrets and variables
 
-Settings > Secrets and variables > Actions. Only the first two are needed to release.
+Settings > Secrets and variables > Actions. The release secrets belong to the `release`
+environment (Settings > Environments > release), so only that job can read them.
 
 | Name | Kind | Needed for | Value |
 |---|---|---|---|
 | `TAURI_SIGNING_PRIVATE_KEY` | secret | every release | Contents of `D:\Code\unflub\.local\updater\unflub-updater.key` |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | secret | every release | Contents of `D:\Code\unflub\.local\updater\unflub-updater.password` |
+| `CLOUDFLARE_R2_TOKEN` | secret | every release | Cloudflare API token with **Workers R2 Storage: Edit** on `rmgn-releases` only |
+| `CLOUDFLARE_ACCOUNT_ID` | secret | every release | The Cloudflare account that owns `rmgn-releases` |
+| `ADMIN_TOKEN` | secret | every release | The API's CI bearer token. It can only register releases (paused, 0%) |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | secrets | every release | Cloudflare Access service token allowed through to `/unflub/v1/admin` |
+| `SENTRY_DSN` | secret | crash reports, optional | The Sentry project's DSN. Compiled into the app; without it crash reports are off |
+| `SENTRY_AUTH_TOKEN` | secret | crash symbols, optional | Sentry token with `project:releases` scope, for `sentry-cli debug-files upload` |
+| `SENTRY_ORG`, `SENTRY_PROJECT` | variables | crash symbols, optional | Sentry organisation and project slugs |
+| `VT_API_KEY` | secret | antivirus scan, optional | A VirusTotal API key |
 | `PUBLISH_PACKAGES` | variable | winget | `true` turns on `publish-packages.yml`. Anything else, or unset, keeps it off. |
 | `WINGET_TOKEN` | secret | winget | Classic personal access token with `public_repo` and `workflow` scopes (fine-grained tokens don't work with the action) |
 | `WINGET_FORK_USER` | variable | winget, optional | Owner of the `winget-pkgs` fork, if not `ReimagineMedias` |
@@ -76,13 +116,17 @@ Settings > Secrets and variables > Actions. Only the first two are needed to rel
 | `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE` | variables | code signing, optional | Artifact Signing account details, see below |
 | `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD` | secrets | code signing, optional | A `.pfx` as one line of base64, and its password |
 
-Set the updater secrets from the files, so the values never pass through the clipboard or shell
-history (PowerShell):
+Set secrets from files, so the values never pass through the clipboard or shell history
+(PowerShell):
 
 ```powershell
-Get-Content -Raw D:\Code\unflub\.local\updater\unflub-updater.key | gh secret set TAURI_SIGNING_PRIVATE_KEY
-Get-Content -Raw D:\Code\unflub\.local\updater\unflub-updater.password | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+Get-Content -Raw D:\Code\unflub\.local\updater\unflub-updater.key | gh secret set TAURI_SIGNING_PRIVATE_KEY --env release
+Get-Content -Raw D:\Code\unflub\.local\updater\unflub-updater.password | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --env release
 ```
+
+The build jobs read the updater and Sentry secrets too; GitHub only gives environment secrets to
+jobs in that environment, so keep those two (and `SENTRY_*`) as repository secrets, and the R2,
+API, Access and VirusTotal ones as `release` environment secrets.
 
 > [!WARNING]
 > Back up both updater files (a password manager is fine). If the private key is lost, every
@@ -91,18 +135,33 @@ Get-Content -Raw D:\Code\unflub\.local\updater\unflub-updater.password | gh secr
 
 ## How the app updates
 
-- `tauri-plugin-updater` is driven from Rust (`app/src-tauri/src/updates.rs`). Once a day, while
-  **Settings > About > Automatic updates** is on (the default), it fetches
-  `https://github.com/ReimagineMedias/unflub/releases/latest/download/latest.json`. That check
-  (also on **Check now**) and the download after **Restart** are the only network traffic unflub
-  makes.
-- When there is a newer version, the About page shows **Update available — restart to install**.
-  Nothing is downloaded until the user presses Restart, so a pending update costs no memory. Then
-  the setup is downloaded, verified against the public key, and run: it closes unflub, upgrades
-  it in place and opens it again.
-- The updater asks for `windows-<arch>-nsis` or `windows-<arch>-msi` first, so each install keeps
-  updating from the installer type it came from. `scripts/updater-manifest.mjs` writes those keys.
+- `tauri-plugin-updater` is driven from Rust (`app/src-tauri/src/updates.rs`). About two minutes
+  after launch, then every 24 hours plus up to 90 random minutes, and on **Check now**, it asks
+  `https://api.rmgn.ca/unflub/v1/update/{target}/{arch}/{current_version}?channel=stable|beta`.
+  Never more often than the remote config's `min_check_interval_h` (20 h at launch of v0.1; 1 h
+  without a server).
+- The request carries no identifier: `User-Agent: unflub/<version>`, `X-OS-Version`,
+  `X-Rollout-Bucket` (a random 0 to 99 drawn again for every installed version) and `X-First`
+  (`day`, `week`, `month`: the first check of that UTC period, which is how the dashboard counts
+  active installs). The same headers go with `GET /unflub/v1/config`.
+- The server picks the version. The app accepts any version other than its own, so a blocked
+  release can roll installs back to an older one; an older offer is shown as an important
+  update. Download URLs must be https.
+- With **Automatic updates** on (the default), the update downloads in the background, is
+  verified against the public key, and waits on disk in `%LOCALAPPDATA%\ca.rmgn.unflub\updates`
+  (the profile folder's ACL: the user, SYSTEM and Administrators). Its SHA-256 is kept in memory
+  and checked again, with the signature, right before it installs. The tray says **Restart to
+  update to vX**, and About shows the notes with **Restart now** and **Later**. It installs on
+  Restart now or when unflub quits from the tray, never on its own. With the switch off, unflub
+  only tells you.
+- Only copies installed by the setup or winget update themselves. Scoop, Store and portable
+  copies show how to update with their tool (`install-source` beside `unflub.exe`, see
+  `app/src-tauri/src/install.rs`).
+- The `DisableUpdates` machine policy (`HKLM\Software\Policies\RMGN\unflub`) turns all of this
+  off.
 - Dev builds never check in the background and refuse to install.
+- `latest.json` is still written and attached to the GitHub Release for transparency; the app no
+  longer reads it.
 
 Build installers with updater signatures locally (PowerShell, not Git Bash):
 
@@ -115,12 +174,22 @@ cd app; npm run tauri build -- --config src-tauri/tauri.release.conf.json
 Without `--config src-tauri/tauri.release.conf.json`, `npm run tauri build` makes plain
 installers and needs no key.
 
+## Crash reports
+
+With `SENTRY_DSN` set, release builds can send crash reports (`app/src-tauri/src/crash.rs`). A
+panic writes one scrubbed report to `crash-pending.json`; it is sent at the next start if the
+user's switch is on, or after they answer the prompt. With `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` and
+`SENTRY_PROJECT` set, the build keeps line tables in a separate PDB (`CARGO_PROFILE_RELEASE_DEBUG=
+line-tables-only`, strip off; the exe doesn't grow) and uploads it with `@sentry/cli` 3.8.2, so
+stacks show function names.
+
 ## Workflow security
 
 - Every action in `.github/workflows/` is pinned to a full commit SHA, with its version as a
   trailing comment (`uses: actions/checkout@<sha> # v7.0.1`). A moved or hijacked tag can't change
   what runs next to the signing keys. `dtolnay/rust-toolchain` has no release tags, so it is pinned
-  to its `stable` branch commit with `toolchain: stable` set explicitly.
+  to its `stable` branch commit with `toolchain: stable` set explicitly. Command-line tools are
+  pinned by version: wrangler in `app/package-lock.json` (`npx --no-install`), `@sentry/cli@3.8.2`.
 - `.github/dependabot.yml` checks weekly and opens PRs that bump each SHA and its comment
   together, plus Cargo and npm (`/app`, `/site`) dependencies. Review action bumps like code.
 - To pin a new action, resolve the tag to a commit (an annotated tag points at a tag object first):
@@ -131,11 +200,14 @@ installers and needs no key.
   gh api repos/OWNER/REPO/git/tags/SHA --jq .object.sha
   ```
 
-- Permissions are least privilege: every workflow defaults to `contents: read`, and only the
-  release job that creates the draft gets `contents: write`. `publish-packages.yml` uses its own
-  `WINGET_TOKEN` for the winget-pkgs fork. That action installs `komac` through
-  `cargo-bins/cargo-binstall@main` internally, which we can't pin from here; it never sees the
-  updater or code signing secrets.
+- Permissions are least privilege: every workflow defaults to `contents: read`. Only the release
+  job gets more: `contents: write` for the draft, `id-token: write` and `attestations: write` for
+  provenance. It runs in the `release` environment. The CI's API token can only register a
+  release, paused; activating, rollout, pause, block and policy need a person signed in through
+  Cloudflare Access. The API headers are written to a private temp file for `curl -H @file`, so
+  no secret appears on a command line. `publish-packages.yml` uses its own `WINGET_TOKEN` for the
+  winget-pkgs fork. That action installs `komac` through `cargo-bins/cargo-binstall@main`
+  internally, which we can't pin from here; it never sees the updater or code signing secrets.
 
 ## Windows code signing
 
@@ -209,7 +281,11 @@ in Azure Key Vault, Tauri's docs use `relic` as the `signCommand` instead.
 ## Packages
 
 All three manifests are in `packaging/` at version 0.1.0 with placeholder hashes (all zeros).
-Fill the hashes from the published release's `SHA256SUMS.txt` before submitting anything.
+Fill the hashes from the published release's `SHA256SUMS.txt` before submitting anything. Their
+installer URLs point at the API, `https://api.rmgn.ca/unflub/v1/files/{version}/{file}`, which
+streams the same files from R2; the GitHub Release is the mirror. Each one tells unflub where it
+came from: winget passes `/SOURCE=winget` to the setup, Chocolatey `/SOURCE=chocolatey` (counted
+as the setup), and Scoop writes `install-source` itself (see "How the app updates").
 
 ### winget
 
@@ -226,7 +302,9 @@ for every published release, once enabled.
 5. Once it is merged: fork `microsoft/winget-pkgs` to the `ReimagineMedias` account, add
    `WINGET_TOKEN`, and set the variable `PUBLISH_PACKAGES` to `true`.
 
-From then on, publishing a release opens the winget PR. Re-run it for a tag with Actions >
+From then on, publishing a release opens the winget PR. `winget-releaser` copies the previous
+manifest but takes the installer URL from the GitHub Release; change it back to the API URL in
+the PR (or with `komac update --urls`) before it merges. Re-run it for a tag with Actions >
 Publish packages > Run workflow. The action ([`winget-releaser`](https://github.com/vedantmgoyal9/winget-releaser),
 pinned to a commit) copies the previous manifest and updates the URLs and hashes.
 
@@ -247,8 +325,8 @@ Scoop installs from a bucket, which is a Git repository of manifests.
    hash from `SHA256SUMS.txt`. Add Scoop's Excavator workflow (from `ScoopInstaller/GithubActions`)
    to the bucket to bump it on a schedule.
 
-Scoop extracts the setup instead of running it, so unflub's own updater would install a second,
-per-user copy. The manifest's notes tell Scoop users to turn off Automatic updates. Its
+Scoop extracts the setup instead of running it. The manifest writes `install-source` with
+`scoop`, so unflub never updates itself there and About says "Update with Scoop". Its
 uninstaller removes start at login.
 
 ### Chocolatey
@@ -272,7 +350,7 @@ uninstaller's confirm page; it is off by default.
 | Start menu shortcut | | removed | removed |
 | Start at login | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\unflub` | removed | removed |
 | Task Manager's startup switch | `HKCU\...\Explorer\StartupApproved\Run\unflub` | removed | removed |
-| Installer bookkeeping | `HKCU\Software\RMGN\unflub` | removed | n/a |
+| Installer bookkeeping | `HKCU\Software\Reimagine Media (RMGN)\unflub` (from the publisher name) | removed | n/a |
 | Settings, last update check | `%APPDATA%\ca.rmgn.unflub` | with the checkbox | kept |
 | Web view cache | `%LOCALAPPDATA%\ca.rmgn.unflub` | with the checkbox | kept |
 
@@ -296,16 +374,23 @@ setting was on, unflub adds it back when it next starts.
 
 ## Rollback
 
-- **Draft not published yet:** delete it, and the tag if it was wrong:
-  `gh release delete v0.2.0 --cleanup-tag`.
-- **Published and broken:** turn it back into a draft (`gh release edit v0.2.0 --draft=true`).
-  `releases/latest` then serves the previous release, so copies that haven't updated stay where
-  they are. The updater never downgrades, so copies that already updated need a fixed release:
-  bump to 0.2.1 and release it the normal way.
+- **Registered, not rolled out:** nothing to do; a paused release at 0% reaches nobody. Leave
+  it paused, or block it in the dashboard. Delete the GitHub draft and the tag if they were
+  wrong: `gh release delete v0.2.0 --cleanup-tag`.
+- **Rolling out and broken:** **pause** it in the dashboard. Copies that haven't updated stay
+  where they are.
+- **Copies already on it need to go back:** **block** it. Every copy on a blocked version is
+  offered the newest active release on its channel at its next check, even an older one, and
+  installs it like any update (with automatic updates on, at the next restart or quit). Ship the
+  fix as the next version the normal way.
+- **Everything below a version is bad:** set `min_version` in the policy. Older copies get the
+  newest active release as a critical update, ignoring the rollout percentage.
+- **Stop all updates:** turn off `updates_enabled` (the kill switch). Every check gets "no
+  update".
 - **winget:** close the automatic PR if it hasn't merged. If it has, the next version replaces
   it; ask the winget maintainers to remove a version only if it is harmful.
-- Never replace the assets of a published release: winget, Scoop and `SHA256SUMS.txt` all pin
-  their hashes.
+- Never replace files under `rmgn-releases/unflub/<version>/` or the assets of a published
+  GitHub Release: the updater signatures, winget, Scoop and `SHA256SUMS.txt` all pin them.
 - **Updater key leaked:** generate a new pair (`npx tauri signer generate -w <file>`), put the new
   public key in `tauri.conf.json`, and ship that version signed with the *old* key. Releases after
   it are signed with the new key.
