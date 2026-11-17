@@ -24,6 +24,16 @@ const { size = "large", short = false, class: className } = Astro.props;
   }
   <span data-dl-label>{short ? "Download" : "Download for Windows"}</span>
 </a>
+{
+  size === "large" && !short && (
+    <button type="button" class="btn btn-quiet share" data-share hidden>
+      <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <path d="M8 12 12 8M7 9.5 5.5 11a2.5 2.5 0 0 0 3.5 3.5L10.5 13M13 10.5 14.5 9A2.5 2.5 0 0 0 11 5.5L9.5 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+      </svg>
+      <span data-share-label>Copy the link</span>
+    </button>
+  )
+}
 
 <script>
   import "../scripts/os";

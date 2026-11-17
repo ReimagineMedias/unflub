@@ -14,23 +14,37 @@ const links = [
 <header class="site-header">
   <nav class="pill-nav day" aria-label="Main">
     <a class="home" href="/" aria-label="unflub home"><Wordmark /></a>
-    <ul>
+    <ul class="wide">
       {links.map((l) => <li><a href={l.href}>{l.label}</a></li>)}
     </ul>
+    <!-- Phones and tablets: the same links behind one button. -->
+    <details class="menu" data-menu>
+      <summary>Sections</summary>
+      <ul>
+        {links.map((l) => <li><a href={l.href}>{l.label}</a></li>)}
+      </ul>
+    </details>
     <a class="nav-dl" href={SITE.download} data-dl="short"><span data-dl-label>Download</span></a>
   </nav>
   <!-- The night copy sits exactly on top and fades in over the home page's night stretch. It is inert, so clicks
        and focus always reach the real nav underneath. -->
   <div class="pill-nav night" aria-hidden="true" inert>
     <span class="home"><Wordmark /></span>
-    <ul>{links.map((l) => <li><span>{l.label}</span></li>)}</ul>
-    <span class="nav-dl">Download</span>
+    <ul class="wide">{links.map((l) => <li><span>{l.label}</span></li>)}</ul>
+    <span class="menu-label">Sections</span>
+    <span class="nav-dl" data-dl-mirror>Download</span>
   </div>
 </header>
 
 <script>
   import "../scripts/os";
   import "../scripts/night";
+
+  // The Sections menu closes once a section is picked.
+  const menu = document.querySelector<HTMLDetailsElement>("[data-menu]");
+  menu?.addEventListener("click", (e) => {
+    if ((e.target as Element).closest("a")) menu.open = false;
+  });
 </script>
 
 <style>
@@ -46,6 +60,7 @@ const links = [
   }
 
   .pill-nav {
+    position: relative;
     grid-area: 1 / 1;
     display: flex;
     align-items: center;
@@ -177,9 +192,70 @@ const links = [
     outline-color: var(--rose-on-dark);
   }
 
+  .menu,
+  .menu-label {
+    display: none;
+  }
+
   @media (max-width: 820px) {
-    ul {
+    .wide {
       display: none;
     }
+
+    .menu,
+    .menu-label {
+      display: block;
+    }
+  }
+
+  .menu summary,
+  .menu-label {
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .menu summary {
+    color: #d9c3bd;
+  }
+
+  .menu summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .menu[open] summary {
+    color: var(--paper);
+    background: rgba(242, 230, 227, 0.1);
+  }
+
+  .night .menu-label {
+    color: var(--brown);
+  }
+
+  .menu ul {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    translate: -50% 0;
+    display: grid;
+    gap: 2px;
+    min-width: 220px;
+    padding: 8px;
+    border-radius: 22px;
+    background: var(--espresso);
+    box-shadow: 0 16px 40px -12px rgba(45, 25, 22, 0.6);
+  }
+
+  .menu ul a {
+    padding: 12px 16px;
+    font-size: 1rem;
+    color: var(--paper);
+  }
+
+  .menu ul a:hover {
+    background: rgba(242, 230, 227, 0.08);
   }
 </style>

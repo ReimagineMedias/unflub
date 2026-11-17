@@ -96,7 +96,7 @@ const chats = [
 
 <style>
   .hero {
-    padding-top: calc(var(--header) + clamp(16px, 4vh, 48px));
+    padding-top: calc(var(--header) + clamp(8px, 2.4vh, 40px));
     overflow: clip;
   }
 
@@ -104,7 +104,12 @@ const chats = [
     display: grid;
     justify-items: center;
     text-align: center;
-    gap: clamp(14px, 2.4vh, 22px);
+    gap: clamp(12px, 2vh, 22px);
+  }
+
+  /* Short laptop screens: a slightly smaller slogan, so the chat's message box is on the first screen. */
+  .slogan {
+    font-size: clamp(2.6rem, min(6.2vw, 8.6vh), 8rem);
   }
 
   h1 {
@@ -160,8 +165,8 @@ const chats = [
   /* A studio card: key light from above, falling off toward the floor. The capsule floats over the window. */
   .studio {
     position: relative;
-    margin-top: clamp(24px, 4.5vh, 44px);
-    padding: clamp(48px, 8vh, 72px) clamp(14px, 5vw, 64px) 0;
+    margin-top: clamp(18px, 3vh, 44px);
+    padding: clamp(30px, 4.6vh, 64px) clamp(14px, 5vw, 64px) 0;
     border-radius: clamp(24px, 3vw, 40px);
     overflow: clip;
     background:
@@ -179,7 +184,7 @@ const chats = [
   .object {
     position: absolute;
     z-index: 2;
-    top: clamp(14px, 2.6vh, 24px);
+    top: clamp(6px, 1vh, 16px);
     left: 50%;
     translate: -50% 0;
     display: grid;
@@ -193,7 +198,7 @@ const chats = [
   .contact {
     width: 110%;
     height: 22px;
-    margin-top: 18px;
+    margin-top: 10px;
     border-radius: 50%;
     background: radial-gradient(closest-side, rgba(45, 25, 22, 0.26), rgba(45, 25, 22, 0));
   }
@@ -203,8 +208,15 @@ const chats = [
     margin-inline: auto;
   }
 
+  @media (min-width: 2000px) {
+    .studio-chat {
+      max-width: 1360px;
+    }
+  }
+
   .studio-chat :global(.chat) {
-    height: clamp(300px, 50vh, 430px);
+    /* Whatever the first screen has left after the copy, so the message box shows; roomier on tall screens. */
+    height: clamp(270px, 56svh - 142px, 720px);
     border-bottom-left-radius: 0;
     border-bottom-right-radius: 0;
     box-shadow:
@@ -229,6 +241,7 @@ const chats = [
       }
 
       .studio-chat {
+        transform-origin: 50% 100%;
         animation: rise linear both;
       }
 
@@ -255,9 +268,10 @@ const chats = [
     }
   }
 
+  /* Scale from the floor of the card, never slide below it, so the message box is never clipped. */
   @keyframes rise {
     from {
-      transform: translateY(36px) scale(0.97);
+      transform: scale(0.97);
     }
     to {
       transform: none;

@@ -42,6 +42,7 @@
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --page: min(1200px, 100% - 2 * var(--gutter));
+  /* Wide, tall screens get more room, so a 27-inch first screen isn't half empty. */
   --gutter: clamp(20px, 5vw, 56px);
   /* Space the floating nav takes at the top. */
   --header: 80px;
@@ -186,8 +187,19 @@ code {
 }
 
 /* Type scale: display, chapter, section, lead, body, small. */
+@media (min-width: 2000px) and (min-height: 1200px) {
+  :root {
+    --page: min(1560px, 100% - 2 * var(--gutter));
+  }
+
+  /* Everything set in rem (nav, buttons, body text) grows a step on 27-inch-class screens. */
+  html {
+    font-size: 118.75%;
+  }
+}
+
 .display {
-  font-size: clamp(2.6rem, min(6.2vw, 9.6vh), 6.25rem);
+  font-size: clamp(2.6rem, min(6.2vw, 9.6vh), 8rem);
   line-height: 0.92;
   font-weight: 780;
   letter-spacing: -0.055em;
@@ -243,6 +255,15 @@ code {
     transform 0.2s var(--ease),
     background-color 0.2s ease,
     box-shadow 0.2s ease;
+}
+
+.btn[hidden] {
+  display: none;
+}
+
+/* Phones get a link to the download page, not a download, so no download arrow. */
+html[data-os="mobile"] .dl svg {
+  display: none;
 }
 
 .btn:hover {

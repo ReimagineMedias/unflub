@@ -823,8 +823,10 @@ const apps = ["windowsterminal.exe", "powershell.exe", "cmd.exe", "wsl.exe", "ke
   }
 
   @media (max-width: 760px) {
+    /* Phones: the window grows with its page instead of scrolling inside itself, so swipes scroll the site. */
     .settings :global(.settings-win) {
-      height: 640px;
+      height: auto;
+      min-height: 560px;
     }
 
     .app {
@@ -853,6 +855,7 @@ const apps = ["windowsterminal.exe", "powershell.exe", "cmd.exe", "wsl.exe", "ke
     }
 
     .app-main {
+      overflow: visible;
       padding: 20px 16px 28px;
     }
 
