@@ -1,0 +1,32 @@
+name: Wrong or missed correction
+description: unflub fixed a word wrongly, or missed a typo
+labels: [engine]
+body:
+  - type: input
+    id: typed
+    attributes:
+      label: What you typed
+      placeholder: "teh"
+    validations:
+      required: true
+  - type: input
+    id: meant
+    attributes:
+      label: What you meant
+      placeholder: "the"
+    validations:
+      required: true
+  - type: input
+    id: got
+    attributes:
+      label: What unflub did
+      placeholder: "nothing / changed it to 'ten'"
+  - type: input
+    id: previous
+    attributes:
+      label: The word before it
+  - type: input
+    id: app
+    attributes:
+      label: App and OS
+      placeholder: "Discord on Windows 11"
