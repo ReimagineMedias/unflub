@@ -11,6 +11,11 @@ rust-version.workspace = true
 name = "unflub"
 path = "src/bin/unflub/main.rs"
 
+[[example]]
+name = "jobrun"
+# Run its rate and affinity tests with `cargo test`.
+test = true
+
 [dependencies]
 unflub-core.workspace = true
 
@@ -24,8 +29,10 @@ windows = { version = "0.58", features = [
   "Win32_Graphics_DirectWrite",
   "Win32_Graphics_Dxgi_Common",
   "Win32_Graphics_Gdi",
+  "Win32_Security",
   "Win32_System_Com",
   "Win32_System_Console",
+  "Win32_System_JobObjects",
   "Win32_System_LibraryLoader",
   "Win32_System_Ole",
   "Win32_System_Threading",
