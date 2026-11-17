@@ -8,6 +8,6 @@ export const PERFORMANCE = {
   stats: [
     { value: "0.1", unit: "ms", label: "to decide whether a word needs fixing" },
     { value: "~20", unit: "MB", label: "of memory while it waits in the background" },
-    { value: "0", unit: "%", label: "CPU when you are not typing" },
+    { value: "~0", unit: "%", label: "CPU while you aren't typing" },
   ],
 } as const;

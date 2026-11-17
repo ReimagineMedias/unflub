@@ -7,7 +7,7 @@ export const softwareApplication = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   name: "unflub",
-  description: "Free, open-source, offline, phone-style autocorrect for every text field on your computer.",
+  description: "Free, open-source, phone-style autocorrect for every app on Windows. Corrections run on your computer, without an internet connection.",
   url: abs("/"),
   image: abs(SITE.ogImage),
   operatingSystem: "Windows",

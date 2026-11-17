@@ -30,7 +30,7 @@ const steps = [
   <div class="view">
     <header class="wrap head">
       <h2 id="ew-title" class="section-title">Everywhere you type.</h2>
-      <p class="lead">If it takes text, unflub fixes it. Chat, email, the search bar, the prompt box. And it knows when to stay out of the way.</p>
+      <p class="lead">Chat, email, search bars, AI prompts and code comments. unflub leaves code, links and passwords alone.</p>
     </header>
     <div class="track">
   <div class="cards">
@@ -233,11 +233,15 @@ const steps = [
         overflow: clip;
         align-content: center;
         gap: clamp(14px, 3vh, 32px);
-        padding-top: calc(var(--header) - 16px);
+        padding-top: calc(var(--header) + 4px);
+      }
+
+      .head {
+        gap: 6px;
       }
 
       .head .lead {
-        display: none;
+        font-size: clamp(1rem, min(1.3vw, 2.2vh), 1.1875rem);
       }
 
       .cards {

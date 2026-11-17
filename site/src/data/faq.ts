@@ -22,7 +22,7 @@ export const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Will it slow my computer down?",
-    a: `It sits at about ${memory.value.replace("~", "")} ${memory.unit} of memory and uses no CPU while you aren't typing. Checking a word takes about ${decide.value} ${decide.unit}, so the fix is in before your next key lands.`,
+    a: `It sits at about ${memory.value.replace("~", "")} ${memory.unit} of memory and uses next to no CPU while you aren't typing. Checking a word takes about ${decide.value} ${decide.unit}, so the fix is in before your next key lands.`,
   },
   {
     q: "How do I uninstall it?",
