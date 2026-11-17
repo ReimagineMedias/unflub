@@ -45,7 +45,7 @@ It's Windows only and English only for now. macOS and Linux are next on the same
 code in it, so that's where help would go furthest.
 
 Repo: https://github.com/ReimagineMedias/unflub
-Site: https://unflub.rmgn.ca
+Site: https://unflub.rmgn.net
 
 I'd like feedback on the code, and on the default-on usage counts. Tell me if that's the wrong call.
 

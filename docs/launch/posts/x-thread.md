@@ -5,7 +5,7 @@ link the HN thread or ask anyone to vote there.
 
 ## Before posting
 
-- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.ca/` deployed, OG image live so the link unfurls.
+- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.net/` deployed, OG image live so the link unfurls.
 - [ ] The 30-second video from `../assets.md`, attached to post 1.
 - [ ] The download link uses `ref=x`. It counts as `other` until the API allowlist has `x`.
 - [ ] The separate-process line in post 4 is true for v0.1, or use the alternative given.
@@ -21,7 +21,7 @@ unflub is phone-style autocorrect for every text box on Windows. Finish a word, 
 
 Free, offline, MIT.
 
-https://unflub.rmgn.ca
+https://unflub.rmgn.net
 ```
 
 **2**
@@ -65,7 +65,7 @@ Nothing you type leaves your computer, and the code is public so you can check.
 ```text
 Windows now, English only. macOS and Linux are next.
 
-Download: https://api.rmgn.ca/unflub/download/windows?ref=x
+Download: https://api.rmgn.net/unflub/v1/download/windows?ref=x
 Or: winget install RMGN.unflub
 Code: https://github.com/ReimagineMedias/unflub
 

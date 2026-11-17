@@ -5,7 +5,7 @@
 - [ ] Personal account, created at least a week before you need to post. New accounts wait a week, or
       subscribe to the newsletter for immediate access. Company accounts cannot post or comment.
 - [ ] Verified email, and a filled-in profile: name, headline, website, links.
-- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.ca/` deployed.
+- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.net/` deployed.
 - [ ] Feedback from the Show HN is fixed or answered, so this is not the same launch twice in a week.
 - [ ] Gallery images and video from `../assets.md`.
 - [ ] The privacy line in the first comment matches the app; the separate-process sentence is true or cut.
@@ -20,7 +20,7 @@ Weekends have less traffic and less competition, which the guide says can suit a
 
 ## Fields
 
-**Product link:** `https://unflub.rmgn.ca/`. The guide says to link where people can get it; the site has
+**Product link:** `https://unflub.rmgn.net/`. The guide says to link where people can get it; the site has
 the download button and the privacy page.
 
 **Name** (40 max): `unflub`
@@ -48,7 +48,7 @@ I would use 1. The guide asks for the plain version, and the joke goes in the fi
 offered.
 
 **Links:** GitHub repo `https://github.com/ReimagineMedias/unflub`, privacy page
-`https://unflub.rmgn.ca/privacy/`.
+`https://unflub.rmgn.net/privacy/`.
 
 **Company info:** mark it open source and link the repo.
 

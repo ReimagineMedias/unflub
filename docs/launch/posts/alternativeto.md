@@ -6,7 +6,7 @@ in, and trim this draft to whatever fields the form asks for.
 
 ## Before submitting
 
-- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.ca/` deployed.
+- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.net/` deployed.
 - [ ] An AlternativeTo account in Matias's name.
 - [ ] Screenshots 1 to 4 from `../assets.md`, the PNG versions.
 - [ ] The privacy sentence matches the app.
@@ -15,7 +15,7 @@ in, and trim this draft to whatever fields the form asks for.
 
 **Name:** unflub
 
-**Website:** https://unflub.rmgn.ca
+**Website:** https://unflub.rmgn.net
 
 **Short description:**
 

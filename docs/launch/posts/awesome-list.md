@@ -62,4 +62,4 @@ Facts for the entry, in the list's own format, for Matias to use or ignore:
 - Section: **Productivity**. Neighbours include AutoHotkey, Beetroot and KatMouse.
 - Open-source entries add the list's `[![Open-Source Software][oss]](repo link)` badge after the
   description.
-- Link the site, `https://unflub.rmgn.ca`, and the repo in the badge.
+- Link the site, `https://unflub.rmgn.net`, and the repo in the badge.

@@ -19,7 +19,7 @@ Prerequisites: repo public, release live, site deployed.
 Subject: Permission request: unflub, free open-source autocorrect for Windows
 
 Hi mods. I made unflub, a free, MIT-licensed app that fixes typos as you type in any Windows app, offline.
-Repo: https://github.com/ReimagineMedias/unflub. Site: https://unflub.rmgn.ca
+Repo: https://github.com/ReimagineMedias/unflub. Site: https://unflub.rmgn.net
 
 I'd like to make one post about it, flaired correctly, and stay in the thread to answer questions. Nothing is
 for sale. If it doesn't fit the sub, no problem, and thanks for reading.

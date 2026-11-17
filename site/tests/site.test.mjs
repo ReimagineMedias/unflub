@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { parse } from "node-html-parser";
 import { startServer } from "../scripts/serve.mjs";
 
-const SITE = "https://unflub.rmgn.ca";
+const SITE = "https://unflub.rmgn.net";
 const dist = new URL("../dist/", import.meta.url);
 let server;
 let base = "";
@@ -143,7 +143,7 @@ test("the night nav copy never hides the real nav's focus ring", () => {
 test("robots.txt points at the sitemap", async () => {
   const res = await fetch(`${base}/robots.txt`);
   assert.equal(res.status, 200);
-  assert.match(await res.text(), /Sitemap: https:\/\/unflub\.rmgn\.ca\/sitemap-index\.xml/);
+  assert.match(await res.text(), /Sitemap: https:\/\/unflub\.rmgn\.net\/sitemap-index\.xml/);
 });
 
 test("security headers are set and no page needs an inline script", async () => {
@@ -190,7 +190,7 @@ test("wrangler config serves dist on the custom domain", () => {
   assert.equal(cfg.name, "unflub-site");
   assert.equal(cfg.assets.directory, "./dist");
   assert.equal(cfg.assets.not_found_handling, "404-page");
-  assert.deepEqual(cfg.routes, [{ pattern: "unflub.rmgn.ca", custom_domain: true }]);
+  assert.deepEqual(cfg.routes, [{ pattern: "unflub.rmgn.net", custom_domain: true }]);
 });
 
 test("privacy copy matches what the app sends", () => {

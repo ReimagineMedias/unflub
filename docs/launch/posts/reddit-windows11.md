@@ -9,7 +9,7 @@ DMs or Discord.
 
 ## Before posting
 
-- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.ca/` deployed.
+- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.net/` deployed.
 - [ ] This week's Software Showoff thread is up. Search the sub for "Software Showoff Sunday".
 - [ ] Rewrite anything below that doesn't sound like you.
 - [ ] Answer replies in the thread, not in DMs.
@@ -32,7 +32,7 @@ apps, and the ones I use most, AI prompt boxes and chat apps, aren't among them.
 
 Free, MIT licensed. English only for now. The installer isn't signed yet, so SmartScreen will warn you.
 
-Download: https://unflub.rmgn.ca or `winget install RMGN.unflub`
+Download: https://unflub.rmgn.net or `winget install RMGN.unflub`
 Code: https://github.com/ReimagineMedias/unflub
 
 If it fixes something it shouldn't, I'd like to hear which app and which word.

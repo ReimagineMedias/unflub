@@ -8,7 +8,7 @@ unflub fixes typos as you type, in any text field on the desktop. This page expl
 crates/unflub-core      Platform-free engine. No OS calls, no unsafe. Tested on every OS in CI.
 crates/unflub-windows   Windows adapter: keyboard hook, text injection, Windows spell checker.
 app/                    Tauri 2 shell: tray, settings window, pill overlay, updater, start at login. (coming)
-site/                   unflub.rmgn.ca (Astro, static)
+site/                   unflub.rmgn.net (Astro, static)
 ```
 
 macOS and Linux get their own adapter crates (`unflub-macos`, `unflub-linux`). The core and the

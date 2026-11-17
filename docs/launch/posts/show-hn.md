@@ -3,9 +3,9 @@
 ## Before posting
 
 - [ ] Repo `github.com/ReimagineMedias/unflub` is public, with the rewritten README.
-- [ ] v0.1.0 is released and rolled out to 100%. `https://api.rmgn.ca/unflub/download/windows?ref=hn`
+- [ ] v0.1.0 is released and rolled out to 100%. `https://api.rmgn.net/unflub/v1/download/windows?ref=hn`
       returns the setup.
-- [ ] `https://unflub.rmgn.ca/` is deployed.
+- [ ] `https://unflub.rmgn.net/` is deployed.
 - [ ] `winget install RMGN.unflub` works. If it does not yet, delete the winget line from the comment.
 - [ ] The sentence starting "The part that reads your keys" is true for v0.1: a separate process with no
       network code, and a CI check that fails if one is added. If not, delete that sentence.
@@ -77,8 +77,8 @@ Limits, honestly:
 - The installer isn't code-signed yet, so SmartScreen will warn you. I'm applying to SignPath's free
   program now that the repo is public.
 
-Download: https://api.rmgn.ca/unflub/download/windows?ref=hn or `winget install RMGN.unflub`.
-Site: https://unflub.rmgn.ca
+Download: https://api.rmgn.net/unflub/v1/download/windows?ref=hn or `winget install RMGN.unflub`.
+Site: https://unflub.rmgn.net
 
 I'd like to hear where it fixed something it shouldn't have, and which apps it misbehaves in.
 

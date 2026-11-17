@@ -50,7 +50,7 @@ them off.
 **Limits.** Windows only and English only for now. The installer isn't signed yet, so SmartScreen will show a
 warning.
 
-Free, MIT. Download: https://unflub.rmgn.ca, or `winget install RMGN.unflub`. Code:
+Free, MIT. Download: https://unflub.rmgn.net, or `winget install RMGN.unflub`. Code:
 https://github.com/ReimagineMedias/unflub
 
 ---

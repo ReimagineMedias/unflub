@@ -5,7 +5,7 @@ hook is, so this one talks about the problem and the trust question more than th
 
 ## Before posting
 
-- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.ca/` deployed, OG image live so the link previews.
+- [ ] Repo public, v0.1.0 released, `https://unflub.rmgn.net/` deployed, OG image live so the link previews.
 - [ ] Attach the hero GIF or the 30-second video from `../assets.md`, so the post shows the fix without a
       click.
 - [ ] The privacy paragraph matches the app.
@@ -38,7 +38,7 @@ It's free and open source under the MIT license, so anyone can read exactly what
 
 Windows first, English for now. macOS and Linux are next.
 
-Download: https://unflub.rmgn.ca
+Download: https://unflub.rmgn.net
 Code: https://github.com/ReimagineMedias/unflub
 
 If you try it, I'd like to hear which app it misbehaved in.

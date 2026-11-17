@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://unflub.rmgn.ca/sitemap-index.xml
+Sitemap: https://unflub.rmgn.net/sitemap-index.xml

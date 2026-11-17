@@ -1,6 +1,6 @@
 # unflub launch and discoverability plan
 
-Written 2026-11-17. Nothing is public yet: `unflub.rmgn.ca` and `api.rmgn.ca` do not resolve, the repo is
+Written 2026-11-17. Nothing is public yet: `unflub.rmgn.net` and `api.rmgn.net` do not resolve, the repo is
 private, and v0.1 is not released. Everything below is ordered so the owner's part is short clicks at the end.
 
 "L" is launch day, the day the Show HN goes up. Owner is Matias unless a row says agent. Agents never post,
@@ -38,7 +38,7 @@ These findings shaped the plan more than the general advice did. Sources are at 
    cannot tell HN downloads from Product Hunt downloads.
 6. **The site's download button still points at GitHub Releases** (`SITE.download` in
    `site/src/data/site.ts`). `docs/releasing.md` on the release branches says it should be
-   `https://api.rmgn.ca/unflub/download/windows?ref=site`.
+   `https://api.rmgn.net/unflub/v1/download/windows?ref=site`.
 7. **Three claims need checking before they go in a post.** "The part that sees keys runs as a
    separate process with no network code, and CI enforces it" does not match the newest architecture doc I
    found (`feat/engine-process`), which says the app runs the adapter in-process and the update check runs on
@@ -52,11 +52,11 @@ These findings shaped the plan more than the general advice did. Sources are at 
 
 | Channel | Action | Owner | Prerequisite | Success signal |
 |---|---|---|---|---|
-| Product | Merge the release branches, tag v0.1.0, publish the release, roll out to 100% | Matias | CI green on `ci/release` | `https://api.rmgn.ca/unflub/download/windows?ref=site` returns 302 to the setup |
+| Product | Merge the release branches, tag v0.1.0, publish the release, roll out to 100% | Matias | CI green on `ci/release` | `https://api.rmgn.net/unflub/v1/download/windows?ref=site` returns 302 to the setup |
 | Product | Submit the v0.1.0 setup to Microsoft for malware analysis and attach the VirusTotal link, as `docs/releasing.md` step 7 says | Matias | Release live | Clean verdict from Microsoft; SmartScreen warning text documented on /download/ |
 | Product | Apply to SignPath Foundation for free code signing | Matias | Repo public | Application submitted; signed builds can come in a later release |
-| Site | Merge `feat/site`, let `site.yml` deploy, confirm `https://unflub.rmgn.ca/` loads | Matias | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` secrets | All five pages return 200; `sitemap-index.xml` lists them |
-| Site | Point `SITE.download` at `https://api.rmgn.ca/unflub/download/windows?ref=site` | agent | API deployed | Download button redirects to the setup |
+| Site | Merge `feat/site`, let `site.yml` deploy, confirm `https://unflub.rmgn.net/` loads | Matias | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` secrets | All five pages return 200; `sitemap-index.xml` lists them |
+| Site | Point `SITE.download` at `https://api.rmgn.net/unflub/v1/download/windows?ref=site` | agent | API deployed | Download button redirects to the setup |
 | API | Add `hn`, `ph`, `reddit`, `x`, `linkedin`, `alternativeto`, `winget` to the unflub `refs` allowlist in `rmgn-api` | agent, Matias merges | Owner agrees, see decisions | Dashboard shows downloads per channel |
 | Site | Done 2026-11-17: `site/src/data/performance.ts` now says "Measured on a high-end laptop. CI enforces the same limits on standard 4-core cloud machines." | agent | none | Site and `docs/performance.md` say the same thing |
 | Site | Allow the Web Analytics beacon in the CSP, update the CSP test, add one line about site analytics to /privacy | agent | Owner agrees to site analytics | `npm test` passes; beacon loads on the live site |
@@ -67,7 +67,7 @@ These findings shaped the plan more than the general advice did. Sources are at 
 | Search | On `/autocorrect-windows/`, add short answers to "Does Windows have autocorrect?" and "How do I get autocorrect on my PC?" | agent | none | Page shows for those queries in Search Console within weeks |
 | GitHub | Make the repo public | Matias | README accurate, no secrets in history | Repo visible logged out |
 | GitHub | Rewrite the README in Handy's shape: one-line pitch, hero GIF, install lines for the setup, winget and Scoop, how it works, privacy, limits | agent | v0.1 facts final; privacy section from `feat/engine-process` | README states what is sent and what is not, matching /privacy |
-| GitHub | Description "Phone-style autocorrect for every text field on Windows. Free, offline, MIT."; website `https://unflub.rmgn.ca`; topics `autocorrect`, `spell-checker`, `typing`, `windows`, `rust`, `tauri`, `productivity`, `offline`, `privacy`, `accessibility` | Matias | Repo public | Repo shows in GitHub topic pages |
+| GitHub | Description "Phone-style autocorrect for every text field on Windows. Free, offline, MIT."; website `https://unflub.rmgn.net`; topics `autocorrect`, `spell-checker`, `typing`, `windows`, `rust`, `tauri`, `productivity`, `offline`, `privacy`, `accessibility` | Matias | Repo public | Repo shows in GitHub topic pages |
 | GitHub | Upload the social preview image, 1280x640 | Matias | Asset made, see `assets.md` | Links to the repo unfurl with the image |
 | winget | Submit `RMGN.unflub` 0.1.0 by hand, per `docs/releasing.md`; turn on `publish-packages.yml` after the merge | Matias | Release live, hashes filled in | `winget install RMGN.unflub` works in Windows Sandbox before L |
 | Scoop | Create `ReimagineMedias/scoop-bucket` from `packaging/scoop/unflub.json` | agent prepares, Matias creates repo | Release live | `scoop install rmgn/unflub` works |
@@ -119,7 +119,7 @@ Do not post to r/windows, r/productivity or r/dyslexia. Their drafts say why.
 ### Google Search Console: verify once with DNS
 
 I recommend a **Domain property for `rmgn.ca` verified with a DNS TXT record in Cloudflare**. A Domain
-property covers every subdomain and both protocols, so `unflub.rmgn.ca`, `elvyn.rmgn.ca` and future products
+property covers every subdomain and both protocols, so `unflub.rmgn.net`, `elvyn.rmgn.ca` and future products
 are all covered by one record. Nothing goes into the repo, and redeploys cannot break it. The HTML file method
 only covers one URL-prefix property and lives in `site/public/`, where a cleanup could delete it. `rmgn.ca`
 already uses Cloudflare nameservers and has one TXT record for Zoho SPF, which stays as it is.
@@ -132,27 +132,27 @@ already uses Cloudflare nameservers and has one TXT record for Zoho SPF, which s
    `google-site-verification=...` value, TTL Auto. Save. Leave the SPF record alone; a name can hold
    several TXT records.
 4. Back in Search Console, press **Verify**. If it fails, wait a few minutes and try again.
-5. Add a second property, **URL prefix** `https://unflub.rmgn.ca/`. Google verifies child properties of a
+5. Add a second property, **URL prefix** `https://unflub.rmgn.net/`. Google verifies child properties of a
    verified property automatically. Use this one for unflub's own reports.
-6. In the `https://unflub.rmgn.ca/` property: **Sitemaps**, enter `sitemap-index.xml`, **Submit**. Status
+6. In the `https://unflub.rmgn.net/` property: **Sitemaps**, enter `sitemap-index.xml`, **Submit**. Status
    should read "Success" and list 5 discovered URLs: `/`, `/download/`, `/privacy/`,
    `/autocorrect-windows/` and `/spell-check-everywhere/`.
 7. **URL inspection** for each of those five URLs, then **Request indexing**. This is a one-time nudge.
 8. Settings > Users and permissions: add a second owner if anyone else should keep access.
 
-If you would rather verify only the subdomain, add a Domain property for `unflub.rmgn.ca` and put the TXT
+If you would rather verify only the subdomain, add a Domain property for `unflub.rmgn.net` and put the TXT
 record on the name `unflub` instead of `@`. I have not checked that Cloudflare accepts a TXT record next to
 the Worker's custom domain record, which is one more reason to use the apex.
 
 ### Bing Webmaster Tools: import from Google
 
 1. Open https://www.bing.com/webmasters and sign in.
-2. Choose **Import from Google Search Console**, allow access, tick `https://unflub.rmgn.ca/`, **Import**.
+2. Choose **Import from Google Search Console**, allow access, tick `https://unflub.rmgn.net/`, **Import**.
    Bing verifies it and copies the sitemap. Bing then checks ownership through the Search Console link
    from time to time and imports new sitemaps itself.
-3. If you prefer not to link the accounts, add `https://unflub.rmgn.ca/` by hand and use **Add CNAME record
+3. If you prefer not to link the accounts, add `https://unflub.rmgn.net/` by hand and use **Add CNAME record
    to DNS**. In Cloudflare, add the CNAME Bing gives you with the proxy turned off, so the cloud icon is
-   grey. Then submit `https://unflub.rmgn.ca/sitemap-index.xml` under **Sitemaps**.
+   grey. Then submit `https://unflub.rmgn.net/sitemap-index.xml` under **Sitemaps**.
 4. Bing says data takes about 48 hours to appear.
 
 ### IndexNow: a key file and a ping after each deploy
@@ -170,7 +170,7 @@ Agent steps, in one small PR:
    ```sh
    curl -sS -o /dev/null -w "%{http_code}" -X POST https://api.indexnow.org/IndexNow \
      -H "Content-Type: application/json; charset=utf-8" \
-     -d '{"host":"unflub.rmgn.ca","key":"<key>","keyLocation":"https://unflub.rmgn.ca/<key>.txt","urlList":[...]}'
+     -d '{"host":"unflub.rmgn.net","key":"<key>","keyLocation":"https://unflub.rmgn.net/<key>.txt","urlList":[...]}'
    ```
 
    200 means received. 202 means received with the key still being checked. Write the code to the job
@@ -190,7 +190,7 @@ says it "does not collect or use your visitors' personal data."
 The code change comes first, or the CSP blocks the beacon:
 
 - `site/public/_headers`: `script-src 'self' https://static.cloudflareinsights.com`. With automatic setup the
-  beacon reports to `https://unflub.rmgn.ca/cdn-cgi/rum`, which `connect-src 'self'` already allows. With the
+  beacon reports to `https://unflub.rmgn.net/cdn-cgi/rum`, which `connect-src 'self'` already allows. With the
   manual snippet, also add `https://cloudflareinsights.com` to `connect-src`.
 - `site/tests/site.test.mjs` line 141 asserts the exact `script-src 'self';`. Change it to accept that one
   extra origin and nothing else.
@@ -200,11 +200,11 @@ The code change comes first, or the CSP blocks the beacon:
 Then the toggle, done by Matias:
 
 1. Cloudflare dashboard > **Analytics & Logs > Web Analytics > Add a site**. Pick the `rmgn.ca` zone and the
-   hostname `unflub.rmgn.ca`.
+   hostname `unflub.rmgn.net`.
 2. Automatic setup is on by default for proxied sites and injects the beacon on every hostname in the zone.
-   Under **Manage site > Rules**, limit it to `unflub.rmgn.ca` unless you also want it on `rmgn.ca` and
+   Under **Manage site > Rules**, limit it to `unflub.rmgn.net` unless you also want it on `rmgn.ca` and
    `elvyn.rmgn.ca`. **Enable, excluding visitor data in the EU** is an option if you want to skip EU visitors.
-3. Load `https://unflub.rmgn.ca/`, open DevTools > Network, and look for `beacon.min.js` and a request to
+3. Load `https://unflub.rmgn.net/`, open DevTools > Network, and look for `beacon.min.js` and a request to
    `/cdn-cgi/rum`. If the beacon never appears, the Workers static-asset response is not being rewritten.
    Switch to **Enable with JS Snippet installation** and have the agent add the snippet to
    `site/src/layouts/Base.astro`, with the CSP changes for the manual path above.
@@ -252,7 +252,7 @@ Legend: G Google, B Bing, D DuckDuckGo autocomplete. T a thread or Q&A asking fo
 ## Measuring
 
 - Downloads by `ref`, once the allowlist has the channel values. Every draft uses
-  `https://api.rmgn.ca/unflub/download/windows?ref=<channel>`, which counts as `other` until then.
+  `https://api.rmgn.net/unflub/v1/download/windows?ref=<channel>`, which counts as `other` until then.
 - winget, Scoop and Chocolatey installs skip the download endpoint. The app's `install-source` file shows up
   in the anonymous usage counts by source.
 - GitHub stars and traffic, Search Console clicks, Web Analytics referrers.
@@ -265,7 +265,7 @@ Legend: G Google, B Bing, D DuckDuckGo autocomplete. T a thread or Q&A asking fo
    privacy line) and unmark it in the drafts.
 2. Extend the download `ref` allowlist with channel values? It is a small change in `rmgn-api`.
 3. Turn on Cloudflare Web Analytics for the site, which means the CSP change and a privacy line?
-4. Verify Search Console with a Domain property on `rmgn.ca`, as recommended, or only on `unflub.rmgn.ca`?
+4. Verify Search Console with a Domain property on `rmgn.ca`, as recommended, or only on `unflub.rmgn.net`?
 5. Which of the three new pages to build, and whether the dyslexia page is worth a round of user testing.
 6. Launch v0.1 unsigned, with SmartScreen's "Windows protected your PC", or wait for SignPath? HN readers
    will mention it either way; the drafts say it plainly.

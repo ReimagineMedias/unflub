@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "Marketing site for unflub, served at https://unflub.rmgn.ca",
+  "description": "Marketing site for unflub, served at https://unflub.rmgn.net",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",

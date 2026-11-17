@@ -1,6 +1,6 @@
 # unflub
 
-System-wide, phone-style autocorrect. RMGN product, site at unflub.rmgn.ca (Cloudflare, like rmgn.ca).
+System-wide, phone-style autocorrect. RMGN product, site at unflub.rmgn.net (Cloudflare, like rmgn.ca).
 Keep `CLAUDE.md` identical in substance.
 
 Git workflow: PRs. Branch `type/topic`, open a PR on ReimagineMedias/unflub, merge only when the owner says so (squash).
@@ -17,7 +17,7 @@ Repo is private until v0.1, then flipped public.
   (RMGN paper, quiet ink, System accent) are settings, not replacements. Fonts Manrope + IBM Plex Mono.
 - Pill default: brief underline on the fixed word plus a small capsule (~1 s). Capsule, underline-only and off are all settings.
 - Site (`site/`): Astro static, deployed by `.github/workflows/site.yml` to Cloudflare Workers static assets
-  (`site/wrangler.jsonc`, custom domain unflub.rmgn.ca). Needs secrets `CLOUDFLARE_API_TOKEN` (scoped to Account Workers
+  (`site/wrangler.jsonc`, custom domain unflub.rmgn.net). Needs secrets `CLOUDFLARE_API_TOKEN` (scoped to Account Workers
   Scripts:Edit and rmgn.ca Workers Routes:Edit + DNS:Edit only) and `CLOUDFLARE_ACCOUNT_ID`. Deploys with the lockfile's
   wrangler (`npx --no-install`), no third-party deploy action; workflow actions are SHA-pinned. Performance figures live in `site/src/data/performance.ts`; keep them in step with
   docs/performance.md. Scripts must stay external files (CSP is `script-src 'self'`; a test enforces it).
