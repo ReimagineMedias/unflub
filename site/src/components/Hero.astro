@@ -1,0 +1,403 @@
+---
+import Window from "./Window.astro";
+import Pill from "./Pill.astro";
+import DownloadButton from "./DownloadButton.astro";
+import { SITE } from "../data/site";
+
+const chats = [
+  { name: "Friday dinner", line: "Maya: Table for three at 7", initials: "FD", active: true },
+  { name: "Design review", line: "Notes are in the doc", initials: "DR" },
+  { name: "Mom", line: "Call me when you land", initials: "M" },
+  { name: "Running club", line: "Sunday, 8 am, same spot", initials: "RC" },
+  { name: "Sam Okafor", line: "Sounds good!", initials: "SO" },
+];
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="copy wrap">
+    <h1 id="hero-title" class="display">
+      <span>Type fast.</span>
+      <span>Land it right.<i class="h1-caret" aria-hidden="true"></i></span>
+    </h1>
+    <p class="lead">
+      Phone-style autocorrect for every text box on your computer. unflub fixes a typo the moment you finish the word, in any app.
+      Free, open source, and nothing you type leaves your machine.
+    </p>
+    <div class="cta-row">
+      <DownloadButton />
+      <a class="btn btn-quiet" href={SITE.repo}>View on GitHub</a>
+    </div>
+    <p class="small fine">Free for Windows 10 and 11. Mac and Linux are on the way.</p>
+  </div>
+
+  <div class="stage wrap">
+    <Window
+      title="Chat"
+      class="chat"
+      label="A chat app. A message is typed with typos, and unflub fixes each one as the word ends: teh becomes the, with a small capsule above the word offering undo."
+      data-hero
+    >
+      <aside class="side">
+        <div class="search">Search</div>
+        <ul>
+          {
+            chats.map((c) => (
+              <li class:list={{ active: c.active }}>
+                <span class="av">{c.initials}</span>
+                <span class="meta">
+                  <b>{c.name}</b>
+                  <span>{c.line}</span>
+                </span>
+              </li>
+            ))
+          }
+        </ul>
+      </aside>
+      <div class="main">
+        <div class="head">
+          <b>Friday dinner</b>
+          <span>Maya, Theo and you</span>
+        </div>
+        <div class="log">
+          <div class="track">
+            <div class="msg them"><span class="av">M</span><p><span class="who">Maya</span>Dinner Friday? I found a dumpling place downtown.</p></div>
+            <div class="msg me"><p>Yes please.</p></div>
+            <div class="msg them"><span class="av">M</span><p><span class="who">Maya</span>Table for three at 7. Who's in?</p></div>
+            <div class="msg them"><span class="av">T</span><p><span class="who">Theo</span>In. Starving already.</p></div>
+          </div>
+        </div>
+        <div class="composer">
+          <div class="field" data-placeholder="Message Friday dinner">
+            <span class="ink">Running late, <span class="fx lit">the<Pill from="teh" to="the" /></span> <span class="caret"></span></span>
+            <span class="pill" aria-hidden="true"></span>
+          </div>
+          <span class="send" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><path d="M3.5 10h12m0 0-5-5m5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </span>
+        </div>
+      </div>
+    </Window>
+  </div>
+</section>
+
+<script>
+  import "../scripts/hero";
+</script>
+
+<style>
+  .hero {
+    padding-top: clamp(40px, 6.5vw, 88px);
+    overflow: clip;
+  }
+
+  .copy {
+    display: grid;
+    justify-items: center;
+    text-align: center;
+    gap: 28px;
+  }
+
+  h1 span {
+    display: block;
+  }
+
+  .h1-caret {
+    display: inline-block;
+    width: 0.06em;
+    height: 0.82em;
+    margin-left: 0.08em;
+    vertical-align: -0.06em;
+    border-radius: 0.03em;
+    background: var(--accent);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .h1-caret {
+      animation: h1-blink 1.1s steps(1) infinite;
+    }
+  }
+
+  @keyframes h1-blink {
+    50% {
+      opacity: 0;
+    }
+  }
+
+  .lead {
+    max-width: 36em;
+  }
+
+  @media (max-width: 600px) {
+    .lead {
+      font-size: 1.0625rem;
+    }
+  }
+
+  .cta-row {
+    justify-content: center;
+    margin-top: 6px;
+  }
+
+  .fine {
+    margin-top: -8px;
+  }
+
+  .stage {
+    margin-top: clamp(48px, 5.5vw, 72px);
+    padding-bottom: clamp(72px, 12vw, 160px);
+    perspective: 1600px;
+  }
+
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .stage :global(.chat) {
+        animation: settle linear both;
+        animation-timeline: view();
+        animation-range: entry 10% cover 42%;
+        transform-origin: 50% 0%;
+      }
+    }
+  }
+
+  @keyframes settle {
+    from {
+      transform: rotateX(9deg) scale(0.93);
+      opacity: 0.7;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+
+  .stage :global(.chat) {
+    height: clamp(460px, 56vw, 620px);
+    max-width: 1120px;
+    margin-inline: auto;
+  }
+
+  .side {
+    width: 264px;
+    flex: none;
+    padding: 14px 10px;
+    background: var(--win-side);
+    border-right: 1px solid var(--win-line);
+  }
+
+  .search {
+    padding: 7px 12px;
+    margin: 0 4px 12px;
+    border-radius: 8px;
+    background: var(--win-field);
+    color: var(--win-muted);
+    font-size: 13px;
+  }
+
+  .side ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .side li {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 9px 10px;
+    border-radius: 9px;
+  }
+
+  .side li.active {
+    background: color-mix(in srgb, var(--win-ink) 7%, transparent);
+  }
+
+  .meta {
+    display: grid;
+    min-width: 0;
+    line-height: 1.3;
+  }
+
+  .meta b {
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .meta span {
+    font-size: 12.5px;
+    color: var(--win-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .av {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    flex: none;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--win-ink) 10%, transparent);
+    color: var(--win-muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--win-line);
+  }
+
+  .head b {
+    font-weight: 600;
+  }
+
+  .head span {
+    font-size: 13px;
+    color: var(--win-muted);
+  }
+
+  .log {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 18px 22px 8px;
+  }
+
+  .track :global(.msg) {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    max-width: 78%;
+  }
+
+  .track :global(.msg p) {
+    padding: 9px 14px;
+    border-radius: 18px;
+    background: var(--win-them);
+    border-bottom-left-radius: 6px;
+  }
+
+  /* Bubbles added by the script carry no scope attribute, so these rules are global to the track. */
+  .track :global(.msg .av) {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--win-ink) 10%, transparent);
+    color: var(--win-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .track :global(.who) {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--win-muted);
+  }
+
+  .track :global(.msg.me) {
+    align-self: flex-end;
+  }
+
+  .track :global(.msg.me p) {
+    background: var(--win-me);
+    color: var(--win-me-ink);
+    border-radius: 18px;
+    border-bottom-right-radius: 6px;
+  }
+
+  .composer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 18px 18px;
+    padding: 12px 12px 12px 18px;
+    border-radius: 14px;
+    background: var(--win-field);
+    box-shadow: inset 0 0 0 1px var(--win-line);
+  }
+
+  .composer .field {
+    flex: 1;
+    min-width: 0;
+    font-size: 16px;
+    --pill-size: 13px;
+  }
+
+  .send {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--win-me);
+    color: var(--win-me-ink);
+  }
+
+  .send svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  @media (max-width: 760px) {
+    .side {
+      display: none;
+    }
+
+    .head {
+      padding: 12px 16px;
+    }
+
+    .track {
+      padding-inline: 14px;
+    }
+
+    .track :global(.msg) {
+      max-width: 90%;
+    }
+
+    .composer {
+      margin: 8px 10px 12px;
+      padding-left: 14px;
+    }
+
+    .composer .field {
+      font-size: 15px;
+      --pill-size: 12px;
+      /* Two lines reserved, so a wrapping message never moves the chat above it. */
+      min-height: 3em;
+    }
+
+    .composer {
+      align-items: flex-start;
+    }
+  }
+</style>

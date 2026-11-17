@@ -1,0 +1,15 @@
+{
+  // unflub.rmgn.ca: static assets only, no Worker script. Deployed by .github/workflows/site.yml.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "unflub-site",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "unflub.rmgn.ca", "custom_domain": true }],
+  "assets": {
+    "directory": "./dist",
+    // Astro builds every page as /path/index.html and links with a trailing slash.
+    "html_handling": "force-trailing-slash",
+    "not_found_handling": "404-page",
+  },
+}

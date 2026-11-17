@@ -1,0 +1,393 @@
+/* unflub.rmgn.ca. Brand tokens match desktop-app/app/src/styles.css (theme "unflub"). */
+
+/* Metric-matched fallback so the swap to Manrope does not move the page. */
+@font-face {
+  font-family: "Manrope Fallback";
+  src: local("Arial"), local("Helvetica Neue"), local("Helvetica");
+  ascent-override: 102.74%;
+  descent-override: 28.91%;
+  line-gap-override: 0%;
+  size-adjust: 103.76%;
+}
+
+:root {
+  --espresso: #2d1916;
+  --brown: #79453a;
+  --paper: #f2e6e3;
+  --rose: #b06a5c;
+  --rose-on-dark: #d08a7b;
+  --keycap: #e0a595;
+
+  --font: "Manrope Variable", "Manrope Fallback", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  /* Scenes depict Windows apps, so they use the system face, like the native pill. */
+  --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  --ground: var(--paper);
+  --surface: #fbf5f3;
+  --raised: #ffffff;
+  --ink: var(--espresso);
+  --muted: var(--brown);
+  --accent: var(--rose);
+  --line: rgba(45, 25, 22, 0.12);
+  --hover: rgba(45, 25, 22, 0.05);
+  --deep: var(--espresso);
+  --deep-ink: var(--paper);
+  --deep-muted: #c9a59c;
+  --focus: var(--rose);
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --page: min(1240px, 100% - 2 * var(--gutter));
+  --gutter: clamp(20px, 5vw, 56px);
+  --header: 56px;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: var(--espresso);
+    --surface: #3a231f;
+    --raised: #452b26;
+    --ink: var(--paper);
+    --muted: #c9a59c;
+    --accent: var(--rose-on-dark);
+    --line: rgba(242, 230, 227, 0.12);
+    --hover: rgba(242, 230, 227, 0.06);
+    --deep: #1f110f;
+    --focus: var(--rose-on-dark);
+  }
+}
+
+/* Dark chapters: espresso ground, blush text, the lighter rose. */
+.tone-deep {
+  --ground: var(--deep);
+  --ink: var(--deep-ink);
+  --muted: var(--deep-muted);
+  --accent: var(--rose-on-dark);
+  --line: rgba(242, 230, 227, 0.14);
+  --focus: var(--rose-on-dark);
+  background: var(--ground);
+  color: var(--ink);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scroll-padding-top: calc(var(--header) + 16px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 1.0625rem/1.6 var(--font);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--rose) 32%, transparent);
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 760;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+kbd,
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skip {
+  position: absolute;
+  left: 12px;
+  top: -60px;
+  z-index: 100;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--ground);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.skip:focus {
+  top: 10px;
+}
+
+.wrap {
+  width: var(--page);
+  margin-inline: auto;
+}
+
+/* Type scale: display, chapter, section, lead, body, small. */
+.display {
+  font-size: clamp(3.25rem, 9.2vw, 8.25rem);
+  line-height: 0.92;
+  font-weight: 780;
+  letter-spacing: -0.055em;
+}
+
+.chapter {
+  font-size: clamp(2.6rem, 7.4vw, 6.25rem);
+  line-height: 0.96;
+  font-weight: 760;
+  letter-spacing: -0.05em;
+}
+
+.section-title {
+  font-size: clamp(2rem, 4.6vw, 3.75rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+
+.lead {
+  font-size: clamp(1.1875rem, 1.9vw, 1.5rem);
+  line-height: 1.45;
+  font-weight: 500;
+  color: var(--muted);
+  max-width: 34em;
+  letter-spacing: -0.01em;
+}
+
+.small {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+/* Buttons */
+.btn {
+  --btn-bg: var(--ink);
+  --btn-ink: var(--ground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 26px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--btn-bg);
+  color: var(--btn-ink);
+  font: 680 1.0625rem/1 var(--font);
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform 0.2s var(--ease),
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px -12px color-mix(in srgb, var(--espresso) 70%, transparent);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btn svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.btn-quiet {
+  --btn-bg: transparent;
+  --btn-ink: var(--ink);
+  box-shadow: inset 0 0 0 1.5px var(--line);
+}
+
+.btn-quiet:hover {
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+}
+
+.btn-small {
+  min-height: 36px;
+  padding: 0 16px;
+  font-size: 0.875rem;
+}
+
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Sections */
+.chapter-block {
+  padding-block: clamp(96px, 16vw, 200px);
+}
+
+.section-head {
+  display: grid;
+  gap: 22px;
+  margin-bottom: clamp(48px, 7vw, 88px);
+}
+
+.section-head.center {
+  justify-items: center;
+  text-align: center;
+}
+
+.section-head.center .lead {
+  margin-inline: auto;
+}
+
+/* Subpages share one readable column. */
+.prose {
+  width: min(720px, 100% - 2 * var(--gutter));
+  margin-inline: auto;
+  padding-block: clamp(40px, 8vw, 96px) clamp(80px, 12vw, 140px);
+}
+
+.prose h1 {
+  font-size: clamp(2.5rem, 6.4vw, 4.5rem);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  margin-bottom: 24px;
+}
+
+.prose h2 {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  line-height: 1.15;
+  margin: 64px 0 16px;
+}
+
+.prose h3 {
+  font-size: 1.1875rem;
+  letter-spacing: -0.02em;
+  margin: 32px 0 8px;
+}
+
+.prose p,
+.prose li {
+  color: color-mix(in srgb, var(--ink) 86%, var(--ground));
+}
+
+.prose p + p {
+  margin-top: 16px;
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.25em;
+  margin: 16px 0;
+  display: grid;
+  gap: 8px;
+}
+
+.prose li::marker {
+  color: var(--accent);
+}
+
+.prose a {
+  color: var(--ink);
+  text-decoration-color: var(--accent);
+}
+
+.prose .lead {
+  margin-bottom: 8px;
+}
+
+.prose .path {
+  font-family: var(--mono);
+  font-size: 0.875em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--hover);
+  white-space: nowrap;
+}
+
+.note {
+  margin: 32px 0;
+  padding: 20px 24px;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Buttons inside prose keep their own colours. */
+.prose a.btn {
+  color: var(--btn-ink);
+  text-decoration: none;
+}

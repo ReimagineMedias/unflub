@@ -1,0 +1,133 @@
+---
+import { SITE } from "../data/site";
+
+const statement =
+  "Nothing you type leaves your machine. unflub runs offline, with no account to make, no telemetry to switch off and no cloud to trust.";
+const words = statement.split(" ");
+
+const facts = [
+  { title: "Offline", text: "Every fix is decided on your computer. It works on a plane." },
+  { title: "No account", text: "Install it and type. There is nothing to sign up for." },
+  { title: "No telemetry", text: "No usage stats, no analytics, no tracking." },
+  { title: "Hands off secrets", text: "Password fields, password managers and terminals are skipped." },
+  { title: "Open source", text: "Every line is on GitHub under the MIT licence.", href: SITE.repo },
+];
+---
+
+<section id="privacy" class="privacy tone-deep chapter-block" aria-labelledby="privacy-title">
+  <div class="wrap">
+    <h2 id="privacy-title" class="chapter">Private by design.</h2>
+    <p class="statement">
+      {words.map((w) => <span class="w">{w} </span>)}
+    </p>
+    <ul class="facts">
+      {
+        facts.map((f) => (
+          <li>
+            <h3>{f.title}</h3>
+            <p>
+              {f.text}
+              {f.href && (
+                <>
+                  {" "}
+                  <a href={f.href}>Read the code</a>
+                </>
+              )}
+            </p>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>
+
+<style>
+  .privacy {
+    padding-top: 0;
+  }
+
+  .privacy > .wrap {
+    padding-top: clamp(96px, 14vw, 180px);
+    border-top: 1px solid var(--line);
+  }
+
+  .statement {
+    margin-top: 40px;
+    max-width: 22em;
+    font-size: clamp(1.75rem, 4.2vw, 3.5rem);
+    line-height: 1.12;
+    font-weight: 650;
+    letter-spacing: -0.035em;
+  }
+
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .w {
+        animation: light linear both;
+        animation-timeline: view();
+        animation-range: entry 60% cover 45%;
+      }
+    }
+  }
+
+  @keyframes light {
+    from {
+      opacity: 0.18;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .facts {
+    list-style: none;
+    margin: clamp(64px, 9vw, 120px) 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 32px;
+  }
+
+  .facts li {
+    display: grid;
+    gap: 8px;
+    align-content: start;
+  }
+
+  .facts h3 {
+    font-size: 1.125rem;
+    letter-spacing: -0.02em;
+  }
+
+  .facts h3::before {
+    content: "";
+    display: block;
+    width: 3px;
+    height: 22px;
+    margin-bottom: 16px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+
+  .facts p {
+    color: var(--muted);
+    font-size: 0.9375rem;
+  }
+
+  .facts a {
+    color: var(--ink);
+    text-decoration-color: var(--accent);
+  }
+
+  @media (max-width: 1000px) {
+    .facts {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 520px) {
+    .facts {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -1,0 +1,35 @@
+{
+  "name": "unflub-site",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Marketing site for unflub, served at https://unflub.rmgn.ca",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "serve": "node scripts/serve.mjs",
+    "check": "astro check",
+    "lint": "html-validate dist",
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "assets": "node scripts/make-assets.mjs",
+    "shots": "node scripts/shots.mjs",
+    "deploy:dry": "wrangler deploy --dry-run"
+  },
+  "engines": {
+    "node": ">=22.23.4"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "^3.7.5",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "astro": "^7.4.12"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "html-validate": "^11.21.1",
+    "node-html-parser": "^9.0.7",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.163.0"
+  }
+}

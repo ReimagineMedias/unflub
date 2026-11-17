@@ -1,0 +1,30 @@
+---
+import Base from "../layouts/Base.astro";
+import Hero from "../components/Hero.astro";
+import Everywhere from "../components/Everywhere.astro";
+import Undo from "../components/Undo.astro";
+import Speed from "../components/Speed.astro";
+import Privacy from "../components/Privacy.astro";
+import Settings from "../components/Settings.astro";
+import Compare from "../components/Compare.astro";
+import Faq from "../components/Faq.astro";
+import FinalCta from "../components/FinalCta.astro";
+import { faqPage, softwareApplication, website } from "../data/schema";
+import "../styles/scenes.css";
+---
+
+<Base
+  title="unflub: free phone-style autocorrect for every app on Windows"
+  description="unflub fixes typos the moment you finish a word, in any app on your computer. Free, open source and offline: nothing you type leaves your machine."
+  schema={[website, softwareApplication, faqPage]}
+>
+  <Hero />
+  <Everywhere />
+  <Undo />
+  <Speed />
+  <Privacy />
+  <Settings />
+  <Compare />
+  <Faq />
+  <FinalCta />
+</Base>

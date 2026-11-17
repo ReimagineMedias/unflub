@@ -1,0 +1,144 @@
+<!doctype html>
+<!-- Source for public/og/unflub.png (1200x630). Rendered by scripts/make-assets.mjs. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: "Manrope Variable";
+        src: url(../../node_modules/@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2) format("woff2");
+        font-weight: 200 800;
+      }
+      @font-face {
+        font-family: "IBM Plex Mono";
+        src: url(../../node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2) format("woff2");
+        font-weight: 500;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+      }
+      body {
+        position: relative;
+        background: #2d1916;
+        color: #f2e6e3;
+        font-family: "Manrope Variable", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .brand {
+        position: absolute;
+        left: 80px;
+        top: 64px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-weight: 700;
+        font-size: 40px;
+        letter-spacing: -0.045em;
+      }
+      .brand svg {
+        width: 58px;
+        height: 58px;
+        margin-left: -8px;
+        margin-right: -6px;
+      }
+      h1 {
+        position: absolute;
+        left: 76px;
+        top: 166px;
+        margin: 0;
+        font-size: 112px;
+        line-height: 0.95;
+        font-weight: 780;
+        letter-spacing: -0.055em;
+      }
+      h1 i {
+        display: inline-block;
+        width: 7px;
+        height: 90px;
+        margin-left: 10px;
+        vertical-align: -6px;
+        border-radius: 4px;
+        background: #d08a7b;
+      }
+      .demo {
+        position: absolute;
+        left: 700px;
+        bottom: 58px;
+        font: 400 38px/1.3 "Segoe UI Variable Text", "Segoe UI", sans-serif;
+        color: #f2e6e3;
+      }
+      .fx {
+        position: relative;
+      }
+      .fx::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -3px;
+        height: 4px;
+        border-radius: 2px;
+        background: #d08a7b;
+      }
+      /* The capsule as the app's dark theme draws it: paper ground, espresso text. */
+      .pill {
+        position: absolute;
+        left: -20px;
+        bottom: calc(100% + 14px);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 20px;
+        border-radius: 999px;
+        background: #f2e6e3;
+        color: #2d1916;
+        font-size: 27px;
+        line-height: 1.3;
+        white-space: nowrap;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      }
+      .pill s,
+      .pill .arr {
+        color: rgba(45, 25, 22, 0.55);
+      }
+      .pill b {
+        font-weight: 600;
+      }
+      .pill kbd {
+        margin-left: 6px;
+        padding: 2px 10px;
+        border-radius: 8px;
+        font: 500 24px/1.3 "IBM Plex Mono", monospace;
+        color: #79453a;
+        background: rgba(121, 69, 58, 0.16);
+      }
+      .url {
+        position: absolute;
+        left: 80px;
+        bottom: 70px;
+        font-size: 26px;
+        font-weight: 600;
+        color: #c9a59c;
+        letter-spacing: -0.01em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand">
+      <svg viewBox="0 0 64 64">
+        <path d="M14 18 V36 a10.5 10.5 0 0 0 21 0 V18" fill="none" stroke="#F2E6E3" stroke-width="7.5" stroke-linecap="round" />
+        <rect x="42" y="9" width="4.5" height="46" rx="2.25" fill="#D08A7B" />
+      </svg>
+      unflub
+    </div>
+    <h1>Type fast.<br />Land it right.<i></i></h1>
+    <p class="url">unflub.rmgn.ca</p>
+    <p class="demo">
+      Grab <span class="fx">the<span class="pill"><s>teh</s><span class="arr">→</span><b>the</b><kbd>⌫ undo</kbd></span></span> tickets
+    </p>
+  </body>
+</html>

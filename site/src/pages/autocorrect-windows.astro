@@ -1,0 +1,90 @@
+---
+import Subpage from "../layouts/Subpage.astro";
+import Pill from "../components/Pill.astro";
+import { SITE } from "../data/site";
+import "../styles/scenes.css";
+---
+
+<Subpage
+  title="How to get phone-style autocorrect on Windows (every app)"
+  description="Windows has autocorrect switches, but they reach only some apps. Here is what is built in, where it stops, and how to get phone-style autocorrect in every app."
+  crumb="Autocorrect on Windows"
+>
+  <h1>How to get phone-style autocorrect on Windows</h1>
+  <p class="lead">
+    On a phone, a typo fixes itself as you type. On Windows, most apps underline it in red and wait for you. Here is what
+    Windows offers, where it stops, and how to get autocorrect in every app.
+  </p>
+
+  <figure class="demo" aria-label="Example: unflub fixes teh to the as soon as the word ends.">
+    <p class="line loose" aria-hidden="true">See you at <span class="fx lit">the<Pill from="teh" to="the" /></span> station</p>
+  </figure>
+
+  <h2>The autocorrect built into Windows</h2>
+  <p>Windows 11 and Windows 10 have two switches for this:</p>
+  <ol>
+    <li>Open <span class="path">Settings</span> and go to <span class="path">Time &amp; language</span>, then <span class="path">Typing</span>.</li>
+    <li>Turn on <strong>Autocorrect misspelled words</strong>.</li>
+    <li>Turn on <strong>Highlight misspelled words</strong> if you also want red underlines.</li>
+  </ol>
+  <p>
+    These switches were designed with the touch keyboard in mind. With a physical keyboard they only reach apps that use
+    Windows' own text services, so many browsers, chat apps and code editors are left out. They also cannot be tuned: there is
+    no list of your own words, no way to skip an app, and no shortcut expansion.
+  </p>
+
+  <h2>Autocorrect inside a single app</h2>
+  <p>Some apps have their own autocorrect, which works only inside that app:</p>
+  <ul>
+    <li>
+      <strong>Word and Outlook</strong> fix common typos through AutoCorrect, under
+      <span class="path">File</span>, <span class="path">Options</span>, <span class="path">Proofing</span>.
+    </li>
+    <li>
+      <strong>Browsers</strong> such as Chrome, Edge and Firefox underline misspellings in text boxes. You right-click a word to
+      pick a fix; nothing is changed as you type.
+    </li>
+  </ul>
+  <p>That covers documents and some web forms, but not chat apps, desktop tools or prompt boxes, and each one behaves differently.</p>
+
+  <h2>Autocorrect in every app, with unflub</h2>
+  <p>
+    unflub is a small, free app that brings phone-style autocorrect to every text field on Windows. It fixes a typo the moment
+    you finish the word, in any app, and works fully offline.
+  </p>
+  <ol>
+    <li><a href="/download/">Download unflub</a> and run the installer.</li>
+    <li>It starts in the system tray. Type anywhere: chat, email, the browser, a prompt box.</li>
+    <li>When a word is fixed, a small capsule shows what changed. Press Backspace right away to undo it, and unflub remembers that word.</li>
+  </ol>
+  <p>A few things make it behave like a phone keyboard rather than a blunt find-and-replace:</p>
+  <ul>
+    <li>It leaves code alone: camelCase, snake_case, file paths, links and anything in backticks are never touched.</li>
+    <li>It skips password fields, terminals and password managers.</li>
+    <li>It only fixes a word when it is confident, and you can set how confident it must be.</li>
+    <li>You can add your own words, and shortcuts like <span class="path">omw</span> to <em>on my way</em>.</li>
+  </ul>
+
+  <div class="note">
+    <p>
+      <strong>Free and open source.</strong> unflub is MIT licensed, with no account, no telemetry and no paid tier. The code is
+      on <a href={SITE.repo}>GitHub</a>.
+    </p>
+  </div>
+</Subpage>
+
+<style>
+  .demo {
+    margin: 40px 0 8px;
+    padding: 64px 28px 32px;
+    border-radius: 22px;
+    background: var(--raised);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  .line {
+    font: 400 1.375rem/1.4 var(--ui);
+    --pill-size: 14px;
+    color: var(--ink);
+  }
+</style>

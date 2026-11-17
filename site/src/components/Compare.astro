@@ -1,0 +1,168 @@
+---
+import { COLUMNS, ROWS, type Mark } from "../data/comparison";
+import { SITE } from "../data/site";
+
+const words: Record<Mark, string> = { yes: "Yes", no: "No", partial: "Partly", unknown: "Not documented" };
+---
+
+<section id="compare" class="compare chapter-block" aria-labelledby="compare-title">
+  <div class="wrap">
+    <header class="section-head">
+      <h2 id="compare-title" class="section-title">How it compares.</h2>
+      <p class="lead">Most desktop typing tools underline a word and wait for you. Here is where each one stands.</p>
+    </header>
+
+    <section class="scroller" aria-label="Comparison table" tabindex="0">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col"><span class="visually-hidden">Tool</span></th>
+            {COLUMNS.map((c) => <th scope="col">{c}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {
+            ROWS.map((r) => (
+              <tr class:list={{ ours: r.ours }}>
+                <th scope="row">{r.name}</th>
+                {r.cells.map((c) => (
+                  <td>
+                    <span class:list={["mark", c.mark]}>
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        {c.mark === "yes" && <path d="m4 8.5 2.6 2.6L12 5.2" />}
+                        {c.mark === "no" && <path d="M5 8h6" />}
+                        {c.mark === "unknown" && <path d="M6.2 6.3a1.9 1.9 0 1 1 2.5 1.8c-.4.2-.7.5-.7.9v.4M8 11.4v.01" />}
+                      </svg>
+                      {words[c.mark]}
+                    </span>
+                    {c.note && <small>{c.note}</small>}
+                  </td>
+                ))}
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </section>
+    <p class="small source">
+      From each product's public documentation, November 2026. "Windows typing settings" means the autocorrect switches in
+      Settings, under Time and language, Typing. Something out of date? <a href={SITE.issues}>Tell us on GitHub</a>.
+    </p>
+  </div>
+</section>
+
+<style>
+  .scroller {
+    overflow-x: auto;
+    border-radius: 20px;
+    box-shadow: inset 0 0 0 1px var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    width: 100%;
+    min-width: 940px;
+    border-collapse: collapse;
+    font-size: 0.9375rem;
+  }
+
+  th,
+  td {
+    padding: 20px 18px;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  thead th {
+    font-size: 0.8125rem;
+    font-weight: 650;
+    color: var(--muted);
+    line-height: 1.3;
+    border-bottom: 1px solid var(--line);
+    width: 13.5%;
+  }
+
+  thead th:first-child {
+    width: 19%;
+  }
+
+  tbody tr + tr > * {
+    border-top: 1px solid var(--line);
+  }
+
+  tbody th {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-size: 1rem;
+    background: var(--surface);
+  }
+
+  tr.ours > * {
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  }
+
+  tr.ours th {
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 600;
+  }
+
+  .mark svg {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+  }
+
+  .mark.yes svg {
+    background: var(--ink);
+    color: var(--ground);
+  }
+
+  .mark.partial svg {
+    background: linear-gradient(90deg, var(--ink) 50%, transparent 50%);
+    box-shadow: inset 0 0 0 1.5px var(--ink);
+  }
+
+  .mark.no,
+  .mark.unknown {
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  .mark.no svg,
+  .mark.unknown svg {
+    box-shadow: inset 0 0 0 1.5px currentColor;
+  }
+
+  td small {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    color: var(--muted);
+  }
+
+  .source {
+    margin-top: 20px;
+    max-width: 52em;
+  }
+
+  .source a {
+    color: var(--ink);
+    text-decoration-color: var(--accent);
+  }
+</style>

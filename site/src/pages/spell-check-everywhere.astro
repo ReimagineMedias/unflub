@@ -1,0 +1,59 @@
+---
+import Subpage from "../layouts/Subpage.astro";
+---
+
+<Subpage
+  title="Spell check in every app on Windows, not just the browser"
+  description="Spell check only works in apps that build it in. Here is why, and how unflub checks and fixes spelling in every text field on your computer, offline."
+  crumb="Spell check in every app"
+>
+  <h1>Spell check in every app, not just your browser</h1>
+  <p class="lead">
+    Your browser underlines typos. Your chat app might. Your note app, your design tool and that internal form probably do
+    not. Here is why, and how to close the gap.
+  </p>
+
+  <h2>Spell check and autocorrect are different jobs</h2>
+  <p>
+    <strong>Spell check</strong> finds a misspelled word and marks it, usually with a red underline. You still have to stop,
+    right-click and pick a fix. <strong>Autocorrect</strong> fixes the word for you as soon as you finish it, the way a phone
+    keyboard does. Spell check tells you about the problem; autocorrect makes it go away.
+  </p>
+
+  <h2>Why some apps check spelling and others do not</h2>
+  <p>
+    On Windows, every app has to wire up spell checking itself. Browsers and apps built on them use the Windows spell checker
+    to draw red underlines. Office has its own. Many other apps never add it, and none of them fix the word for you.
+  </p>
+  <p>So the same typo is caught in one window and missed in the next, and even where it is caught, you fix it by hand.</p>
+
+  <h2>How unflub works in every text field</h2>
+  <p>
+    unflub works at the keyboard instead of inside each app, so every text field gets the same treatment. When you finish a
+    word with a space, punctuation or Enter, it decides whether the word is wrong and, if it is confident, swaps in the fix
+    before your next key lands.
+  </p>
+  <ul>
+    <li>
+      <strong>Spotting typos:</strong> it can ask the same Windows spell checker your browser uses, and it carries its own
+      dictionary so it behaves the same on every computer.
+    </li>
+    <li>
+      <strong>Picking the fix:</strong> it ranks candidates by how common the word is, which keys sit next to each other,
+      swapped or doubled letters, and the word before.
+    </li>
+    <li>
+      <strong>Knowing when to stop:</strong> ambiguous words are left alone, and so are code, links, file paths, password fields
+      and the words you have taught it.
+    </li>
+    <li><strong>Undo:</strong> press Backspace right after a fix to get your word back. unflub remembers it.</li>
+  </ul>
+  <p>All of this runs on your computer. Nothing you type is sent anywhere.</p>
+
+  <h2>Which apps it covers</h2>
+  <p>
+    Anywhere you can type text: chat and email apps, browsers and web apps, note apps, AI prompt boxes, office tools and code
+    editors (where it only fixes the prose). Terminals and password managers are skipped by default, and you can add any app
+    to the skip list.
+  </p>
+</Subpage>

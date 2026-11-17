@@ -1,0 +1,103 @@
+---
+import { PERFORMANCE } from "../data/performance";
+---
+
+<section id="speed" class="speed tone-deep chapter-block" aria-labelledby="speed-title">
+  <div class="wrap">
+    <header class="section-head">
+      <h2 id="speed-title" class="chapter">Fast enough<br /> to disappear.</h2>
+      <p class="lead">
+        unflub is native code. It decides inside the keyboard hook, before your next key lands, then goes quiet until you type
+        again.
+      </p>
+    </header>
+    <ul class="stats">
+      {
+        PERFORMANCE.stats.map((s) => (
+          <li>
+            <strong class="num">
+              {s.value}
+              <span class="unit">{s.unit}</span>
+            </strong>
+            <span class="label">{s.label}</span>
+          </li>
+        ))
+      }
+    </ul>
+    <p class="small footnote">{PERFORMANCE.measuredOn}</p>
+  </div>
+</section>
+
+<style>
+  .stats {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: clamp(32px, 4vw, 64px);
+  }
+
+  li {
+    display: grid;
+    gap: 14px;
+    align-content: start;
+    padding-top: 28px;
+    border-top: 1px solid var(--line);
+  }
+
+  .num {
+    display: flex;
+    align-items: baseline;
+    gap: 0.06em;
+    font-size: clamp(4.5rem, 10vw, 9.5rem);
+    line-height: 0.85;
+    font-weight: 760;
+    letter-spacing: -0.06em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .unit {
+    font-size: 0.34em;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+  }
+
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .num {
+        animation: weigh linear both;
+        animation-timeline: view();
+        animation-range: entry 20% cover 45%;
+      }
+    }
+  }
+
+  @keyframes weigh {
+    from {
+      font-weight: 200;
+      letter-spacing: -0.03em;
+    }
+    to {
+      font-weight: 760;
+      letter-spacing: -0.06em;
+    }
+  }
+
+  .label {
+    font-size: 1.125rem;
+    color: var(--muted);
+    max-width: 18em;
+  }
+
+  .footnote {
+    margin-top: 48px;
+  }
+
+  @media (max-width: 760px) {
+    .stats {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

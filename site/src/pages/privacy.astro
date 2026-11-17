@@ -1,0 +1,55 @@
+---
+import Subpage from "../layouts/Subpage.astro";
+import { SITE } from "../data/site";
+---
+
+<Subpage
+  title="Privacy: unflub collects nothing"
+  description="unflub runs offline. No account, no telemetry, no analytics. What the app and this website do and do not collect, in plain words."
+  crumb="Privacy"
+>
+  <h1>We collect nothing.</h1>
+  <p class="lead">unflub runs on your computer and keeps to itself. This page says exactly what that means.</p>
+
+  <h2>The app</h2>
+  <ul>
+    <li>Corrections are decided on your computer. unflub never sends what you type anywhere.</li>
+    <li>
+      It only holds the word you are typing, and the one before it for context, in memory. Nothing you type is written to disk.
+    </li>
+    <li>There is no account, no telemetry, no analytics and no advertising ID.</li>
+    <li>
+      Password fields are always skipped. Terminals and password managers are on the skip list from the start, and you can add
+      any other app.
+    </li>
+    <li>
+      Your settings, your words and your shortcuts are saved in a file on your computer. Uninstalling unflub removes the app;
+      you can delete that file at any time.
+    </li>
+    <li>
+      To tell you about a new version, unflub asks GitHub for the latest release. That request carries nothing you typed and no
+      identifier.
+    </li>
+  </ul>
+
+  <h2>This website</h2>
+  <p>
+    unflub.rmgn.ca sets no cookies and runs no analytics or tracking scripts. It is served by Cloudflare, which handles each
+    request (including your IP address) to deliver the page and protect the site from abuse. Download links point to GitHub,
+    which has its own privacy statement.
+  </p>
+
+  <h2>Check for yourself</h2>
+  <p>
+    unflub is open source, so you do not have to take our word for any of this. <a href={SITE.repo}>Read the code on GitHub</a>,
+    or <a href={SITE.issues}>open an issue</a> if you have a question.
+  </p>
+
+  <p class="small updated">Last updated November 2026. unflub is an <a href={SITE.org.url}>RMGN</a> product.</p>
+</Subpage>
+
+<style>
+  .updated {
+    margin-top: 48px;
+  }
+</style>

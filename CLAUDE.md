@@ -16,3 +16,8 @@ Repo is private until v0.1, then flipped public.
 - Brand: default theme palette `#2D1916` espresso, `#79453A` brown, `#F2E6E3` blush paper, `#B06A5C` rose. Other themes
   (RMGN paper, quiet ink, System accent) are settings, not replacements. Fonts Manrope + IBM Plex Mono.
 - Pill default: brief underline on the fixed word plus a small capsule (~1 s). Capsule, underline-only and off are all settings.
+- Site (`site/`): Astro static, deployed by `.github/workflows/site.yml` to Cloudflare Workers static assets
+  (`site/wrangler.jsonc`, custom domain unflub.rmgn.ca). Needs repo secrets `CLOUDFLARE_API_TOKEN` and
+  `CLOUDFLARE_ACCOUNT_ID`. Performance figures live in `site/src/data/performance.ts`; keep them in step with
+  docs/performance.md. Scripts must stay external files (CSP is `script-src 'self'`; a test enforces it).
+- In Git Bash, `--flag=/path`-style args get rewritten to Windows paths (MSYS); pass names, not leading-slash paths.
