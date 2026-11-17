@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/unflub-core", "crates/unflub-windows"]
+members = ["crates/unflub-core", "crates/unflub-windows", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
