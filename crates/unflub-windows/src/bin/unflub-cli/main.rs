@@ -271,6 +271,7 @@ mod win {
                 eprintln!("the corrector panicked ({msg}); keys now pass through untouched")
             }
             HookEvent::Warning(w) => eprintln!("warning: {w}"),
+            HookEvent::HooksReinstalled { reason } => eprintln!("hooks reinstalled ({reason})"),
         }
     }
 }
