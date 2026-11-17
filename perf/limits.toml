@@ -16,7 +16,8 @@ boundary_p99_us = 1_000       # measured 87-90 us; 1 ms is the whole hook budget
 boundary_max_us = 10_000      # measured 196-951 us; a wall-clock max over 20k keys also
                               # catches OS preemption on shared runners, hence the slack
 char_p99_us = 20              # measured 0.1 us
-hard_max_us = 2_000           # measured 145-454 us: slowest of the hardest unknown words
+hard_max_us = 10_000          # measured 145-454 us locally, 2509 us once on a GitHub runner (one
+                              # preempted sample); same slack as boundary_max_us. p99 is the budget.
 heap_bytes = 25_165_824       # 24 MiB; measured 15_581_387 (14.9 MiB), deterministic
 peak_rss_bytes = 83_886_080   # 80 MiB; measured 43.6-45.7 MiB (index build peak)
 
