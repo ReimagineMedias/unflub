@@ -1,5 +1,5 @@
-// Serves dist/ the way Cloudflare's static assets will: trailing-slash redirects, 404.html for
-// misses, and the headers from _headers. Used by the tests and for Lighthouse runs.
+// Serves dist/ the way the production host does: trailing-slash redirects, 404.html for misses, and
+// the headers from vercel.json. Used by the tests and for Lighthouse runs.
 // Usage: node scripts/serve.mjs [port]   (0 picks a free port)
 import { createServer } from "node:http";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -22,22 +22,14 @@ const TYPES = {
   ".webmanifest": "application/manifest+json",
 };
 
-/** Parse _headers into [pattern, headers] rules. Only `*` wildcards are supported. */
+/** Header rules from vercel.json, the one source for production headers. Its `source` patterns here are plain
+    regular expressions (only `(.*)` and escaped dots), so they are used as they are. Later rules win, as on Vercel. */
 function loadHeaders() {
-  const file = join(dist, "_headers");
-  if (!existsSync(file)) return [];
-  const rules = [];
-  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
-    if (!line.trim() || line.trim().startsWith("#")) continue;
-    if (!/^\s/.test(line)) {
-      const escaped = line.trim().replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-      rules.push([new RegExp(`^${escaped}$`), {}]);
-    } else if (rules.length) {
-      const i = line.indexOf(":");
-      rules[rules.length - 1][1][line.slice(0, i).trim()] = line.slice(i + 1).trim();
-    }
-  }
-  return rules;
+  const cfg = JSON.parse(readFileSync(fileURLToPath(new URL("../vercel.json", import.meta.url)), "utf8"));
+  return (cfg.headers ?? []).map((r) => [
+    new RegExp(`^${r.source}$`),
+    Object.fromEntries(r.headers.map((h) => [h.key, h.value])),
+  ]);
 }
 
 /** @returns {Promise<import("node:http").Server>} */

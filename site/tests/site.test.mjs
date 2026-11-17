@@ -182,15 +182,16 @@ test("scroll-driven animations keep their timeline out of the animation shorthan
   assert.match(css("/"), /animation-timeline:scroll\(root\)/);
 });
 
-test("wrangler config serves dist on the custom domain", () => {
-  const text = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8")
-    .replace(/^\s*\/\/.*$/gm, "")
-    .replace(/,(\s*[}\]])/g, "$1");
-  const cfg = JSON.parse(text);
-  assert.equal(cfg.name, "unflub-site");
-  assert.equal(cfg.assets.directory, "./dist");
-  assert.equal(cfg.assets.not_found_handling, "404-page");
-  assert.deepEqual(cfg.routes, [{ pattern: "unflub.rmgn.net", custom_domain: true }]);
+test("vercel.json serves dist with trailing slashes and the production headers", () => {
+  const cfg = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
+  assert.equal(cfg.outputDirectory, "dist");
+  assert.equal(cfg.trailingSlash, true);
+  const rule = (source) => cfg.headers.find((r) => r.source === source)?.headers ?? [];
+  assert.ok(rule("/(.*)").some((h) => h.key === "Content-Security-Policy"), "CSP on every path");
+  assert.ok(
+    rule("/_astro/(.*)").some((h) => h.key === "Cache-Control" && /immutable/.test(h.value)),
+    "hashed assets are cached for good",
+  );
 });
 
 test("privacy copy matches what the app sends", () => {

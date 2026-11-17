@@ -1,9 +1,8 @@
 name: Site
 
-# unflub.rmgn.ca: check, build and test on pull requests; deploy to Cloudflare from main.
-# Deploying needs two secrets on the production environment or repository: CLOUDFLARE_ACCOUNT_ID and
-# CLOUDFLARE_API_TOKEN, scoped to Account > Workers Scripts:Edit and Zone (rmgn.ca) > Workers Routes:Edit
-# + DNS:Edit only. Third-party actions are pinned to commit SHAs; update the SHA and the tag comment together.
+# unflub.rmgn.net: check, build and test on pull requests and on main. Vercel's Git integration builds and
+# deploys the site itself (Root Directory `site`, settings in site/vercel.json), so there is no deploy job here.
+# Third-party actions are pinned to commit SHAs; update the SHA and the tag comment together.
 
 on:
   pull_request:
@@ -25,7 +24,6 @@ permissions:
 
 env:
   ASTRO_TELEMETRY_DISABLED: "1"
-  WRANGLER_SEND_METRICS: "false"
 
 jobs:
   build:
@@ -50,20 +48,11 @@ jobs:
           # Cloudflare Web Analytics site token. It is public (it ships in every page), so a repository variable,
           # not a secret. Unset means no beacon.
           PUBLIC_CF_BEACON_TOKEN: ${{ vars.PUBLIC_CF_BEACON_TOKEN }}
+          PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.PUBLIC_TURNSTILE_SITE_KEY }}
       - id: lint
         run: npm run lint
       - id: test
         run: npm test
-      - id: dry
-        name: Deploy dry run
-        run: npx --no-install wrangler deploy --dry-run
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: github.event_name == 'push'
-        with:
-          name: site-dist
-          path: site/dist
-          include-hidden-files: true
-          retention-days: 3
       - name: Summary
         if: always()
         run: |
@@ -77,44 +66,4 @@ jobs:
             echo "| Build | $(mark '${{ steps.build.outcome }}') |"
             echo "| HTML validation | $(mark '${{ steps.lint.outcome }}') |"
             echo "| Tests (pages, links, metadata, JSON-LD, headers) | $(mark '${{ steps.test.outcome }}') |"
-            echo "| Wrangler deploy dry run | $(mark '${{ steps.dry.outcome }}') |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  deploy:
-    name: Deploy to unflub.rmgn.ca
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://unflub.rmgn.ca
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: site/package-lock.json
-      - run: npm ci --ignore-scripts
-        working-directory: site
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: site-dist
-          path: site/dist
-      # The wrangler pinned in site/package-lock.json; the token is only exposed to this step.
-      - id: deploy
-        working-directory: site
-        run: npx --no-install wrangler deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "### Site deploy"
-            echo ""
-            echo "| Step | Result |"
-            echo "|---|---|"
-            echo "| Deploy to https://unflub.rmgn.ca | ${{ steps.deploy.outcome == 'success' && '✅' || '❌' }} |"
           } >> "$GITHUB_STEP_SUMMARY"

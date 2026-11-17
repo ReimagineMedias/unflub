@@ -1,6 +1,6 @@
 # unflub
 
-System-wide, phone-style autocorrect. RMGN product, site at unflub.rmgn.net (Cloudflare, like rmgn.ca).
+System-wide, phone-style autocorrect. RMGN product, site at unflub.rmgn.net (Vercel), API at api.rmgn.net, files at dl.rmgn.net.
 Keep `AGENTS.md` identical in substance.
 
 Git workflow: PRs. Branch `type/topic`, open a PR on ReimagineMedias/unflub, merge only when the owner says so (squash).
@@ -16,11 +16,10 @@ Repo is private until v0.1, then flipped public.
 - Brand: default theme palette `#2D1916` espresso, `#79453A` brown, `#F2E6E3` blush paper, `#B06A5C` rose. Other themes
   (RMGN paper, quiet ink, System accent) are settings, not replacements. Fonts Manrope + IBM Plex Mono.
 - Pill default: brief underline on the fixed word plus a small capsule (~1 s). Capsule, underline-only and off are all settings.
-- Site (`site/`): Astro static, deployed by `.github/workflows/site.yml` to Cloudflare Workers static assets
-  (`site/wrangler.jsonc`, custom domain unflub.rmgn.net). Needs secrets `CLOUDFLARE_API_TOKEN` (scoped to Account Workers
-  Scripts:Edit and rmgn.ca Workers Routes:Edit + DNS:Edit only) and `CLOUDFLARE_ACCOUNT_ID`. Deploys with the lockfile's
-  wrangler (`npx --no-install`), no third-party deploy action; workflow actions are SHA-pinned. Performance figures live in `site/src/data/performance.ts`; keep them in step with
-  docs/performance.md. Scripts must stay external files (CSP is `script-src 'self'`; a test enforces it).
+- Site (`site/`): Astro static, hosted on Vercel through its Git integration (Root Directory `site`); headers, CSP,
+  trailing slashes and caching live in `site/vercel.json`, which `scripts/serve.mjs` and the tests also read. CI only
+  checks, builds and tests. Performance figures live in `site/src/data/performance.ts`; keep them in step with
+  docs/performance.md. Scripts must stay external files (the CSP has no 'unsafe-inline' for scripts; a test enforces it).
 - Site privacy copy (owner, 2026-11-17): "Nothing you type leaves your computer." The update check sends app version,
   Windows version + architecture and anonymous first-of-day/week/month flags, no ID. Anonymous usage stats and crash
   reports are on by default with a first-run choice. Typo pairs are not collected. The app's Stats page is local only.
