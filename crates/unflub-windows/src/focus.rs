@@ -15,6 +15,11 @@
 //! Each check bumps a generation number; the worker publishes `(generation, answer)` in one
 //! atomic. The answer is three-state, and everything except a definite "not a password" counts
 //! as secure: no answer yet, a UIA error or timeout, or no UIA at all (fail closed).
+//!
+//! The same query also says whether the caret sits at a word start (empty field, or whitespace
+//! before it, read through `TextPattern`), in a second atomic. After a click or focus change the
+//! hook passes a "yes" to the engine so the first word typed there may be corrected
+//! ([`unflub_core::Engine::caret_at_word_start`]); anything else changes nothing.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -83,19 +88,60 @@ pub enum Secure {
     Unknown = 2,
 }
 
-/// Shared slot the UIA worker writes and the hook thread reads: `generation << 2 | answer`.
+/// Is the caret at a word start? The UIA worker's second answer about the focused element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordStart {
+    Yes = 0,
+    No = 1,
+    /// No text pattern, a selection, a timeout: keep the conservative default.
+    Unknown = 2,
+}
+
+/// Does a caret after `before` (the character before it, `None` at the start of the field)
+/// start a new word? Whitespace and opening brackets or quotes do; a letter, a digit, `.`, `/`
+/// or `_` may be part of a longer token (`foo.teh`), so they don't.
+pub fn word_start_after(before: Option<char>) -> bool {
+    before.is_none_or(|c| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '(' | '[' | '{' | '"' | '\u{201C}' | '\u{2018}' | '\u{00AB}'
+            )
+    })
+}
+
+/// Shared slot the UIA worker writes and the hook thread reads: `generation << 2 | answer`,
+/// for the password question and the word-start question.
 #[derive(Debug, Default)]
-pub struct PasswordSlot(AtomicU64);
+pub struct PasswordSlot {
+    secure: AtomicU64,
+    word_start: AtomicU64,
+}
 
 impl PasswordSlot {
     pub fn publish(&self, generation: u64, answer: Secure) {
-        self.0
+        self.secure
             .store(generation << 2 | answer as u64, Ordering::Release);
+    }
+
+    pub fn publish_word_start(&self, generation: u64, answer: WordStart) {
+        self.word_start
+            .store(generation << 2 | answer as u64, Ordering::Release);
+    }
+
+    /// The word-start answer for `generation`, or `None` while it is pending.
+    pub fn word_start(&self, generation: u64) -> Option<WordStart> {
+        let v = self.word_start.load(Ordering::Acquire);
+        (v >> 2 == generation).then_some(match v & 3 {
+            0 => WordStart::Yes,
+            1 => WordStart::No,
+            _ => WordStart::Unknown,
+        })
     }
 
     /// The answer for `generation`, or `None` while it is pending.
     pub fn answer(&self, generation: u64) -> Option<Secure> {
-        let v = self.0.load(Ordering::Acquire);
+        let v = self.secure.load(Ordering::Acquire);
         (v >> 2 == generation).then_some(match v & 3 {
             0 => Secure::NotSecure,
             1 => Secure::Secure,
@@ -144,10 +190,12 @@ impl FocusState {
         }
     }
 
-    /// Start a new generation; returns it when the worker should be asked about it.
+    /// Start a new generation; returns it when the worker should be asked about it: always
+    /// when UIA works (probed fields for the password answer, every field for the word-start
+    /// answer).
     pub fn next_generation(&mut self) -> Option<u64> {
         self.generation += 1;
-        (self.kind == FieldKind::Probe && self.uia_available).then_some(self.generation)
+        self.uia_available.then_some(self.generation)
     }
 }
 
@@ -160,6 +208,7 @@ pub use win::{focus_window, foreground, inspect_window, process_exe, PasswordPro
 mod win {
     use super::{
         classify_class, exe_name_from_path, is_password_edit, FieldKind, PasswordSlot, Secure,
+        WordStart,
     };
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
     use std::sync::Arc;
@@ -175,7 +224,9 @@ mod win {
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows::Win32::UI::Accessibility::{
-        CUIAutomation, CUIAutomation8, IUIAutomation, IUIAutomation2,
+        CUIAutomation, CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
+        IUIAutomationTextPattern, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
+        TextUnit_Character, UIA_TextPatternId,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowLongW,
@@ -321,6 +372,47 @@ mod win {
 
     type Ready = mpsc::SyncSender<Result<Vec<String>, String>>;
 
+    /// Is the caret at a word start in `element`? Through `TextPattern`: the selection must be
+    /// one empty range (a caret), and the character before it whitespace or nothing.
+    fn caret_word_start(element: &IUIAutomationElement) -> WordStart {
+        // SAFETY: valid interfaces on the worker's MTA thread, under the UIA timeouts.
+        let found = unsafe {
+            (|| -> windows::core::Result<Option<bool>> {
+                let pattern: IUIAutomationTextPattern =
+                    element.GetCurrentPatternAs(UIA_TextPatternId)?;
+                let selection = pattern.GetSelection()?;
+                if selection.Length()? != 1 {
+                    return Ok(None);
+                }
+                let caret = selection.GetElement(0)?;
+                let empty = caret.CompareEndpoints(
+                    TextPatternRangeEndpoint_Start,
+                    &caret,
+                    TextPatternRangeEndpoint_End,
+                )? == 0;
+                if !empty {
+                    return Ok(None);
+                }
+                let before = caret.Clone()?;
+                let moved = before.MoveEndpointByUnit(
+                    TextPatternRangeEndpoint_Start,
+                    TextUnit_Character,
+                    -1,
+                )?;
+                if moved == 0 {
+                    return Ok(Some(true));
+                }
+                let text = before.GetText(4)?.to_string();
+                Ok(Some(crate::focus::word_start_after(text.chars().next())))
+            })()
+        };
+        match found {
+            Ok(Some(true)) => WordStart::Yes,
+            Ok(Some(false)) => WordStart::No,
+            _ => WordStart::Unknown,
+        }
+    }
+
     fn worker(rx: Receiver<Request>, slot: Arc<PasswordSlot>, ready: Ready) {
         // SAFETY: balanced by CoUninitialize below; this thread never enters an STA.
         let init = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
@@ -364,8 +456,9 @@ mod win {
                 }
             }
             // SAFETY: valid interface used on the MTA thread that created it.
+            let focused = unsafe { uia.GetFocusedElement() };
+            // SAFETY: as above, for the element it returned.
             let answer = unsafe {
-                let focused = uia.GetFocusedElement();
                 let password = focused.as_ref().map(|e| e.CurrentIsPassword());
                 // A terminal inside an ordinary app (VS Code's xterm.js) may be at a password
                 // prompt we can't see: secure too.
@@ -382,6 +475,12 @@ mod win {
                 }
             };
             slot.publish(req.generation, answer);
+            // Only worth asking where the first word may be corrected at all.
+            let word_start = match (answer, focused) {
+                (Secure::NotSecure, Ok(e)) => caret_word_start(&e),
+                _ => WordStart::Unknown,
+            };
+            slot.publish_word_start(req.generation, word_start);
         }
     }
 }
@@ -399,6 +498,39 @@ mod tests {
         let (probe, warnings) = PasswordProbe::start(slot).expect("UI Automation available");
         assert!(warnings.is_empty(), "{warnings:?}");
         drop(probe);
+    }
+
+    #[test]
+    fn word_starts() {
+        for c in [
+            None,
+            Some(' '),
+            Some('\n'),
+            Some('\t'),
+            Some('('),
+            Some('"'),
+        ] {
+            assert!(word_start_after(c), "{c:?}");
+        }
+        for c in ['a', 'Z', '7', '.', '/', '_', '-', '\''] {
+            assert!(!word_start_after(Some(c)), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn word_start_answers_are_per_generation() {
+        let slot = PasswordSlot::default();
+        assert_eq!(slot.word_start(1), None);
+        slot.publish_word_start(1, WordStart::Yes);
+        assert_eq!(slot.word_start(1), Some(WordStart::Yes));
+        assert_eq!(slot.word_start(2), None, "pending for a newer generation");
+        slot.publish_word_start(2, WordStart::Unknown);
+        assert_eq!(slot.word_start(1), None, "stale");
+        assert_eq!(slot.word_start(2), Some(WordStart::Unknown));
+        // The two answers don't share bits.
+        slot.publish(2, Secure::NotSecure);
+        assert_eq!(slot.answer(2), Some(Secure::NotSecure));
+        assert_eq!(slot.word_start(2), Some(WordStart::Unknown));
     }
 
     #[test]
@@ -565,8 +697,11 @@ mod tests {
             uia_available: true,
             ..FocusState::default()
         };
-        assert_eq!(f.next_generation(), None, "no UIA query for edits");
-        assert!(!f.secure());
+        // Asked, for the word-start answer only: the password answer never counts for them.
+        let generation = f.next_generation().expect("asked about the caret");
+        assert!(!f.secure(), "not secure while the answer is pending");
+        f.slot.publish(generation, Secure::Secure);
+        assert!(!f.secure(), "ES_PASSWORD alone decides");
         f.es_password = true;
         assert!(f.secure());
     }

@@ -130,6 +130,15 @@ pub trait Corrector {
     fn undo_window(&self) -> Option<Duration> {
         None
     }
+
+    /// The current reset generation (see [`Engine::caret_at_word_start`]), if the corrector
+    /// can use word-start hints.
+    fn reset_generation(&self) -> Option<u64> {
+        None
+    }
+
+    /// The adapter found the caret at a word start for reset `generation`.
+    fn caret_at_word_start(&mut self, _generation: u64) {}
 }
 
 impl Corrector for Engine {
@@ -144,6 +153,14 @@ impl Corrector for Engine {
     fn undo_window(&self) -> Option<Duration> {
         (self.config.undo_mode == UndoMode::Twice)
             .then(|| Duration::from_millis(u64::from(self.config.undo_window_ms)))
+    }
+
+    fn reset_generation(&self) -> Option<u64> {
+        Some(Engine::reset_generation(self))
+    }
+
+    fn caret_at_word_start(&mut self, generation: u64) {
+        Engine::caret_at_word_start(self, generation);
     }
 }
 
@@ -361,6 +378,21 @@ impl Engine {
             let count = self.undo_counts.entry(undo_key(typo, fix)).or_insert(0);
             *count = (*count).max(*times);
         }
+    }
+
+    /// Bumped by every reset (a click, focus change, arrow key, or deleting past what was seen).
+    pub fn reset_generation(&self) -> u64 {
+        self.session.generation
+    }
+
+    /// The first word after a reset is normally never corrected: the caret may be in the
+    /// middle of a word we never saw. The adapter can find out, off the hook thread, that the
+    /// text before the caret ended at a word boundary (empty field, or whitespace before the
+    /// caret) when reset `generation` happened. If that is still the current generation and the
+    /// first word's boundary hasn't been typed yet, that word now counts as fully observed.
+    /// A late, stale or missing answer changes nothing. Returns whether it was taken.
+    pub fn caret_at_word_start(&mut self, generation: u64) -> bool {
+        generation == self.session.generation && self.session.starts_at_word_start()
     }
 
     /// Close the double-Backspace undo window ([`UndoMode::Twice`] only; `Once` stays open

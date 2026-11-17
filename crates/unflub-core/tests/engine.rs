@@ -363,6 +363,83 @@ fn reset_forgets_the_word() {
     assert_eq!(t.type_str("teh teh "), "teh the ");
 }
 
+fn brb() -> Typist {
+    Typist::new(Config {
+        user_rules: vec![("brb".into(), "be right back".into())],
+        ..config()
+    })
+}
+
+/// The live bug: a shortcut typed first into an empty prompt box (after a click) never
+/// expanded. Without a hint nothing changes; with one in time, the first word counts.
+#[test]
+fn first_word_after_a_reset_needs_a_word_start_hint() {
+    // No hint: conservative, as before.
+    let mut t = brb();
+    t.key(Key::Reset);
+    assert_eq!(t.type_str("brb "), "brb ");
+    assert_eq!(t.type_str("brb "), "brb be right back ");
+
+    // The hint arrives before the first word's boundary (even mid-word): fixed.
+    let mut t = brb();
+    t.key(Key::Reset);
+    let generation = t.engine.reset_generation();
+    assert!(t.engine.caret_at_word_start(generation));
+    assert_eq!(t.type_str("brb "), "be right back ");
+    let mut t = brb();
+    t.key(Key::Reset);
+    let generation = t.engine.reset_generation();
+    t.type_str("br");
+    assert!(t.engine.caret_at_word_start(generation));
+    assert_eq!(t.type_str("b "), "be right back ");
+    // Typos too.
+    let mut t = Typist::bundled();
+    t.key(Key::Reset);
+    let generation = t.engine.reset_generation();
+    t.engine.caret_at_word_start(generation);
+    assert_eq!(t.type_str("teh "), "the ");
+}
+
+#[test]
+fn a_late_or_stale_word_start_hint_changes_nothing() {
+    // After the first word's boundary: too late.
+    let mut t = brb();
+    t.key(Key::Reset);
+    let generation = t.engine.reset_generation();
+    t.type_str("brb ");
+    assert!(!t.engine.caret_at_word_start(generation));
+    assert_eq!(t.text, "brb ");
+    // Another reset (an arrow key, a second click) since the question: stale.
+    let mut t = brb();
+    t.key(Key::Reset);
+    let generation = t.engine.reset_generation();
+    t.key(Key::Reset);
+    assert!(!t.engine.caret_at_word_start(generation));
+    assert_eq!(t.type_str("brb "), "brb ");
+    // Deleting past what was seen moves the caret somewhere unknown: stale too.
+    let mut t = brb();
+    t.key(Key::Reset);
+    let generation = t.engine.reset_generation();
+    t.type_str("b");
+    t.key(Key::Backspace);
+    t.key(Key::Backspace);
+    assert!(!t.engine.caret_at_word_start(generation));
+    assert_eq!(t.type_str("brb "), "brb ");
+}
+
+/// Typing after Enter or Tab inside our own observed session already counts the first word;
+/// a hint is never needed (or harmful) there.
+#[test]
+fn words_after_an_observed_boundary_need_no_hint() {
+    let mut t = brb();
+    assert_eq!(t.type_str("ok\nbrb "), "ok\nbe right back ");
+    let generation = t.engine.reset_generation();
+    assert!(
+        !t.engine.caret_at_word_start(generation),
+        "a boundary was seen"
+    );
+}
+
 #[test]
 fn backspace_edits_the_word() {
     let mut t = Typist::bundled();

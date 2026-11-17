@@ -107,6 +107,14 @@ impl Corrector for LiveEngine {
         Corrector::undo_window(&self.engine)
     }
 
+    fn reset_generation(&self) -> Option<u64> {
+        Some(self.engine.reset_generation())
+    }
+
+    fn caret_at_word_start(&mut self, generation: u64) {
+        self.engine.caret_at_word_start(generation);
+    }
+
     fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action {
         self.take_config();
         let action = self.engine.on_key(key, ctx);

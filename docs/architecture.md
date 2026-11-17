@@ -27,8 +27,15 @@ app stay the same.
    (`Char`, `Boundary`, `Backspace`, `Reset`).
 2. It calls `Engine::on_key` synchronously, inside the hook. The engine tracks the word being
    typed. Caret moves, clicks, focus changes and shortcuts reset it, so we never guess at text
-   we didn't see. After a reset the first word is never corrected, because the caret may be in
-   the middle of a word we never saw; correction resumes after the next boundary key.
+   we didn't see. After a reset the first word is not corrected, because the caret may be in
+   the middle of a word we never saw; correction resumes after the next boundary key. The
+   exception is a caret known to be at a word start: after a click or focus change the UIA
+   worker (never the hook thread, with its short timeouts) reads the character before the
+   caret through `TextPattern`, and if the field is empty or that character is whitespace or an
+   opening bracket or quote, the hook passes `caret_at_word_start(generation)` to the engine
+   before the next key. It counts only for the reset it was asked about and only until the
+   first word's boundary; a late, stale or unknown answer keeps the default. So the first word
+   in an empty prompt box (`brb` in a chat or an AI agent's input) is fixed too.
 3. On a boundary key (space, punctuation, Enter) the engine decides whether the word is wrong
    and what it should be. If it is confident, it returns `Action::Replace`.
 4. The adapter swallows the boundary key and hands backspaces plus the fixed word and the

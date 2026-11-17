@@ -336,6 +336,9 @@ struct State {
     /// Thread timer id while the pipeline is busy (0 when none).
     timer: usize,
     broken: bool,
+    /// A word-start question in flight: `(focus generation, the corrector's reset generation
+    /// when it was asked)`. See [`crate::focus::WordStart`].
+    word_start: Option<(u64, u64)>,
     /// A first Backspace held for a double-Backspace undo ([`Action::HoldBackspace`]).
     held: Option<RawEvent>,
     /// When the last fix stops being undoable by a double Backspace.
@@ -438,6 +441,7 @@ fn run(
         batches: Vec::new(),
         timer: 0,
         broken: false,
+        word_start: None,
         held: None,
         undo_deadline: None,
         probe_after: None,
@@ -813,8 +817,9 @@ unsafe extern "system" fn win_event_proc(
     // look up its focused child instead.
     let target = (event == EVENT_OBJECT_FOCUS).then_some(hwnd);
     with_state(|s| {
-        s.refresh_focus(target, Duration::ZERO);
+        // Reset first: the word-start question asked by the refresh belongs to this reset.
         s.reset();
+        s.refresh_focus(target, Duration::ZERO);
     });
 }
 
@@ -1001,6 +1006,7 @@ impl State {
             return false;
         }
         let blocked = self.focus.secure() || ime || self.excluded();
+        self.take_word_start();
         match self.gate.decide(key, blocked) {
             GateDecision::Feed => {}
             GateDecision::ResetOnly => {
@@ -1092,6 +1098,23 @@ impl State {
             }
         }
         self.pump();
+    }
+
+    /// If the UIA worker has answered the word-start question, tell the corrector (only a "yes"
+    /// matters). An atomic read; never waits.
+    fn take_word_start(&mut self) {
+        let Some((focus_generation, reset_generation)) = self.word_start else {
+            return;
+        };
+        match self.focus.slot.word_start(focus_generation) {
+            None => {}
+            Some(answer) => {
+                self.word_start = None;
+                if answer == focus::WordStart::Yes {
+                    self.corrector.caret_at_word_start(reset_generation);
+                }
+            }
+        }
     }
 
     /// A first Backspace after a fix: swallow it and hold it (the pill asks "Undo?"), unless
@@ -1321,13 +1344,21 @@ impl State {
             .unwrap_or_else(|| focus::focus_window(foreground));
         (self.focus.kind, self.focus.es_password) = focus::inspect_window(target);
         let Some(generation) = self.focus.next_generation() else {
+            self.word_start = None;
             return;
         };
+        // Asked after the reset that goes with this refresh, so the answer is about the caret
+        // the first word will be typed at.
+        self.word_start = self
+            .corrector
+            .reset_generation()
+            .map(|reset| (generation, reset));
         if let Some(probe) = &self.probe {
             if probe.request(generation, probe_delay) {
                 return;
             }
         }
+        self.word_start = None;
         self.probe = None;
         self.focus.uia_available = false;
         let _ = self.events.send(HookEvent::Warning(
