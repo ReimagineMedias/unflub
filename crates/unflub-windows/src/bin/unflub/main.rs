@@ -175,8 +175,23 @@ mod win {
                 replacement: r,
                 reason,
             } => println!("skip   {:?} -> {:?}  ({reason})", r.original, r.corrected),
-            HookEvent::CorrectorPanicked => {
-                eprintln!("the corrector panicked; keys now pass through untouched")
+            HookEvent::InjectFailed {
+                replacement: r,
+                sent,
+                total,
+                released,
+            } => eprintln!(
+                "fail   {:?} -> {:?}  (SendInput sent {sent}/{total} events{})",
+                r.original,
+                r.corrected,
+                if *released {
+                    ", released a held key"
+                } else {
+                    ""
+                }
+            ),
+            HookEvent::CorrectorPanicked(msg) => {
+                eprintln!("the corrector panicked ({msg}); keys now pass through untouched")
             }
             HookEvent::Warning(w) => eprintln!("warning: {w}"),
         }

@@ -54,12 +54,32 @@ pub fn plan(delete: usize, insert: &str) -> Vec<Stroke> {
     out
 }
 
+/// What happened to one action's `SendInput`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendOutcome {
+    /// Every event went out.
+    Complete,
+    /// Only `sent` of `total` events went out (0 when blocked, e.g. by UIPI). `released` is
+    /// true when a key-down went out without its key-up and we sent the key-up separately.
+    Partial {
+        sent: usize,
+        total: usize,
+        released: bool,
+    },
+}
+
+/// Inputs come in down/up pairs. If `SendInput` stopped after a key-down (odd count), returns
+/// the index of the key-up that must still be sent so no key is left held down.
+pub fn missing_key_up(sent: usize, total: usize) -> Option<usize> {
+    (sent < total && sent % 2 == 1).then_some(sent)
+}
+
 #[cfg(windows)]
 pub use win::{send, to_inputs};
 
 #[cfg(windows)]
 mod win {
-    use super::{Stroke, INJECT_TAG};
+    use super::{SendOutcome, Stroke, INJECT_TAG};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
         KEYEVENTF_UNICODE, VIRTUAL_KEY,
@@ -94,14 +114,29 @@ mod win {
         out
     }
 
-    /// One `SendInput` call. Returns how many events Windows accepted (0 if blocked, e.g. by
-    /// UIPI when the foreground window is elevated).
-    pub fn send(inputs: &[INPUT]) -> u32 {
+    fn send_raw(inputs: &[INPUT]) -> usize {
         if inputs.is_empty() {
             return 0;
         }
         // SAFETY: `inputs` is a valid slice of initialised INPUT structs and cbsize matches.
-        unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) }
+        unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) as usize }
+    }
+
+    /// One `SendInput` call for the whole action. Anything short of every event is a failure;
+    /// a key-down left without its key-up is released with one more call.
+    pub fn send(inputs: &[INPUT]) -> SendOutcome {
+        let total = inputs.len();
+        let sent = send_raw(inputs);
+        if sent == total {
+            return SendOutcome::Complete;
+        }
+        let released = super::missing_key_up(sent, total)
+            .is_some_and(|i| send_raw(std::slice::from_ref(&inputs[i])) == 1);
+        SendOutcome::Partial {
+            sent,
+            total,
+            released,
+        }
     }
 }
 
@@ -144,6 +179,20 @@ mod tests {
                 Stroke::Unit(0x00E9),
             ]
         );
+    }
+
+    #[test]
+    fn partial_send_releases_a_held_key() {
+        // 3 strokes = 6 events.
+        assert_eq!(missing_key_up(6, 6), None, "complete");
+        assert_eq!(missing_key_up(0, 6), None, "nothing sent");
+        assert_eq!(missing_key_up(2, 6), None, "stopped between strokes");
+        assert_eq!(
+            missing_key_up(3, 6),
+            Some(3),
+            "stroke 2 is down: send event 3 (its up)"
+        );
+        assert_eq!(missing_key_up(5, 6), Some(5));
     }
 
     #[test]

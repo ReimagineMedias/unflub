@@ -7,7 +7,9 @@
 //! Dead keys: the hook asks `ToUnicodeEx` *not* to touch the kernel's dead-key buffer, so the
 //! user's accents keep working in their app. The cost is that we cannot see what a dead key
 //! composes with. We remember that a dead key is pending and report the next key as
-//! [`Key::Reset`]: the engine forgets the word rather than guessing at `é` vs `e`.
+//! [`Key::Reset`]: the engine forgets the word rather than guessing at `é` vs `e`. Clicks and
+//! focus changes don't clear that memory: the app's dead-key state survives them too, so the
+//! next key may still compose.
 
 use unflub_core::Key;
 
@@ -175,11 +177,6 @@ impl KeyTranslator {
     /// True after a dead key until the next non-modifier key.
     pub fn dead_pending(&self) -> bool {
         self.dead_pending
-    }
-
-    /// Forget any pending dead key (focus changed, click).
-    pub fn reset(&mut self) {
-        self.dead_pending = false;
     }
 
     /// Translate one event. `None` means "not interesting, don't tell the engine" (key-ups,

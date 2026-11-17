@@ -40,25 +40,41 @@ engine never calls slow APIs on this path.
 | Thread | Does |
 |---|---|
 | `unflub-hook` | `WH_KEYBOARD_LL` and `WH_MOUSE_LL` hooks, focus WinEvents, calls the engine, `SendInput` |
-| `unflub-uia` | Asks UI Automation whether the newly focused field is a password field |
-| `unflub-spell` | Slow `ComprehensiveCheck` lookups that fill the OS auto-replace cache |
+| `unflub-uia` | Asks UI Automation whether the focused field is a password field |
+| `unflub-spell` | Slow `ComprehensiveCheck` lookups for the OS auto-replace cache, and adding learned words |
 
 - **Key translation.** `ToUnicodeEx` with flag `0x4` (Windows 10 1607+) reads what a key types
   in the foreground window's layout without changing the kernel's dead-key state, so accents
   keep working in the user's app. We can't see what a dead key composes with, so the key after
   a dead key resets the word instead of guessing.
 - **Injection.** One `SendInput` per action: backspaces, then the text as Unicode packets
-  (`
-` and `	` as real Enter and Tab), all tagged so our hook skips them. Input injected by
-  other programs (dictation tools, macro tools) resets the word. If Ctrl, Alt or Win is held
-  when a fix is due, we don't inject (Ctrl+Backspace would delete a word); the key goes through
-  and the word resets. If `SendInput` is blocked, the key goes through untouched.
-- **Context.** On focus changes the hook caches the foreground exe name and checks for classic
-  `ES_PASSWORD` edit boxes. UI Automation's `IsPassword` covers everything else; it can block on
-  hung apps, so it runs on its own thread with short UIA timeouts, and a field counts as secure
-  until its answer arrives.
+  (`\n` and `\t` as real Enter and Tab), all tagged so our hook skips them. Input injected by
+  other programs (dictation tools, macro tools) resets the word. We don't inject, and let the
+  key through instead, when Ctrl, Alt or Win is held (Ctrl+Backspace would delete a word), when
+  the key is an auto-repeat (swallowing it would leave a key stuck down), or on Shift+Enter (a
+  soft line break we'd re-send as a plain Enter). If `SendInput` takes fewer events than we
+  sent, the key goes through, the word resets, and any key left down is released.
+- **Secure fields.** While a field is secure, the engine never sees its keys: it gets one
+  `Reset` instead, and the rest of a word that was half typed when the field became safe is
+  skipped too. The focused window's class decides how we check:
+  - Classic Win32 edits (`Edit`, `RichEdit*`, WinForms): the `ES_PASSWORD` style, read on the
+    hook thread.
+  - Browsers, Electron, WPF, UWP and WinUI hosts (`Chrome_*`, `MozillaWindowClass`,
+    `HwndWrapper*`, `Windows.UI.Core.CoreWindow`, XAML islands): UI Automation's `IsPassword`,
+    asked on focus changes and 50 ms after a click, Tab or Enter. UIA can block on hung apps,
+    so it runs on its own thread with 250 ms / 500 ms connection and transaction timeouts.
+    The field counts as secure until UIA says it isn't: no answer yet, a UIA error, a timeout,
+    or no UIA at all all mean no corrections there.
+  - Other windows are not treated as password fields.
+
+  Any accessibility query, UIA or MSAA, makes Chromium build its accessibility tree, which
+  costs CPU and memory in Chrome and Electron apps. That is why we only ask for those window
+  classes, and only when focus may have moved.
+- **Other skips.** Keyboard layouts for Chinese, Japanese and Korean (IME input) and apps on
+  the exclude list are treated like secure fields.
 - **Spell checker.** `Check` runs on the hook thread (it is fast). The OS auto-replace lookup
-  only reads a cache; misses are looked up in the background and used next time.
+  only reads a cache; misses are looked up in the background and used next time. Learning a
+  word writes the user's dictionary, so it also happens in the background.
 - **Elevated windows.** A normal process can't see keys typed into administrator windows or
   inject into them, so unflub does nothing there.
 

@@ -1,14 +1,19 @@
 //! What we know about the focused field: the foreground app's exe name and whether the field
-//! is a password box. Both are refreshed on focus changes, never per key.
+//! is a password box. Refreshed on focus changes and on clicks, Tab and Enter; never per key.
 //!
-//! Password detection has two parts:
-//! - `ES_PASSWORD` on a classic Win32 edit control, checked on the hook thread (window style
-//!   reads don't send messages, so they can't block on a hung app).
-//! - UI Automation's `IsPassword` for everything else (browsers, Electron, WPF, UWP). UIA calls
-//!   can block on hung apps, so they run on a dedicated worker thread with short UIA timeouts.
-//!   Each focus change bumps a generation number; the worker publishes `(generation, password)`
-//!   in one atomic. Until the answer for the current generation arrives, the field counts as
-//!   secure (fail closed): the engine skips a few keys at worst, and never corrects a password.
+//! The focused window's class decides how we check for a password field:
+//! - Classic Win32 edits (Edit, RichEdit*, WinForms EDIT): the `ES_PASSWORD` style bit, read on
+//!   the hook thread. Style and class reads don't send messages, so they can't block.
+//! - Browser engines and XAML/WPF hosts (Chrome_*, MozillaWindowClass, HwndWrapper*, CoreWindow,
+//!   XAML islands): UI Automation's `IsPassword`, on a worker thread with short UIA timeouts,
+//!   because UIA calls can block on hung apps. Any accessibility query makes Chromium build its
+//!   accessibility tree, which costs CPU and memory in Chrome and Electron apps; that is why we
+//!   only ask for these classes and only on focus changes.
+//! - Anything else: not treated as a password field.
+//!
+//! Each check bumps a generation number; the worker publishes `(generation, answer)` in one
+//! atomic. The answer is three-state, and everything except a definite "not a password" counts
+//! as secure: no answer yet, a UIA error or timeout, or no UIA at all (fail closed).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -21,34 +26,73 @@ pub fn exe_name_from_path(path: &str) -> String {
         .to_lowercase()
 }
 
-/// Window classes whose `ES_PASSWORD` style bit means "password edit" (Edit, RichEdit20W,
-/// RICHEDIT50W, WindowsForms10.EDIT.app.0...). On other classes bit 0x20 means something else.
-pub fn is_edit_class(class: &str) -> bool {
+/// How to tell whether a window holds a password field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    /// Classic Win32 edit control: `ES_PASSWORD` decides.
+    Win32Edit,
+    /// Hosts whose fields are invisible to Win32 (browsers, Electron, WPF, UWP, WinUI): ask UIA.
+    Probe,
+    /// Everything else: not a password field as far as we can tell.
+    Plain,
+}
+
+/// Classify a window class name.
+pub fn classify_class(class: &str) -> FieldKind {
     let lower = class.to_ascii_lowercase();
-    lower == "edit" || lower.contains(".edit.") || lower.starts_with("richedit")
+    if lower == "edit" || lower.contains(".edit.") || lower.starts_with("richedit") {
+        return FieldKind::Win32Edit;
+    }
+    const PROBE_PREFIXES: &[&str] = &[
+        "chrome_",                                     // Chrome, Edge, Electron, CEF
+        "mozillawindowclass",                          // Firefox, Thunderbird
+        "hwndwrapper",                                 // WPF
+        "windows.ui.core.corewindow",                  // UWP
+        "windows.ui.input.inputsite.windowclass",      // XAML islands, WinUI 3 input
+        "microsoft.ui.content.desktopchildsitebridge", // WinUI 3
+        "desktopwindowxamlsource",                     // XAML islands
+    ];
+    if PROBE_PREFIXES.iter().any(|p| lower.starts_with(p)) {
+        FieldKind::Probe
+    } else {
+        FieldKind::Plain
+    }
 }
 
 const ES_PASSWORD: u32 = 0x20;
 
 /// True when a window of `class` with `style` is a classic password edit control.
 pub fn is_password_edit(class: &str, style: u32) -> bool {
-    style & ES_PASSWORD != 0 && is_edit_class(class)
+    style & ES_PASSWORD != 0 && classify_class(class) == FieldKind::Win32Edit
 }
 
-/// Shared slot the UIA worker writes and the hook thread reads: `generation << 1 | password`.
+/// The UIA worker's answer about one focused element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Secure {
+    NotSecure = 0,
+    Secure = 1,
+    /// UIA failed or timed out. Treated as secure.
+    Unknown = 2,
+}
+
+/// Shared slot the UIA worker writes and the hook thread reads: `generation << 2 | answer`.
 #[derive(Debug, Default)]
 pub struct PasswordSlot(AtomicU64);
 
 impl PasswordSlot {
-    pub fn publish(&self, generation: u64, password: bool) {
+    pub fn publish(&self, generation: u64, answer: Secure) {
         self.0
-            .store(generation << 1 | u64::from(password), Ordering::Release);
+            .store(generation << 2 | answer as u64, Ordering::Release);
     }
 
-    /// Secure while the answer for `generation` hasn't arrived yet, or if it says "password".
-    pub fn secure(&self, generation: u64) -> bool {
+    /// The answer for `generation`, or `None` while it is pending.
+    pub fn answer(&self, generation: u64) -> Option<Secure> {
         let v = self.0.load(Ordering::Acquire);
-        v >> 1 != generation || v & 1 == 1
+        (v >> 2 == generation).then_some(match v & 3 {
+            0 => Secure::NotSecure,
+            1 => Secure::Secure,
+            _ => Secure::Unknown,
+        })
     }
 }
 
@@ -57,10 +101,11 @@ impl PasswordSlot {
 pub struct FocusState {
     pub app: Option<String>,
     pub app_pid: u32,
+    pub kind: FieldKind,
     pub es_password: bool,
     pub generation: u64,
     pub slot: Arc<PasswordSlot>,
-    /// False when the UIA worker couldn't start or died; then only `ES_PASSWORD` counts.
+    /// False when the UIA worker couldn't start or died. `Probe` fields then count as secure.
     pub uia_available: bool,
 }
 
@@ -69,6 +114,7 @@ impl Default for FocusState {
         Self {
             app: None,
             app_pid: 0,
+            kind: FieldKind::Plain,
             es_password: false,
             generation: 0,
             slot: Arc::new(PasswordSlot::default()),
@@ -79,24 +125,35 @@ impl Default for FocusState {
 
 impl FocusState {
     pub fn secure(&self) -> bool {
-        self.es_password || (self.uia_available && self.slot.secure(self.generation))
+        if self.es_password {
+            return true;
+        }
+        match self.kind {
+            FieldKind::Win32Edit | FieldKind::Plain => false,
+            FieldKind::Probe => {
+                !self.uia_available || self.slot.answer(self.generation) != Some(Secure::NotSecure)
+            }
+        }
     }
 
-    /// Start a new focus generation; the caller then asks the worker about it.
-    pub fn next_generation(&mut self) -> u64 {
+    /// Start a new generation; returns it when the worker should be asked about it.
+    pub fn next_generation(&mut self) -> Option<u64> {
         self.generation += 1;
-        self.generation
+        (self.kind == FieldKind::Probe && self.uia_available).then_some(self.generation)
     }
 }
 
 #[cfg(windows)]
-pub use win::{focused_es_password, foreground, process_exe, PasswordProbe};
+pub use win::{focus_window, foreground, inspect_window, process_exe, PasswordProbe};
 
 #[cfg(windows)]
 mod win {
-    use super::{exe_name_from_path, is_password_edit, PasswordSlot};
-    use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+    use super::{
+        classify_class, exe_name_from_path, is_password_edit, FieldKind, PasswordSlot, Secure,
+    };
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
     use windows::core::{Interface, PWSTR};
     use windows::Win32::Foundation::{CloseHandle, HWND};
     use windows::Win32::System::Com::{
@@ -107,7 +164,9 @@ mod win {
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
-    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, IUIAutomation2};
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, CUIAutomation8, IUIAutomation, IUIAutomation2,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowLongW,
         GetWindowThreadProcessId, GUITHREADINFO, GWL_STYLE,
@@ -154,8 +213,8 @@ mod win {
         }
     }
 
-    /// Is the keyboard-focus window of `foreground`'s thread a classic password edit?
-    pub fn focused_es_password(foreground: HWND) -> bool {
+    /// The window with keyboard focus in `foreground`'s thread, or `foreground` itself.
+    pub fn focus_window(foreground: HWND) -> HWND {
         // SAFETY: plain Win32 queries with valid out-pointers; none of them send messages.
         unsafe {
             let tid = GetWindowThreadProcessId(foreground, None);
@@ -163,82 +222,146 @@ mod win {
                 cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
                 ..Default::default()
             };
-            if tid == 0 || GetGUIThreadInfo(tid, &mut info).is_err() || info.hwndFocus.is_invalid()
+            if tid != 0 && GetGUIThreadInfo(tid, &mut info).is_ok() && !info.hwndFocus.is_invalid()
             {
-                return false;
+                info.hwndFocus
+            } else {
+                foreground
             }
-            let mut class = [0u16; 128];
-            let n = GetClassNameW(info.hwndFocus, &mut class);
-            if n <= 0 {
-                return false;
-            }
-            let style = GetWindowLongW(info.hwndFocus, GWL_STYLE) as u32;
-            is_password_edit(&String::from_utf16_lossy(&class[..n as usize]), style)
         }
+    }
+
+    /// Classify `hwnd` by class name, and read `ES_PASSWORD` for classic edits.
+    pub fn inspect_window(hwnd: HWND) -> (FieldKind, bool) {
+        // SAFETY: class and style reads; neither sends messages to the window.
+        unsafe {
+            let mut class = [0u16; 128];
+            let n = GetClassNameW(hwnd, &mut class);
+            if n <= 0 {
+                return (FieldKind::Plain, false);
+            }
+            let class = String::from_utf16_lossy(&class[..n as usize]);
+            let kind = classify_class(&class);
+            let password = kind == FieldKind::Win32Edit
+                && is_password_edit(&class, GetWindowLongW(hwnd, GWL_STYLE) as u32);
+            (kind, password)
+        }
+    }
+
+    struct Request {
+        generation: u64,
+        due: Instant,
     }
 
     /// Handle to the UIA worker thread. Dropping it stops the worker after its current query.
     pub struct PasswordProbe {
-        requests: Sender<u64>,
+        requests: Sender<Request>,
     }
 
     impl PasswordProbe {
-        /// Start the worker. It initialises COM as MTA on its own thread (the UIA client
-        /// threading model Microsoft recommends) and owns the `IUIAutomation` object.
-        pub fn start(slot: Arc<PasswordSlot>) -> std::io::Result<Self> {
+        /// Start the worker and wait until UIA is ready. It initialises COM as MTA on its own
+        /// thread (the UIA client threading model Microsoft recommends) and owns the
+        /// `IUIAutomation` object. Returns the probe plus any warnings, or why UIA is unusable.
+        pub fn start(slot: Arc<PasswordSlot>) -> Result<(Self, Vec<String>), String> {
             let (tx, rx) = mpsc::channel();
+            let (ready_tx, ready_rx) = mpsc::sync_channel(1);
             std::thread::Builder::new()
                 .name("unflub-uia".into())
-                .spawn(move || worker(rx, slot))?;
-            Ok(Self { requests: tx })
+                .spawn(move || worker(rx, slot, ready_tx))
+                .map_err(|e| format!("can't start the UI Automation thread: {e}"))?;
+            match ready_rx.recv() {
+                Ok(Ok(warnings)) => Ok((Self { requests: tx }, warnings)),
+                Ok(Err(e)) => Err(e),
+                Err(_) => Err("UI Automation thread exited during startup".into()),
+            }
         }
 
-        /// Ask about the field focused now. False if the worker is gone.
-        pub fn request(&self, generation: u64) -> bool {
-            self.requests.send(generation).is_ok()
+        /// Ask about the element focused `delay` from now (after the app has handled the click
+        /// or key that may move focus). False if the worker is gone.
+        pub fn request(&self, generation: u64, delay: Duration) -> bool {
+            let due = Instant::now() + delay;
+            self.requests.send(Request { generation, due }).is_ok()
         }
     }
 
-    fn worker(rx: Receiver<u64>, slot: Arc<PasswordSlot>) {
+    fn create_uia() -> Result<(IUIAutomation, Vec<String>), String> {
+        // SAFETY: COM is initialised on this thread. CUIAutomation8 implements IUIAutomation2
+        // (timeouts); plain CUIAutomation doesn't, so it is only the fallback.
+        let uia: IUIAutomation = unsafe {
+            CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)
+                .or_else(|_| CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER))
+        }
+        .map_err(|e| format!("UI Automation unavailable ({e})"))?;
+        let timeouts = uia.cast::<IUIAutomation2>().and_then(|uia2| {
+            // SAFETY: valid interface on its own MTA thread.
+            unsafe {
+                uia2.SetConnectionTimeout(UIA_CONNECTION_TIMEOUT_MS)?;
+                uia2.SetTransactionTimeout(UIA_TRANSACTION_TIMEOUT_MS)
+            }
+        });
+        let warnings = match timeouts {
+            Ok(()) => Vec::new(),
+            Err(e) => vec![format!(
+                "UI Automation timeouts not set ({e}); a hung app can keep its fields \
+                 treated as secure for up to 20 s"
+            )],
+        };
+        Ok((uia, warnings))
+    }
+
+    type Ready = mpsc::SyncSender<Result<Vec<String>, String>>;
+
+    fn worker(rx: Receiver<Request>, slot: Arc<PasswordSlot>, ready: Ready) {
         // SAFETY: balanced by CoUninitialize below; this thread never enters an STA.
         let init = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-        // SAFETY: COM is initialised on this thread.
-        let uia: Option<IUIAutomation> =
-            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok() };
-        if let Some(uia2) = uia.as_ref().and_then(|u| u.cast::<IUIAutomation2>().ok()) {
-            // SAFETY: valid interface; failures just leave the defaults.
-            unsafe {
-                let _ = uia2.SetConnectionTimeout(UIA_CONNECTION_TIMEOUT_MS);
-                let _ = uia2.SetTransactionTimeout(UIA_TRANSACTION_TIMEOUT_MS);
+        if let Err(e) = init.ok() {
+            let _ = ready.send(Err(format!("COM init for UI Automation failed ({e})")));
+            return;
+        }
+        match create_uia() {
+            Ok((uia, warnings)) => {
+                let _ = ready.send(Ok(warnings));
+                serve(&uia, &rx, &slot);
+            }
+            Err(e) => {
+                let _ = ready.send(Err(e));
             }
         }
-        while let Ok(mut generation) = rx.recv() {
-            // Coalesce: only the latest focus matters.
-            loop {
-                match rx.try_recv() {
-                    Ok(g) => generation = g,
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => return finish(init.is_ok()),
-                }
-            }
-            let password = uia.as_ref().is_some_and(|u| {
-                // SAFETY: valid interface used on the MTA thread that created it.
-                unsafe {
-                    u.GetFocusedElement()
-                        .and_then(|e| e.CurrentIsPassword())
-                        .is_ok_and(|b| b.as_bool())
-                }
-            });
-            slot.publish(generation, password);
-        }
-        drop(uia);
-        finish(init.is_ok());
+        // SAFETY: matches the successful CoInitializeEx on this thread; `uia` is dropped.
+        unsafe { CoUninitialize() };
     }
 
-    fn finish(initialised: bool) {
-        if initialised {
-            // SAFETY: matches the successful CoInitializeEx on this thread.
-            unsafe { CoUninitialize() };
+    fn serve(uia: &IUIAutomation, rx: &Receiver<Request>, slot: &PasswordSlot) {
+        while let Ok(mut req) = rx.recv() {
+            // Coalesce to the latest request and wait until it is due.
+            loop {
+                match rx.try_recv() {
+                    Ok(r) => {
+                        req = r;
+                        continue;
+                    }
+                    Err(TryRecvError::Disconnected) => return,
+                    Err(TryRecvError::Empty) => {}
+                }
+                let now = Instant::now();
+                if req.due <= now {
+                    break;
+                }
+                match rx.recv_timeout(req.due - now) {
+                    Ok(r) => req = r,
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            // SAFETY: valid interface used on the MTA thread that created it.
+            let answer = unsafe {
+                match uia.GetFocusedElement().and_then(|e| e.CurrentIsPassword()) {
+                    Ok(b) if b.as_bool() => Secure::Secure,
+                    Ok(_) => Secure::NotSecure,
+                    Err(_) => Secure::Unknown,
+                }
+            };
+            slot.publish(req.generation, answer);
         }
     }
 }
@@ -246,6 +369,17 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Creates the UIA client and sets its timeouts, without querying any app (a query would
+    /// touch whatever the user has focused).
+    #[cfg(windows)]
+    #[test]
+    fn uia_worker_starts_with_timeouts() {
+        let slot = Arc::new(PasswordSlot::default());
+        let (probe, warnings) = PasswordProbe::start(slot).expect("UI Automation available");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        drop(probe);
+    }
 
     #[test]
     fn exe_names_are_lowercased_file_names() {
@@ -255,6 +389,40 @@ mod tests {
         );
         assert_eq!(exe_name_from_path("notepad.exe"), "notepad.exe");
         assert_eq!(exe_name_from_path("/usr/bin/Foo"), "foo");
+    }
+
+    #[test]
+    fn class_names_choose_how_to_check() {
+        for c in [
+            "Edit",
+            "RichEdit20W",
+            "RICHEDIT50W",
+            "RichEditD2DPT",
+            "WindowsForms10.EDIT.app.0.141b42a_r6_ad1",
+        ] {
+            assert_eq!(classify_class(c), FieldKind::Win32Edit, "{c}");
+        }
+        for c in [
+            "Chrome_RenderWidgetHostHWND",
+            "Chrome_WidgetWin_1",
+            "MozillaWindowClass",
+            "HwndWrapper[DefaultDomain;;b5f6]",
+            "Windows.UI.Core.CoreWindow",
+            "Windows.UI.Input.InputSite.WindowClass",
+            "Microsoft.UI.Content.DesktopChildSiteBridge",
+            "DesktopWindowXamlSource",
+        ] {
+            assert_eq!(classify_class(c), FieldKind::Probe, "{c}");
+        }
+        for c in [
+            "Notepad",
+            "ConsoleWindowClass",
+            "CASCADIA_HOSTING_WINDOW_CLASS",
+            "Button",
+            "",
+        ] {
+            assert_eq!(classify_class(c), FieldKind::Plain, "{c}");
+        }
     }
 
     #[test]
@@ -272,30 +440,64 @@ mod tests {
     }
 
     #[test]
-    fn pending_generation_is_secure_until_answered() {
-        let mut f = FocusState {
+    fn slot_is_three_state_and_per_generation() {
+        let slot = PasswordSlot::default();
+        assert_eq!(slot.answer(1), None);
+        for a in [Secure::NotSecure, Secure::Secure, Secure::Unknown] {
+            slot.publish(7, a);
+            assert_eq!(slot.answer(7), Some(a));
+            assert_eq!(slot.answer(8), None);
+        }
+    }
+
+    fn probe_field() -> FocusState {
+        FocusState {
+            kind: FieldKind::Probe,
             uia_available: true,
             ..FocusState::default()
-        };
-        let g1 = f.next_generation();
-        assert!(f.secure(), "no answer yet: fail closed");
-        f.slot.publish(g1, false);
-        assert!(!f.secure());
-        let g2 = f.next_generation();
-        assert!(f.secure(), "stale answer for g1 doesn't count for g2");
-        f.slot.publish(g2, true);
+        }
+    }
+
+    #[test]
+    fn probe_fields_are_secure_unless_definitely_not() {
+        let mut f = probe_field();
+        let g1 = f.next_generation().expect("probe requested");
+        assert!(f.secure(), "pending: fail closed");
+        f.slot.publish(g1, Secure::Unknown);
+        assert!(f.secure(), "UIA error or timeout: fail closed");
+        f.slot.publish(g1, Secure::Secure);
         assert!(f.secure(), "password field");
+        f.slot.publish(g1, Secure::NotSecure);
+        assert!(!f.secure());
+        let g2 = f.next_generation().unwrap();
+        assert!(f.secure(), "stale answer for g1 doesn't count for g2");
         f.next_generation();
-        f.slot.publish(g2, false);
+        f.slot.publish(g2, Secure::NotSecure);
         assert!(f.secure(), "late answer for an old generation is ignored");
     }
 
     #[test]
-    fn es_password_wins_and_no_uia_means_es_password_only() {
-        let mut f = FocusState::default();
-        f.next_generation();
-        assert!(!f.secure(), "without UIA, pending doesn't block");
-        f.es_password = true;
+    fn without_uia_probe_fields_are_secure() {
+        let mut f = FocusState {
+            uia_available: false,
+            ..probe_field()
+        };
+        assert_eq!(f.next_generation(), None, "nothing to ask");
         assert!(f.secure());
+    }
+
+    #[test]
+    fn win32_edits_and_plain_windows_use_es_password_only() {
+        for kind in [FieldKind::Win32Edit, FieldKind::Plain] {
+            let mut f = FocusState {
+                kind,
+                uia_available: true,
+                ..FocusState::default()
+            };
+            assert_eq!(f.next_generation(), None, "no UIA query for {kind:?}");
+            assert!(!f.secure());
+            f.es_password = true;
+            assert!(f.secure());
+        }
     }
 }

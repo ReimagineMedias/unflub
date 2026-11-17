@@ -8,7 +8,7 @@
 //! | `unflub-uia` | MTA | UI Automation `IsPassword` on focus change, with short UIA timeouts |
 //! | `unflub-spell` | MTA | slow `ComprehensiveCheck` lookups that fill the auto-replace cache |
 //!
-//! The pure parts ([`translate`], [`inject::plan`], [`stats`], parts of [`focus`]) compile and
+//! The pure parts ([`translate`], [`policy`], [`inject::plan`], [`stats`], parts of [`focus`]) compile and
 //! are tested on every OS. Everything that calls Windows is behind `cfg(windows)`, so on
 //! Linux and macOS this crate builds to just those helpers.
 //!
@@ -22,6 +22,7 @@ use unflub_core::{Action, Context, Engine, Key};
 
 pub mod focus;
 pub mod inject;
+pub mod policy;
 pub mod stats;
 pub mod translate;
 

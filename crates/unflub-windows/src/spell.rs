@@ -12,7 +12,7 @@
 //! comes up.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use unflub_core::SpellBackend;
@@ -32,6 +32,14 @@ const CACHE_LIMIT: usize = 4096;
 /// Pending background lookups. Extra requests are dropped (and retried next time).
 const QUEUE_LIMIT: usize = 64;
 
+/// Work for the `unflub-spell` thread: everything slow or touching disk.
+enum Job {
+    /// `ComprehensiveCheck` the word and cache the answer.
+    Lookup(String),
+    /// `ISpellChecker::Add` (writes the user's dictionary file).
+    Learn(String),
+}
+
 #[derive(Default)]
 struct Cache {
     answers: HashMap<String, Option<String>>,
@@ -42,12 +50,15 @@ pub struct WindowsSpellBackend {
     checker: ISpellChecker,
     language: String,
     cache: Arc<Mutex<Cache>>,
-    requests: SyncSender<String>,
+    jobs: Sender<Job>,
 }
 
 // SAFETY: the checker is a free-threaded COM object created in the MTA (see module docs).
-// It may be used from any thread that is in the MTA, which every unflub thread that touches
-// it is (`new` and the hook thread both call CoInitializeEx(COINIT_MULTITHREADED)).
+// It may be used from any thread that is in the MTA. `new` joins its thread to the MTA and
+// never leaves it, so the process MTA lives as long as the process. The hook thread joins the
+// MTA explicitly; if that ever failed, the hook thread (which then has made no COM init call)
+// is still in the implicit MTA that exists because of `new`, so calls stay direct and legal.
+// A thread that joined an STA must not use this backend; nothing in unflub does.
 unsafe impl Send for WindowsSpellBackend {}
 
 /// Join the calling thread to the MTA. The matching CoUninitialize is deliberately never
@@ -145,7 +156,7 @@ impl WindowsSpellBackend {
         // SAFETY: valid interface and string.
         let checker = unsafe { factory.CreateSpellChecker(&HSTRING::from(language.as_str())) }?;
         let cache = Arc::new(Mutex::new(Cache::default()));
-        let (tx, rx) = mpsc::sync_channel(QUEUE_LIMIT);
+        let (tx, rx) = mpsc::channel();
         let worker_cache = Arc::clone(&cache);
         let worker_language = language.clone();
         std::thread::Builder::new()
@@ -158,7 +169,7 @@ impl WindowsSpellBackend {
             checker,
             language,
             cache,
-            requests: tx,
+            jobs: tx,
         })
     }
 
@@ -174,12 +185,25 @@ impl WindowsSpellBackend {
     }
 }
 
-fn lookup_worker(language: &str, rx: Receiver<String>, cache: Arc<Mutex<Cache>>) {
+fn lookup_worker(language: &str, rx: Receiver<Job>, cache: Arc<Mutex<Cache>>) {
     let checker = ensure_mta().and_then(|()| {
         // SAFETY: COM initialised on this thread just above.
         unsafe { factory()?.CreateSpellChecker(&HSTRING::from(language)) }
     });
-    while let Ok(word) = rx.recv() {
+    while let Ok(job) = rx.recv() {
+        let word = match job {
+            Job::Lookup(word) => word,
+            Job::Learn(word) => {
+                if let Ok(c) = &checker {
+                    // SAFETY: valid interface on this MTA thread.
+                    let _ = unsafe { c.Add(&HSTRING::from(word.as_str())) };
+                }
+                if let Ok(mut cache) = cache.lock() {
+                    cache.answers.remove(&word);
+                }
+                continue;
+            }
+        };
         let answer = checker
             .as_ref()
             .ok()
@@ -216,19 +240,19 @@ impl SpellBackend for WindowsSpellBackend {
         if let Some(answer) = cache.answers.get(word) {
             return answer.clone();
         }
-        if !cache.pending.contains(word) && self.requests.try_send(word.to_owned()).is_ok() {
+        if cache.pending.len() < QUEUE_LIMIT
+            && !cache.pending.contains(word)
+            && self.jobs.send(Job::Lookup(word.to_owned())).is_ok()
+        {
             cache.pending.insert(word.to_owned());
         }
         None
     }
 
-    /// `ISpellChecker::Add`: adds to the user's Windows dictionary for this language.
+    /// `ISpellChecker::Add` adds to the user's Windows dictionary for this language. That
+    /// writes a file, so it runs on the background thread, never on the hook thread.
     fn learn(&self, word: &str) {
-        // SAFETY: valid interface used from an MTA thread.
-        let _ = unsafe { self.checker.Add(&HSTRING::from(word)) };
-        if let Ok(mut cache) = self.cache.lock() {
-            cache.answers.remove(word);
-        }
+        let _ = self.jobs.send(Job::Learn(word.to_owned()));
     }
 }
 

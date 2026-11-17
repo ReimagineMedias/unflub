@@ -7,6 +7,9 @@
 //! the corrector can be called directly. UI Automation runs on a separate worker thread
 //! ([`PasswordProbe`]) because it can block on hung apps.
 //!
+//! Keys typed while the field is secure (password, or not yet known to be safe), under an IME
+//! layout, or in an excluded app never reach the corrector: it gets one `Key::Reset` instead.
+//!
 //! Windows removes a low-level hook whose callback is too slow (`LowLevelHooksTimeout`, at most
 //! 1 s on Windows 10+), and every millisecond here is input lag for the whole desktop, so the
 //! callback does no I/O: corrections are reported through a channel and printed elsewhere.
@@ -17,6 +20,7 @@
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Once;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -26,20 +30,22 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, ToUnicodeEx, VK_CAPITAL, VK_CONTROL,
-    VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN,
-    VK_SHIFT,
+    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, ToUnicodeEx, HKL, VK_CAPITAL, VK_CONTROL,
+    VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU,
+    VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, GetWindowThreadProcessId, PeekMessageW,
     PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, EVENT_OBJECT_FOCUS,
-    EVENT_SYSTEM_FOREGROUND, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, PM_NOREMOVE,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_XBUTTONDOWN,
+    EVENT_SYSTEM_FOREGROUND, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, OBJID_CLIENT,
+    PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
+    WM_XBUTTONDOWN,
 };
 
 use crate::focus::{self, FocusState, PasswordProbe};
-use crate::inject::{self, INJECT_TAG};
+use crate::inject::{self, SendOutcome, INJECT_TAG};
+use crate::policy::{injection_veto, is_ime_language, Gate, GateDecision, SwallowTracker};
 use crate::stats::LatencyHistogram;
 use crate::translate::{KeyTranslator, Modifiers, RawKey, Typed};
 use crate::Corrector;
@@ -47,6 +53,12 @@ use crate::Corrector;
 /// `ToUnicodeEx` flag: don't change keyboard state (Windows 10 1607+). Without it, translating
 /// a key in our hook would eat the dead-key state the user's app needs for accents.
 const TOUNICODE_NO_STATE_CHANGE: u32 = 0x4;
+
+const HOOK_THREAD_NAME: &str = "unflub-hook";
+
+/// After a click, Tab or Enter, wait this long before asking UIA about the focused field, so
+/// the app has handled the input that may have moved focus. The field is secure meanwhile.
+const INPUT_RECHECK_DELAY: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, Default)]
 pub struct HookOptions {
@@ -75,8 +87,17 @@ pub enum HookEvent {
         replacement: Replacement,
         reason: &'static str,
     },
-    /// The corrector panicked. It is not called again; all keys pass through.
-    CorrectorPanicked,
+    /// `SendInput` accepted only `sent` of `total` events (0: blocked, e.g. by UIPI). The
+    /// user's key went through and the corrector was reset. `released` says a key left down
+    /// by the partial send was released.
+    InjectFailed {
+        replacement: Replacement,
+        sent: usize,
+        total: usize,
+        released: bool,
+    },
+    /// The corrector panicked (with this message). It is not called again; keys pass through.
+    CorrectorPanicked(String),
     /// Something degraded but the hook keeps running (e.g. UI Automation unavailable).
     Warning(String),
 }
@@ -101,10 +122,11 @@ impl Hook {
         corrector: C,
         options: HookOptions,
     ) -> std::io::Result<(Hook, Receiver<HookEvent>)> {
+        install_panic_hook();
         let (events_tx, events_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let thread = std::thread::Builder::new()
-            .name("unflub-hook".into())
+            .name(HOOK_THREAD_NAME.into())
             .spawn(move || run(Box::new(corrector), options, events_tx, ready_tx))?;
         match ready_rx.recv() {
             Ok(Ok(thread_id)) => Ok((
@@ -146,6 +168,30 @@ impl Drop for Hook {
     }
 }
 
+/// The default panic hook writes to stderr and may capture a backtrace: far too slow inside a
+/// keyboard hook. On the hook thread we print nothing; the panic is caught around the
+/// corrector call and reported as [`HookEvent::CorrectorPanicked`]. Other threads keep the
+/// previous hook.
+fn install_panic_hook() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if std::thread::current().name() != Some(HOOK_THREAD_NAME) {
+                previous(info);
+            }
+        }));
+    });
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".into())
+}
+
 struct State {
     corrector: Box<dyn Corrector>,
     translator: KeyTranslator,
@@ -154,8 +200,8 @@ struct State {
     excluded: Vec<String>,
     events: Sender<HookEvent>,
     histogram: LatencyHistogram,
-    /// Virtual key whose key-down we swallowed; its matching key-up is swallowed too.
-    swallow_up: Option<u16>,
+    gate: Gate,
+    swallow: SwallowTracker,
     broken: bool,
 }
 
@@ -187,7 +233,11 @@ fn run(
     ready: mpsc::SyncSender<Result<u32, String>>,
 ) -> HookReport {
     if let Err(e) = crate::spell::ensure_mta() {
-        let _ = events.send(HookEvent::Warning(format!("COM MTA init failed: {e}")));
+        // A WindowsSpellBackend in the corrector still works: `new` put its own thread in the
+        // MTA for good, so this thread is in the process's implicit MTA (see spell.rs).
+        let _ = events.send(HookEvent::Warning(format!(
+            "COM MTA init failed on the hook thread ({e}); relying on the process MTA"
+        )));
     }
     let mut msg = MSG::default();
     // SAFETY: creates this thread's message queue so PostThreadMessageW can reach it.
@@ -199,13 +249,16 @@ fn run(
 
     let mut focus = FocusState::default();
     let probe = match PasswordProbe::start(focus.slot.clone()) {
-        Ok(p) => {
+        Ok((p, warnings)) => {
+            for w in warnings {
+                let _ = events.send(HookEvent::Warning(w));
+            }
             focus.uia_available = true;
             Some(p)
         }
         Err(e) => {
             let _ = events.send(HookEvent::Warning(format!(
-                "UI Automation worker failed to start ({e}); only classic password boxes are detected"
+                "{e}; browser, Electron, WPF and UWP fields count as secure (no corrections there)"
             )));
             None
         }
@@ -222,10 +275,11 @@ fn run(
             .collect(),
         events,
         histogram: LatencyHistogram::new(),
-        swallow_up: None,
+        gate: Gate::default(),
+        swallow: SwallowTracker::default(),
         broken: false,
     };
-    state.refresh_focus();
+    state.refresh_focus(None, Duration::ZERO);
     STATE.with(|s| *s.borrow_mut() = Some(state));
 
     // SAFETY: hooks are installed and removed on this thread; callbacks are valid for 'static.
@@ -340,24 +394,49 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
             WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
         )
     {
-        with_state(|s| s.reset());
+        with_state(|s| {
+            s.reset();
+            // The click may have focused another field inside the same window.
+            s.refresh_focus(None, INPUT_RECHECK_DELAY);
+        });
     }
     CallNextHookEx(HHOOK::default(), code, wparam, lparam)
 }
 
 unsafe extern "system" fn win_event_proc(
     _hook: HWINEVENTHOOK,
-    _event: u32,
-    _hwnd: HWND,
-    _id_object: i32,
+    event: u32,
+    hwnd: HWND,
+    id_object: i32,
     _id_child: i32,
     _event_thread: u32,
     _event_time: u32,
 ) {
+    // Focus events for menus, scroll bars, carets etc. aren't a text field changing.
+    if event == EVENT_OBJECT_FOCUS && id_object != OBJID_CLIENT.0 {
+        return;
+    }
+    // A focus event names the focused window; a foreground event names the top-level one, so
+    // look up its focused child instead.
+    let target = (event == EVENT_OBJECT_FOCUS).then_some(hwnd);
     with_state(|s| {
-        s.refresh_focus();
+        s.refresh_focus(target, Duration::ZERO);
         s.reset();
     });
+}
+
+/// Keyboard layout of the foreground window's thread.
+fn foreground_layout() -> HKL {
+    let (hwnd, _) = focus::foreground();
+    // SAFETY: trivial queries.
+    unsafe { GetKeyboardLayout(GetWindowThreadProcessId(hwnd, None)) }
+}
+
+/// Is `vk` already down? Async state doesn't include the event being hooked yet, so for a
+/// key-down this is true exactly when it is an auto-repeat of a press that went through.
+fn already_down(vk: u16) -> bool {
+    // SAFETY: trivial query.
+    unsafe { GetAsyncKeyState(i32::from(vk)) as u16 & 0x8000 != 0 }
 }
 
 /// Physical modifier state plus a `ToUnicodeEx` key-state array built from it. Async state
@@ -404,14 +483,11 @@ fn read_keyboard() -> (Modifiers, [u8; 256]) {
     (mods, state)
 }
 
-/// What `vk` types in the foreground window's keyboard layout, without touching its
-/// dead-key state.
-fn to_unicode(vk: u16, scan: u16, key_state: &[u8; 256]) -> Typed {
+/// What `vk` types in `layout`, without touching the dead-key state.
+fn to_unicode(vk: u16, scan: u16, key_state: &[u8; 256], layout: HKL) -> Typed {
     let mut buf = [0u16; 8];
     // SAFETY: valid buffers; flag 0x4 keeps the kernel keyboard state unchanged.
     let ret = unsafe {
-        let (hwnd, _) = focus::foreground();
-        let layout = GetKeyboardLayout(GetWindowThreadProcessId(hwnd, None));
         ToUnicodeEx(
             u32::from(vk),
             u32::from(scan),
@@ -435,11 +511,10 @@ impl State {
         let vk = kb.vkCode as u16;
         let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
         if !down {
-            // Key-up of the key we swallowed: swallow it too so apps see a matched pair.
-            return self.swallow_up.take_if(|v| *v == vk).is_some();
+            // Key-up of a key we swallowed: swallow it too so apps see a matched pair.
+            return self.swallow.on_up(vk);
         }
-        // A fresh press of that key: its key-up belongs to the user.
-        self.swallow_up.take_if(|v| *v == vk);
+        let repeat = self.swallow.on_down(vk, already_down(vk));
         if MISSED.with(Cell::take) {
             self.reset();
         }
@@ -451,20 +526,48 @@ impl State {
         } else {
             read_keyboard()
         };
+        let layout = foreground_layout();
         let raw = RawKey {
             vk,
             scan: kb.scanCode as u16,
             down,
             foreign_injected,
         };
-        let Some(key) = self
-            .translator
-            .translate(raw, mods, || to_unicode(raw.vk, raw.scan, &key_state))
-        else {
-            return false;
+        let key = self.translator.translate(raw, mods, || {
+            to_unicode(raw.vk, raw.scan, &key_state, layout)
+        });
+        let swallow = match key {
+            Some(key) => {
+                let ime = is_ime_language((layout.0 as usize & 0xFFFF) as u16);
+                self.handle_key(key, vk, mods, repeat, ime, start)
+            }
+            None => false,
         };
-        if self.excluded() {
-            return false;
+        // Tab and Enter can move focus or submit a form without any focus WinEvent (Chromium
+        // without its accessibility tree): check the field again once the app has reacted.
+        if vk == VK_TAB.0 || vk == VK_RETURN.0 {
+            self.refresh_focus(None, INPUT_RECHECK_DELAY);
+        }
+        swallow
+    }
+
+    fn handle_key(
+        &mut self,
+        key: Key,
+        vk: u16,
+        mods: Modifiers,
+        repeat: bool,
+        ime: bool,
+        start: Instant,
+    ) -> bool {
+        let blocked = self.focus.secure() || ime || self.excluded();
+        match self.gate.decide(key, blocked) {
+            GateDecision::Feed => {}
+            GateDecision::ResetOnly => {
+                self.reset_corrector();
+                return false;
+            }
+            GateDecision::Drop => return false,
         }
         let Some(action) = self.call(key) else {
             return false;
@@ -474,19 +577,27 @@ impl State {
             Action::Replace(r) => (r, false),
             Action::Undo(r) => (r, true),
         };
-        if key == Key::Reset {
-            return false;
-        }
-        // Backspaces sent while Ctrl/Alt are held would delete words (Ctrl+Backspace) or worse.
-        if mods.shortcut() {
-            return self.skip(replacement, "modifier held");
+        if let Some(reason) = injection_veto(key, mods, repeat) {
+            return self.skip(replacement, reason);
         }
         let inputs = inject::to_inputs(&inject::plan(replacement.delete, &replacement.insert));
-        if inject::send(&inputs) == 0 {
-            // Nothing went out, so let the user's key through as if we'd never looked.
-            return self.skip(replacement, "SendInput blocked");
+        if let SendOutcome::Partial {
+            sent,
+            total,
+            released,
+        } = inject::send(&inputs)
+        {
+            // Let the user's key through; nothing more we can safely do about partial text.
+            self.reset_corrector();
+            let _ = self.events.send(HookEvent::InjectFailed {
+                replacement,
+                sent,
+                total,
+                released,
+            });
+            return false;
         }
-        self.swallow_up = Some(vk);
+        self.swallow.swallowed(vk);
         let app = self.focus.app.clone();
         let took = start.elapsed();
         let event = if undo {
@@ -525,16 +636,18 @@ impl State {
         let corrector = &mut self.corrector;
         match catch_unwind(AssertUnwindSafe(|| corrector.on_key(key, &ctx))) {
             Ok(action) => Some(action),
-            Err(_) => {
+            Err(payload) => {
                 self.broken = true;
-                let _ = self.events.send(HookEvent::CorrectorPanicked);
+                let _ = self
+                    .events
+                    .send(HookEvent::CorrectorPanicked(panic_message(&*payload)));
                 None
             }
         }
     }
 
     fn skip(&mut self, replacement: Replacement, reason: &'static str) -> bool {
-        self.reset();
+        self.reset_corrector();
         let _ = self.events.send(HookEvent::Skipped {
             replacement,
             reason,
@@ -542,28 +655,42 @@ impl State {
         false
     }
 
-    /// Caret moved, focus changed, or we lost track: forget the word.
-    fn reset(&mut self) {
-        self.translator.reset();
+    /// Tell the corrector to forget the word. Its answer is ignored.
+    fn reset_corrector(&mut self) {
         let _ = self.call(Key::Reset);
     }
 
-    fn refresh_focus(&mut self) {
-        let (hwnd, pid) = focus::foreground();
+    /// Caret moved, focus changed, or we lost track: forget the word and start fresh.
+    fn reset(&mut self) {
+        self.gate.on_reset();
+        self.reset_corrector();
+    }
+
+    /// Re-read the foreground app and the focused field, and ask UIA about it if its class
+    /// needs that. `target` is the focused window when the caller knows it.
+    fn refresh_focus(&mut self, target: Option<HWND>, probe_delay: Duration) {
+        let (foreground, pid) = focus::foreground();
         if pid != self.focus.app_pid {
             self.focus.app_pid = pid;
             self.focus.app = focus::process_exe(pid);
         }
-        self.focus.es_password = focus::focused_es_password(hwnd);
-        let generation = self.focus.next_generation();
+        let target = target
+            .filter(|h| !h.is_invalid())
+            .unwrap_or_else(|| focus::focus_window(foreground));
+        (self.focus.kind, self.focus.es_password) = focus::inspect_window(target);
+        let Some(generation) = self.focus.next_generation() else {
+            return;
+        };
         if let Some(probe) = &self.probe {
-            if !probe.request(generation) {
-                self.probe = None;
-                self.focus.uia_available = false;
-                let _ = self.events.send(HookEvent::Warning(
-                    "UI Automation worker stopped; only classic password boxes are detected".into(),
-                ));
+            if probe.request(generation, probe_delay) {
+                return;
             }
         }
+        self.probe = None;
+        self.focus.uia_available = false;
+        let _ = self.events.send(HookEvent::Warning(
+            "UI Automation worker stopped; browser, Electron, WPF and UWP fields now count as secure"
+                .into(),
+        ));
     }
 }
