@@ -224,8 +224,10 @@ fn tour_reset(app: AppHandle) {
     app.state::<tour::Tour>().reset(&current_settings(&app));
 }
 
+/// Async so it runs on a runtime worker, not the main thread: a panic in the practice engine
+/// then keeps only its location (`crash.rs` keeps messages from `main`).
 #[tauri::command]
-fn tour_key(app: AppHandle, key: String) -> tour::TourAction {
+async fn tour_key(app: AppHandle, key: String) -> tour::TourAction {
     app.state::<tour::Tour>().key(&current_settings(&app), &key)
 }
 

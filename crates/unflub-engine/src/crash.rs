@@ -22,16 +22,12 @@ pub const PANIC_EXIT: u32 = 101;
 
 pub fn install(path: Option<PathBuf>) {
     std::panic::set_hook(Box::new(move |info| {
-        // Keep the first report if several threads panic at once, or a report the app hasn't
-        // picked up yet.
+        // No stderr: the default hook would print the message, which may hold typed text, and
+        // nothing here may block. Keep the first report if several threads panic at once, or a
+        // report the app hasn't picked up yet.
         let location = info
             .location()
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
-        // The default hook would print the message, which may hold typed text.
-        eprintln!(
-            "unflub-engine: {WITHHELD} (at {})",
-            location.as_deref().unwrap_or("?")
-        );
         if let Some(path) = path.as_ref().filter(|p| !p.exists()) {
             let marker = marker(location.as_deref(), home().as_deref());
             if let Ok(bytes) = serde_json::to_vec(&marker) {

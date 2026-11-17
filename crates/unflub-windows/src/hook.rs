@@ -31,7 +31,6 @@
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Once;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -142,6 +141,10 @@ pub enum HookEvent {
         released: bool,
     },
     /// The corrector panicked (with this message). It is not called again; keys pass through.
+    ///
+    /// Only where panics unwind (debug builds and tests). Release builds use `panic = "abort"`,
+    /// so a corrector panic ends the process: `unflub-engine` writes its scrubbed crash marker
+    /// in its panic hook and the app restarts it.
     CorrectorPanicked(String),
     /// Something degraded but the hook keeps running (e.g. UI Automation unavailable).
     Warning(String),
@@ -193,7 +196,6 @@ impl Hook {
         corrector: C,
         options: HookOptions,
     ) -> std::io::Result<(Hook, Receiver<HookEvent>)> {
-        install_panic_hook();
         let (events_tx, events_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let thread = std::thread::Builder::new()
@@ -237,22 +239,6 @@ impl Drop for Hook {
     fn drop(&mut self) {
         self.shutdown();
     }
-}
-
-/// The default panic hook writes to stderr and may capture a backtrace: far too slow inside a
-/// keyboard hook. On the hook thread we print nothing; the panic is caught around the
-/// corrector call and reported as [`HookEvent::CorrectorPanicked`]. Other threads keep the
-/// previous hook.
-fn install_panic_hook() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            if std::thread::current().name() != Some(HOOK_THREAD_NAME) {
-                previous(info);
-            }
-        }));
-    });
 }
 
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {

@@ -194,8 +194,11 @@ and back to 1 s once a run lasted a minute.
   settings, saves them, and sends the new settings back.
 - **Crashes**: the engine's panic hook writes `engine-crash.json` in the app data folder (the
   panic location, frame addresses, loaded modules and thread name; never the message, and the
-  home folder cut out) and ends the process at once. The app turns it into the same opt-in
-  crash report as its own (`crash.rs`).
+  home folder cut out) and ends the process at once, without writing to stderr. The app turns it
+  into the same opt-in crash report as its own (`crash.rs`) and restarts the engine. Release
+  builds use `panic = "abort"`, so a panic in the corrector inside the hook ends the engine the
+  same way; the hook's `catch_unwind` (keys pass through, `CorrectorPanicked`) only applies
+  where panics unwind, in debug builds and tests.
 - **The tour** runs its own engine inside the app (`tour.rs`), with no hook: the web view sends
   each key typed in the practice box over Tauri IPC and draws the result itself.
 
