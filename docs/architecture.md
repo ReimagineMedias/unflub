@@ -196,6 +196,9 @@ count as known words and are never corrected.
 - **Pill**: drawn natively in a click-through, no-activate window on the core process's
   `unflub-overlay` thread, shown briefly after a fix. No web view.
 - **Settings**: a Tauri window created on demand and destroyed when closed.
+- **Updates**: an `unflub-update` thread that wakes hourly and, at most once a day, checks GitHub for a
+  newer version. It downloads, verifies and installs one only when the user asks. See
+  [releasing.md](releasing.md#how-the-app-updates).
 
 ## Later layers
 

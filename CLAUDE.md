@@ -51,3 +51,16 @@ Repo is private until v0.1, then flipped public.
   fits in one burst (index build) runs at full speed; it doesn't simulate a slower clock.
 - Windows PowerShell 5.1: `$PSScriptRoot` can be empty in `param()` defaults, and a native command's stderr throws
   under `$ErrorActionPreference = 'Stop'`. The perf scripts handle both.
+- Releases: see `docs/releasing.md`. A `v*.*.*` tag runs `.github/workflows/release.yml`, which only ever makes a draft.
+  Matrix jobs just build; one job writes `latest.json` with `scripts/updater-manifest.mjs`, because tauri-action's
+  per-job latest.json upload races in parallel matrices (tauri-action#1270). `node scripts/bump-version.mjs <v>` keeps
+  the five version locations in sync (CI runs `--check`). macOS/Linux matrix rows exist with `"enabled": false`.
+- Updater signing keypair: `D:\Code\unflub\.local\updater\unflub-updater.key` and `.password` (git-ignored; never print
+  or commit). Only the public key is in `tauri.conf.json`. Updater artifacts are on only with
+  `--config src-tauri/tauri.release.conf.json`, so a plain `npm run tauri build` needs no key.
+- Updates run in Rust (`updates.rs`): a daily check when `autoUpdate` is on; download, verify and install only on the
+  About page's Restart (nothing is held in memory while an update waits). Release builds only; dev builds never check in the background or install.
+- Uninstall: Tauri's NSIS template already deletes `HKCU\...\Run\unflub` (not on `/UPDATE`) and has a "Delete the
+  application data" checkbox; `app/src-tauri/windows/installer-hooks.nsh` removes the StartupApproved value and
+  `HKCU\Software\RMGN\unflub`, `uninstall-cleanup.wxs` does the login entry for the MSI. Start at login is reconciled
+  with the registry at startup and whenever the settings window loads (release builds only).
