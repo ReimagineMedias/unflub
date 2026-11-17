@@ -10,5 +10,10 @@ rust-version.workspace = true
 [features]
 serde = ["dep:serde"]
 
+[[example]]
+name = "bench"
+# Run the limits-parser tests with `cargo test`.
+test = true
+
 [dependencies]
 serde = { workspace = true, optional = true }

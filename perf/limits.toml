@@ -1,0 +1,53 @@
+# Performance limits for unflub. CI fails when a measured value is over its limit.
+#
+# Limits leave generous headroom over what we measured so slow, shared CI machines pass, while
+# a real regression (a bigger index, a slower search, a busy idle loop) still fails.
+# "measured" is the range over several runs on the 2026-11-16 dev machine (Windows 11, 32
+# logical cores, release build). See docs/performance.md for what each number means.
+#
+# Format: [section] then `metric = number`; `#` starts a comment; `_` may group digits.
+# Every key must name a metric the checker reports, or the check errors out.
+
+# cargo run --release -p unflub-core --example bench -- --check perf/limits.toml
+[core]
+startup_ms = 600              # measured 93-139 ms: building the dictionary index
+boundary_p50_us = 50          # measured 0.1 us
+boundary_p99_us = 1_000       # measured 87-90 us; 1 ms is the whole hook budget per key
+boundary_max_us = 10_000      # measured 196-951 us; a wall-clock max over 20k keys also
+                              # catches OS preemption on shared runners, hence the slack
+char_p99_us = 20              # measured 0.1 us
+hard_max_us = 10_000          # measured 145-454 us locally, 2509 us once on a GitHub runner (one
+                              # preempted sample); same slack as boundary_max_us. p99 is the budget.
+heap_bytes = 25_165_824       # 24 MiB; measured 15_581_387 (14.9 MiB), deterministic
+peak_rss_bytes = 83_886_080   # 80 MiB; measured 43.6-45.7 MiB (index build peak)
+
+# pwsh perf/idle.ps1: unflub.exe --dry-run --pill off, 3 s warm-up, 20 s of samples
+[idle]
+ready_ms = 3_000               # measured 190-960 ms from launch to hook installed
+private_bytes = 41_943_040     # 40 MiB; measured 18.7-18.8 MiB
+working_set_bytes = 67_108_864 # 64 MiB; measured 38.2-38.9 MiB (includes shared system DLLs)
+cpu_seconds = 0.2              # measured 0.016-0.047 s over 20 s, with someone typing
+threads = 16                   # measured 11-12; 9 once Windows retires idle thread-pool
+                               # workers about a minute after start
+handles = 400                  # measured 209-215
+
+# pwsh perf/lowend.ps1: the same two checks inside a Job Object capped at 25 % of one core,
+# one core of affinity and 128 MB of commit per process.
+[lowend.core]
+startup_ms = 2_000            # measured 99-183 ms (fits in one scheduling window of the cap)
+boundary_p99_us = 1_000       # measured 88-101 us
+char_p99_us = 20              # measured 0.1 us
+heap_bytes = 25_165_824       # 24 MiB; measured 14.9 MiB
+peak_rss_bytes = 83_886_080   # 80 MiB; measured 43.6 MiB
+# No boundary_max_us or hard_max_us here: a single sample can land in one of the cap's ~430 ms
+# pauses (CI measured 459 ms on 2026-11-17), so maxima under the cap measure the cap, not unflub.
+# while busy, the hard cap lets the job run ~150 ms and then pauses
+# it ~430 ms, and the key that lands in a pause records it (measured 113 ms).
+
+[lowend.idle]
+ready_ms = 10_000              # measured 197-1_393 ms
+private_bytes = 41_943_040     # 40 MiB; measured 18.7 MiB
+working_set_bytes = 67_108_864 # 64 MiB; measured 38.5 MiB
+cpu_seconds = 0.2              # measured 0.016-0.125 s over 20 s, with someone typing
+threads = 16                   # measured 11-12
+handles = 400                  # measured 212-215

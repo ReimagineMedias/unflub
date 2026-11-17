@@ -74,6 +74,11 @@ const STALE_CHECK_MS: u32 = 100;
 pub struct HookOptions {
     /// Lowercased exe names where keys are not fed to the corrector at all.
     pub excluded_apps: Vec<String>,
+    /// Run everything (hooks, focus checks, the corrector) but never inject input or swallow a
+    /// key: every action is reported as [`HookEvent::Skipped`] with reason
+    /// [`DRY_RUN`](crate::policy::DRY_RUN) and the corrector is reset, as for any vetoed action.
+    /// For measuring the hook on a machine someone is typing on.
+    pub dry_run: bool,
 }
 
 /// Reported from the hook thread; read it on another thread (printing is too slow for the hook).
@@ -289,6 +294,7 @@ struct State {
     focus: FocusState,
     probe: Option<PasswordProbe>,
     excluded: Vec<String>,
+    dry_run: bool,
     events: Sender<HookEvent>,
     report: HookReport,
     gate: Gate,
@@ -379,6 +385,7 @@ fn run(
             .iter()
             .map(|e| e.to_lowercase())
             .collect(),
+        dry_run: options.dry_run,
         events,
         report: HookReport::default(),
         gate: Gate::default(),
@@ -720,7 +727,7 @@ impl State {
             Action::Replace(r) => (r, false),
             Action::Undo(r) => (r, true),
         };
-        if let Some(reason) = injection_veto(key, mods, repeat) {
+        if let Some(reason) = injection_veto(key, mods, repeat, self.dry_run) {
             return self.skip(replacement, reason);
         }
         // Swallow the key and hand the batch over; SendInput runs on the injector thread.

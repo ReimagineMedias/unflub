@@ -2,7 +2,8 @@
 //!
 //! ```text
 //! unflub --demo [--exclude <exe>]... [--pill <style>]   three fixed rules (teh, adn, recieve); try it now
-//! unflub [--exclude <exe>]... [--pill <style>]          the real engine (until the core engine lands, it panics)
+//! unflub [--exclude <exe>]... [--pill <style>]          the real engine
+//! unflub --dry-run --pill off                           hook and engine, but never inject or swallow a key
 //! ```
 //!
 //! Prints each correction and undo with the hook callback time, and shows the correction pill
@@ -13,10 +14,14 @@ mod demo;
 
 use unflub_windows::PillStyle;
 
-const USAGE: &str = "usage: unflub [--demo] [--exclude <exe>]... [--pill <style>]
+const USAGE: &str = "usage: unflub [--demo] [--dry-run] [--exclude <exe>]... [--pill <style>]
 
   --demo           use three built-in rules (teh->the, adn->and, recieve->receive)
                    instead of the engine
+  --dry-run        install the hook and run the engine, but never inject input or
+                   swallow a key: fixes are only printed as skipped. If the hook
+                   can't be installed, keep the engine loaded anyway (for
+                   measuring its footprint)
   --exclude <exe>  never correct in this app (e.g. code.exe); repeatable
   --pill <style>   how fixes are shown at the caret: underline-capsule (default),
                    capsule, underline or off
@@ -25,6 +30,7 @@ const USAGE: &str = "usage: unflub [--demo] [--exclude <exe>]... [--pill <style>
 #[derive(Debug, Default, PartialEq)]
 struct Args {
     demo: bool,
+    dry_run: bool,
     exclude: Vec<String>,
     pill: PillStyle,
 }
@@ -35,6 +41,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Option<Args>, St
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--demo" => out.demo = true,
+            "--dry-run" => out.dry_run = true,
             "--exclude" => {
                 let exe = args.next().ok_or("--exclude needs an exe name")?;
                 out.exclude.push(exe.to_lowercase());
@@ -105,7 +112,11 @@ mod win {
         }
         let options = HookOptions {
             excluded_apps: args.exclude.clone(),
+            dry_run: args.dry_run,
         };
+        if args.dry_run {
+            println!("dry run: nothing will be injected and no key will be swallowed.");
+        }
         let overlay = start_overlay(args.pill);
         if args.demo {
             println!("unflub demo: teh->the, adn->and, recieve->receive. Backspace right after a fix undoes it.");
@@ -151,8 +162,18 @@ mod win {
         options: HookOptions,
         overlay: Option<OverlayHandle>,
     ) {
+        let dry_run = options.dry_run;
         let (hook, events) = match Hook::start(corrector, options) {
             Ok(h) => h,
+            Err(e) if dry_run => {
+                // The dictionary index is a process-wide static, so it stays loaded: what is
+                // left is the engine-only footprint, which is what a perf check can still measure.
+                println!("hook unavailable: {e}. Dry run continues engine-only; Ctrl+C to stop.");
+                while !STOP.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                return;
+            }
             Err(e) => {
                 eprintln!("failed to install the keyboard hook: {e}");
                 std::process::exit(1);
@@ -269,6 +290,7 @@ mod tests {
             parse(&["--demo", "--exclude", "Code.exe", "--exclude", "x.exe"]),
             Ok(Some(Args {
                 demo: true,
+                dry_run: false,
                 exclude: vec!["code.exe".into(), "x.exe".into()],
                 pill: PillStyle::UnderlineCapsule,
             }))
@@ -279,6 +301,14 @@ mod tests {
         );
         assert!(parse(&["--pill"]).is_err());
         assert!(parse(&["--pill", "sparkles"]).is_err());
+        assert_eq!(
+            parse(&["--dry-run", "--pill", "off"]),
+            Ok(Some(Args {
+                dry_run: true,
+                pill: PillStyle::Off,
+                ..Args::default()
+            }))
+        );
         assert_eq!(parse(&["--help"]), Ok(None));
         assert!(parse(&["--exclude"]).is_err());
         assert!(parse(&["--bogus"]).is_err());

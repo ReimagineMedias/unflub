@@ -114,8 +114,10 @@ After a fix or an undo the adapter shows a small overlay at the caret for about 
 
 Try the hook before the engine lands: `cargo run --release --bin unflub -- --demo` fixes
 `teh`, `adn` and `recieve`, shows the pill (`--pill <style>` to change it), and prints each fix
-and the hook latency on exit. `cargo run -p unflub-windows --example pill_snapshot` renders
-each pill style offscreen to `.local/pill/*.png`.
+and the hook latency on exit. `--dry-run` installs the hook and runs the engine but never injects
+input or swallows a key; the perf checks use it ([performance.md](performance.md)).
+`cargo run -p unflub-windows --example pill_snapshot` renders each pill style offscreen to
+`.local/pill/*.png`.
 
 ## Deciding what's wrong and what's right
 

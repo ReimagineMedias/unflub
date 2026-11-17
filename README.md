@@ -21,6 +21,9 @@ prompts. Press Backspace right after a fix to put your word back, and unflub rem
 
 See [docs/architecture.md](docs/architecture.md).
 
+unflub stays light in the background: CI checks its startup time, per-key latency, idle memory
+and CPU, also on a simulated low-end machine. See [docs/performance.md](docs/performance.md).
+
 ## Building
 
 Requirements on Windows: Rust (stable) and the Visual Studio 2022 Build Tools with the

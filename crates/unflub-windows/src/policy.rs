@@ -55,9 +55,20 @@ impl Gate {
     }
 }
 
-/// Why an action the corrector asked for must not be injected, if it mustn't.
-pub fn injection_veto(key: Key, mods: Modifiers, auto_repeat: bool) -> Option<&'static str> {
-    if key == Key::Reset {
+/// The veto reason for every action in a dry run.
+pub const DRY_RUN: &str = "dry run";
+
+/// Why an action the corrector asked for must not be injected, if it mustn't. A dry run vetoes
+/// everything, so the hook never injects input or swallows a key.
+pub fn injection_veto(
+    key: Key,
+    mods: Modifiers,
+    auto_repeat: bool,
+    dry_run: bool,
+) -> Option<&'static str> {
+    if dry_run {
+        Some(DRY_RUN)
+    } else if key == Key::Reset {
         Some("not a typed key")
     } else if mods.shortcut() {
         // Backspaces sent with Ctrl/Alt/Win held would become Ctrl+Backspace (delete word) etc.
@@ -176,23 +187,50 @@ mod tests {
             alt: true,
             ..NONE
         };
-        assert_eq!(injection_veto(Key::Boundary(' '), NONE, false), None);
-        assert_eq!(injection_veto(Key::Backspace, NONE, false), None);
-        assert_eq!(injection_veto(Key::Boundary('?'), shift, false), None);
-        assert_eq!(injection_veto(Key::Boundary('\n'), NONE, false), None);
+        assert_eq!(injection_veto(Key::Boundary(' '), NONE, false, false), None);
+        assert_eq!(injection_veto(Key::Backspace, NONE, false, false), None);
         assert_eq!(
-            injection_veto(Key::Boundary('\n'), shift, false),
+            injection_veto(Key::Boundary('?'), shift, false, false),
+            None
+        );
+        assert_eq!(
+            injection_veto(Key::Boundary('\n'), NONE, false, false),
+            None
+        );
+        assert_eq!(
+            injection_veto(Key::Boundary('\n'), shift, false, false),
             Some("Shift+Enter")
         );
         assert_eq!(
-            injection_veto(Key::Boundary('@'), altgr, false),
+            injection_veto(Key::Boundary('@'), altgr, false, false),
             Some("modifier held")
         );
         assert_eq!(
-            injection_veto(Key::Boundary(' '), NONE, true),
+            injection_veto(Key::Boundary(' '), NONE, true, false),
             Some("auto-repeat")
         );
-        assert!(injection_veto(Key::Reset, NONE, false).is_some());
+        assert!(injection_veto(Key::Reset, NONE, false, false).is_some());
+    }
+
+    #[test]
+    fn dry_run_vetoes_every_action() {
+        let shift = Modifiers {
+            shift: true,
+            ..NONE
+        };
+        for key in [
+            Key::Char('a'),
+            Key::Boundary(' '),
+            Key::Boundary('\n'),
+            Key::Backspace,
+            Key::Reset,
+        ] {
+            for mods in [NONE, shift] {
+                for repeat in [false, true] {
+                    assert_eq!(injection_veto(key, mods, repeat, true), Some(DRY_RUN));
+                }
+            }
+        }
     }
 
     #[test]
