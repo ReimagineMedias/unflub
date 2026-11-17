@@ -30,4 +30,10 @@ Repo is private until v0.1, then flipped public.
   sinks to near-black for `.story` (Everywhere, Undo, Speed, Privacy) via a fixed `.dusk` layer on a `--story` view
   timeline, and the nav pill inverts with it. `.story` also paints its own night so text never sits on white. Size type
   and scenes by width and height (`min(vw, vh)` in clamps); check 1280x720 and 1280x800, not just 1440x900.
+- Launch plan and post drafts live in `docs/launch/` (2026-11-17). Before turning on Cloudflare Web Analytics, the
+  CSP in `site/public/_headers` must allow `https://static.cloudflareinsights.com` and the CSP test in
+  `site/tests/site.test.mjs` must accept it. The download API only records `ref` values `site`, `github`, `readme`,
+  `other` (`D:\Code\rmgn-api\src\products\unflub.ts`); channel refs like `hn` count as `other` until added.
+  Reddit: r/windows, r/productivity and r/dyslexia forbid promotion; r/Windows11 and r/rust allow weekly threads only.
+  Launch captures go in git-ignored `site/.local/launch/`.
 - In Git Bash, `--flag=/path`-style args get rewritten to Windows paths (MSYS); pass names, not leading-slash paths.
