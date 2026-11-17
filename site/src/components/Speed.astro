@@ -56,7 +56,6 @@ import { PERFORMANCE } from "../data/performance";
 
   .num {
     display: block;
-    overflow: clip;
     font-size: clamp(4rem, min(8.4vw, 14vh), 8.5rem);
     line-height: 0.95;
     font-weight: 760;
@@ -83,7 +82,8 @@ import { PERFORMANCE } from "../data/performance";
     max-width: 16em;
   }
 
-  /* Each number rises out of its card as the card comes into view. */
+  /* Each number rises into place as its card enters, and is settled by the time the card is 60% in view.
+     Opacity and transform only, never a clip, so stopping mid-scroll never cuts a glyph. */
   @supports (animation-timeline: view()) {
     @media (prefers-reduced-motion: no-preference) {
       .num-in {
@@ -93,30 +93,36 @@ import { PERFORMANCE } from "../data/performance";
       /* Separate rule so the timeline is not folded into the shorthand. */
       .stats .num-in {
         animation-timeline: view();
-        animation-range: entry 30% cover 40%;
+        animation-range: entry 0% entry 60%;
       }
     }
   }
 
   @keyframes surface {
     from {
-      transform: translateY(100%);
+      opacity: 0;
+      transform: translateY(24px);
     }
   }
 
   @supports not (animation-timeline: view()) {
     [data-reveal] .num-in {
-      transform: translateY(100%);
-      transition: transform 0.9s var(--ease-out);
+      opacity: 0;
+      transform: translateY(24px);
+      transition:
+        opacity 0.6s ease,
+        transform 0.9s var(--ease-out);
     }
 
     [data-reveal]:global(.in) .num-in {
+      opacity: 1;
       transform: none;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
     [data-reveal] .num-in {
+      opacity: 1;
       transform: none;
     }
   }
