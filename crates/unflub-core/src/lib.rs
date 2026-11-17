@@ -107,6 +107,19 @@ pub enum Event {
     Learned(String),
 }
 
+/// Anything that turns keys into actions. [`Engine`] implements it; adapters can depend on
+/// the trait to test their hook plumbing with a stub.
+pub trait Corrector {
+    /// Feed one key. Must return within the hook budget.
+    fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action;
+}
+
+impl Corrector for Engine {
+    fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action {
+        Engine::on_key(self, key, ctx)
+    }
+}
+
 /// The engine. One instance per process, driven from the platform hook thread.
 pub struct Engine {
     config: Config,

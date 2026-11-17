@@ -8,6 +8,7 @@ const UNIGRAMS: &str = include_str!("../data/frequency_dictionary_en_82_765.txt"
 const BIGRAMS: &str = include_str!("../data/frequency_bigramdictionary_en_243_342.txt");
 const EXTRA_WORDS: &str = include_str!("../data/extra_words.txt");
 const CONTRACTIONS: &str = include_str!("../data/contractions.txt");
+const TECH_WORDS: &str = include_str!("../data/tech_words.txt");
 
 /// Longest dictionary word kept, in bytes.
 const MAX_WORD: usize = 32;
@@ -15,6 +16,8 @@ const MAX_WORD: usize = 32;
 const PREFIX: usize = 7;
 const BUCKET_BITS: u32 = 19;
 const CONTRACTION_BOOST: f64 = 10.0;
+/// Count given to programming vocabulary the frequency list lacks: rare, but known.
+const TECH_COUNT: f64 = 200_000.0;
 
 /// A frequency dictionary with a delete index. Built once and shared between engines.
 pub struct Dictionary {
@@ -93,6 +96,7 @@ impl Dictionary {
                     BIGRAMS,
                     EXTRA_WORDS,
                     CONTRACTIONS,
+                    TECH_WORDS,
                 ))
             })
             .clone()
@@ -103,6 +107,7 @@ impl Dictionary {
         bigrams: &'a str,
         extra: &'a str,
         contractions: &'a str,
+        tech: &'a str,
     ) -> Self {
         fn add<'a>(
             w: &'a str,
@@ -128,6 +133,13 @@ impl Dictionary {
             if let Ok(c) = c.trim().parse::<f64>() {
                 add(w, c, &mut counts, &mut index);
             }
+        }
+        let tech_words = tech
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .flat_map(str::split_ascii_whitespace);
+        for w in tech_words {
+            add(w, TECH_COUNT, &mut counts, &mut index);
         }
 
         let uni_total: f64 = counts.iter().map(|&(_, c)| c).sum();
@@ -350,8 +362,11 @@ mod tests {
             "hello there 50\nthe then 7\n",
             "ok 3\n",
             "can't cannot\n",
+            "# comment\nimpl usize the\n",
         );
-        assert_eq!(d.word_count(), 4);
+        assert_eq!(d.word_count(), 6);
+        assert!(d.id(b"usize").is_some());
+        assert!(d.id(b"comment").is_none());
         assert!(d.id(b"then").is_some());
         assert!(d.id(b"ok").is_some());
         assert!(d.id(b"teh").is_none());

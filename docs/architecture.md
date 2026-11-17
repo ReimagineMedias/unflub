@@ -20,7 +20,8 @@ app stay the same.
    (`Char`, `Boundary`, `Backspace`, `Reset`).
 2. It calls `Engine::on_key` synchronously, inside the hook. The engine tracks the word being
    typed. Caret moves, clicks, focus changes and shortcuts reset it, so we never guess at text
-   we didn't see.
+   we didn't see. After a reset the first word is never corrected, because the caret may be in
+   the middle of a word we never saw; correction resumes after the next boundary key.
 3. On a boundary key (space, punctuation, Enter) the engine decides whether the word is wrong
    and what it should be. If it is confident, it returns `Action::Replace`.
 4. The adapter swallows the boundary key and injects backspaces plus the fixed word and the
@@ -58,6 +59,13 @@ Its top suggestion was right for 20 of 23 real typos, but it ranks without conte
 Engine modes (user setting): `Both` (default: OS flags it and the bundled ranking is confident),
 `SystemOnly`, `BundledOnly` (identical on every OS), `Aggressive` (phone-like).
 
+`Config::language` (default `en-US`) tells the adapter which language to open the OS checker
+in. The bundled dictionary is English only for now and ignores it.
+
+The bundled dictionary includes about 1,000 programming terms (`data/tech_words.txt`):
+keywords, standard types, tools and jargon. People write prose about code all day, so these
+count as known words and are never corrected.
+
 ## Never corrected
 
 - Password and other secure fields, and apps on the user's exclude list.
@@ -70,7 +78,8 @@ Engine modes (user setting): `Both` (default: OS flags it and the bundled rankin
 
 ## UI processes
 
-- **Core process** (hook, engine, tray): always running, target under 15 MB RAM idle.
+- **Core process** (hook, engine, tray): always running, target about 30 MB RAM idle. The
+  bundled dictionary index alone takes about 15 MB.
 - **Pill**: drawn natively in a click-through, no-activate window, shown briefly after a fix.
   No web view stays resident.
 - **Settings**: a Tauri window created on demand and destroyed when closed.

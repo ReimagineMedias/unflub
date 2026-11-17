@@ -2,6 +2,8 @@
 
 /// Who decides that a word is wrong and what to replace it with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 pub enum EngineMode {
     /// The OS checker flags the word and the bundled engine agrees on a confident fix. Default.
     #[default]
@@ -16,6 +18,8 @@ pub enum EngineMode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct Config {
     pub enabled: bool,
     pub mode: EngineMode,
@@ -33,6 +37,9 @@ pub struct Config {
     pub user_rules: Vec<(String, String)>,
     /// Backspace right after a correction restores the original and stops correcting that word.
     pub undo_learns: bool,
+    /// BCP 47 tag for the system spell checker (e.g. `"en-US"`). The bundled engine is English
+    /// only for now and ignores this.
+    pub language: String,
 }
 
 impl Default for Config {
@@ -47,6 +54,19 @@ impl Default for Config {
             personal_words: Vec::new(),
             user_rules: Vec::new(),
             undo_learns: true,
+            language: "en-US".to_string(),
         }
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_is_serde() {
+        fn assert_serde<T: serde::Serialize + serde::de::DeserializeOwned>() {}
+        assert_serde::<Config>();
+        assert_serde::<EngineMode>();
     }
 }

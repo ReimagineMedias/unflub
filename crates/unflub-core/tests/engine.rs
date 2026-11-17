@@ -3,7 +3,9 @@
 mod common;
 
 use common::Typist;
-use unflub_core::{Action, Config, Context, Engine, EngineMode, Event, Key, Source, SpellBackend};
+use unflub_core::{
+    Action, Config, Context, Corrector, Engine, EngineMode, Event, Key, Source, SpellBackend,
+};
 
 fn config() -> Config {
     Config {
@@ -16,6 +18,21 @@ fn config() -> Config {
 fn engine_is_send() {
     fn assert_send<T: Send>() {}
     assert_send::<Engine>();
+}
+
+#[test]
+fn engine_is_a_corrector() {
+    let mut engine = Engine::new(config(), None);
+    let corrector: &mut dyn Corrector = &mut engine;
+    let ctx = Context::default();
+    corrector.on_key(Key::Boundary(' '), &ctx);
+    for c in "teh".chars() {
+        corrector.on_key(Key::Char(c), &ctx);
+    }
+    assert!(matches!(
+        corrector.on_key(Key::Boundary(' '), &ctx),
+        Action::Replace(_)
+    ));
 }
 
 #[test]
@@ -303,7 +320,7 @@ fn system_only_mode() {
 #[test]
 fn aggressive_mode_takes_low_margin_fixes() {
     let mut bundled = Typist::bundled();
-    assert_eq!(bundled.type_str("Tauri "), "Tauri ");
+    assert_eq!(bundled.type_str("Trevix "), "Trevix ");
     let mut aggressive = with_backend(EngineMode::Aggressive, None);
-    assert_ne!(aggressive.type_str("Tauri "), "Tauri ");
+    assert_ne!(aggressive.type_str("Trevix "), "Trevix ");
 }
