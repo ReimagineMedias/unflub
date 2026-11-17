@@ -57,8 +57,10 @@ engine never calls slow APIs on this path.
 - **Secure fields.** While a field is secure, the engine never sees its keys: it gets one
   `Reset` instead, and the rest of a word that was half typed when the field became safe is
   skipped too. The focused window's class decides how we check:
-  - Edit controls (any class containing "edit": `Edit`, `RichEdit*`, WinForms, Delphi
-    `TEdit`): the `ES_PASSWORD` style, read on the hook thread.
+  - Standard edit controls (exactly `Edit`, `RichEdit20A/W`, `RICHEDIT50W`, `RichEditD2D`,
+    `RichEditD2DPT`): the `ES_PASSWORD` style alone, read on the hook thread. Other classes
+    containing "edit" (WinForms, Delphi `TEdit`) are secure at once with `ES_PASSWORD`, and
+    otherwise checked like every other class below.
   - Every other class, known or not (browsers, Electron, WPF, UWP, Qt, Java): UI Automation's
     `IsPassword`, asked on focus changes and 50 ms after a click, Tab or Enter. UIA can block
     on hung apps, so it runs on its own thread with 250 ms / 500 ms connection and transaction

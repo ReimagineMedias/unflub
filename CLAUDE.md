@@ -28,5 +28,5 @@ Repo is private until v0.1, then flipped public.
   is typing on.
 - Windows `ISpellChecker::Check` reports any word of 64+ UTF-16 units as correct.
 - UI Automation (and MSAA) queries switch on Chromium's accessibility tree, costing CPU and memory in Chrome and Electron.
-  The adapter asks UIA only on focus changes, clicks, Tab and Enter, for every class except edit controls (ES_PASSWORD);
+  The adapter asks UIA only on focus changes, clicks, Tab and Enter, for every class except the standard edits (Edit, RichEdit*: ES_PASSWORD alone);
   unknown classes fail closed (secure until UIA says otherwise). Tests only create the UIA client and never query an app.

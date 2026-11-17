@@ -2,9 +2,11 @@
 //! is a password box. Refreshed on focus changes and on clicks, Tab and Enter; never per key.
 //!
 //! The focused window's class decides how we check for a password field:
-//! - Edit controls (any class containing "edit": Edit, RichEdit*, WinForms EDIT, Delphi TEdit):
-//!   the `ES_PASSWORD` style bit, read on the hook thread. Style and class reads don't send
-//!   messages, so they can't block.
+//! - Standard Windows edit controls (exactly Edit, RichEdit20A/W, RICHEDIT50W, RichEditD2D,
+//!   RichEditD2DPT): the `ES_PASSWORD` style bit alone, read on the hook thread. Style and
+//!   class reads don't send messages, so they can't block.
+//! - Other classes containing "edit" (WinForms EDIT, Delphi TEdit, custom): secure at once if
+//!   `ES_PASSWORD` is set, otherwise checked with UIA like everything else.
 //! - Everything else (browsers, Electron, WPF, UWP, Qt, Java, unknown classes): UI Automation's
 //!   `IsPassword`, on a worker thread with short UIA timeouts, because UIA calls can block on
 //!   hung apps. Any accessibility query makes Chromium build its accessibility tree, which
@@ -28,7 +30,7 @@ pub fn exe_name_from_path(path: &str) -> String {
 /// How to tell whether a window holds a password field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {
-    /// Edit control: `ES_PASSWORD` decides.
+    /// Standard Windows edit control: `ES_PASSWORD` alone decides.
     Win32Edit,
     /// Anything else, including unknown classes: ask UIA, and stay secure until it says no.
     Probe,
@@ -36,7 +38,15 @@ pub enum FieldKind {
 
 /// Classify a window class name. Unknown classes are probed (fail closed).
 pub fn classify_class(class: &str) -> FieldKind {
-    if class.to_ascii_lowercase().contains("edit") {
+    const STANDARD_EDITS: &[&str] = &[
+        "edit",
+        "richedit20a",
+        "richedit20w",
+        "richedit50w",
+        "richeditd2d",
+        "richeditd2dpt",
+    ];
+    if STANDARD_EDITS.contains(&class.to_ascii_lowercase().as_str()) {
         FieldKind::Win32Edit
     } else {
         FieldKind::Probe
@@ -58,8 +68,10 @@ pub fn is_focus_change_object(id_object: i32) -> bool {
 const ES_PASSWORD: u32 = 0x20;
 
 /// True when a window of `class` with `style` is a classic password edit control.
+/// Any class containing "edit" counts (standard edits and their wrappers such as WinForms and
+/// Delphi `TEdit`); on other classes the bit means something else.
 pub fn is_password_edit(class: &str, style: u32) -> bool {
-    style & ES_PASSWORD != 0 && classify_class(class) == FieldKind::Win32Edit
+    style & ES_PASSWORD != 0 && class.to_ascii_lowercase().contains("edit")
 }
 
 /// The UIA worker's answer about one focused element.
@@ -238,8 +250,7 @@ mod win {
             }
             let class = String::from_utf16_lossy(&class[..n as usize]);
             let kind = classify_class(&class);
-            let password = kind == FieldKind::Win32Edit
-                && is_password_edit(&class, GetWindowLongW(hwnd, GWL_STYLE) as u32);
+            let password = is_password_edit(&class, GetWindowLongW(hwnd, GWL_STYLE) as u32);
             (kind, password)
         }
     }
@@ -391,16 +402,22 @@ mod tests {
     fn class_names_choose_how_to_check() {
         for c in [
             "Edit",
+            "EDIT",
+            "RichEdit20A",
             "RichEdit20W",
             "RICHEDIT50W",
+            "RichEditD2D",
             "RichEditD2DPT",
-            "WindowsForms10.EDIT.app.0.141b42a_r6_ad1",
-            "TEdit",
-            "TMaskEdit",
         ] {
             assert_eq!(classify_class(c), FieldKind::Win32Edit, "{c}");
         }
         for c in [
+            // Edit wrappers and custom edits: ES_PASSWORD can make them secure, but its
+            // absence proves nothing, so UIA is asked too.
+            "WindowsForms10.EDIT.app.0.141b42a_r6_ad1",
+            "TEdit",
+            "TMaskEdit",
+            "MyCustomEditor",
             "Chrome_RenderWidgetHostHWND",
             "MozillaWindowClass",
             "HwndWrapper[DefaultDomain;;b5f6]",
@@ -438,6 +455,7 @@ mod tests {
         ));
         assert!(is_password_edit("RICHEDIT50W", 0x20));
         assert!(is_password_edit("TEdit", 0x20));
+        assert!(is_password_edit("MyCustomEditor", 0x20));
         assert!(!is_password_edit("Edit", 0x50010000));
         // 0x20 on a button is BS_... something else entirely.
         assert!(!is_password_edit("Button", 0x20));
@@ -508,6 +526,23 @@ mod tests {
             FocusState::default().secure(),
             "before the first refresh: secure"
         );
+    }
+
+    #[test]
+    fn non_standard_edits_are_secure_on_es_password_and_probed_otherwise() {
+        let mut f = FocusState {
+            kind: classify_class("TEdit"),
+            es_password: is_password_edit("TEdit", 0x20),
+            uia_available: true,
+            ..FocusState::default()
+        };
+        let g = f.next_generation().expect("probed");
+        f.slot.publish(g, Secure::NotSecure);
+        assert!(f.secure(), "ES_PASSWORD wins over UIA");
+        f.es_password = is_password_edit("TEdit", 0);
+        assert!(!f.secure(), "no ES_PASSWORD and UIA says not secure");
+        f.next_generation();
+        assert!(f.secure(), "no ES_PASSWORD: secure until UIA answers");
     }
 
     #[test]
