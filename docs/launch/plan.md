@@ -58,7 +58,7 @@ These findings shaped the plan more than the general advice did. Sources are at 
 | Site | Merge `feat/site`, let `site.yml` deploy, confirm `https://unflub.rmgn.ca/` loads | Matias | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` secrets | All five pages return 200; `sitemap-index.xml` lists them |
 | Site | Point `SITE.download` at `https://api.rmgn.ca/unflub/download/windows?ref=site` | agent | API deployed | Download button redirects to the setup |
 | API | Add `hn`, `ph`, `reddit`, `x`, `linkedin`, `alternativeto`, `winget` to the unflub `refs` allowlist in `rmgn-api` | agent, Matias merges | Owner agrees, see decisions | Dashboard shows downloads per channel |
-| Site | Change "Measured on a typical laptop" in `site/src/data/performance.ts` to name the real setup | agent | Owner agrees to the wording | Site and `docs/performance.md` say the same thing |
+| Site | Done 2026-11-17: `site/src/data/performance.ts` now says "Measured on a high-end laptop. CI enforces the same limits on standard 4-core cloud machines." | agent | none | Site and `docs/performance.md` say the same thing |
 | Site | Allow the Web Analytics beacon in the CSP, update the CSP test, add one line about site analytics to /privacy | agent | Owner agrees to site analytics | `npm test` passes; beacon loads on the live site |
 | Site | Cloudflare Web Analytics, steps below | Matias | Site deployed, CSP change merged | Page views show in the dashboard within a day |
 | Search | Google Search Console, steps below | Matias | Site deployed | Domain property verified; sitemap status "Success" with 5 URLs |
@@ -260,7 +260,9 @@ Legend: G Google, B Bing, D DuckDuckGo autocomplete. T a thread or Q&A asking fo
 ## Decisions for the owner
 
 1. Is the "separate process with no network code, enforced by CI" claim true for v0.1? If not, cut it from
-   every draft. The drafts mark it.
+   every draft. The drafts mark it. The site does not make this claim.
+   TODO: once the process split ships and CI enforces it, add the claim to the site (`/privacy/` and the home
+   privacy line) and unmark it in the drafts.
 2. Extend the download `ref` allowlist with channel values? It is a small change in `rmgn-api`.
 3. Turn on Cloudflare Web Analytics for the site, which means the CSP change and a privacy line?
 4. Verify Search Console with a Domain property on `rmgn.ca`, as recommended, or only on `unflub.rmgn.ca`?
