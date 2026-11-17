@@ -10,12 +10,13 @@ import Settings from "../components/Settings.astro";
 import Compare from "../components/Compare.astro";
 import Faq from "../components/Faq.astro";
 import FinalCta from "../components/FinalCta.astro";
+import Guides from "../components/Guides.astro";
 import { faqPage, softwareApplication, website } from "../data/schema";
 import "../styles/scenes.css";
 ---
 
 <Base
-  title="unflub: free phone-style autocorrect for every app on Windows"
+  title="unflub: free phone-style autocorrect for any app on your Windows PC"
   description="unflub is system-wide autocorrect for Windows: it fixes a typo the moment you finish the word, in any app. Free, open source, and nothing you type leaves your PC."
   schema={[website, softwareApplication, faqPage]}
 >
@@ -32,5 +33,6 @@ import "../styles/scenes.css";
   <Settings />
   <Compare />
   <Faq />
+  <Guides />
   <FinalCta />
 </Base>

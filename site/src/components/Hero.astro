@@ -16,18 +16,19 @@ const chats = [
 
 <section class="hero" aria-labelledby="hero-title">
   <div class="copy wrap">
-    <h1 id="hero-title" class="display">
-      <span>Type fast.</span>
-      <span>Land it right.<i class="h1-caret" aria-hidden="true"></i></span>
+    <h1 id="hero-title">
+      <span class="kicker">Phone-style autocorrect for every app on your Windows PC</span>
+      <span class="display slogan"><span>Type fast.</span> <span>Land it right.<i class="h1-caret" aria-hidden="true"></i></span></span>
     </h1>
     <p class="lead">
-      Phone-style autocorrect for every text box on your computer. unflub fixes a typo the moment you finish the word, in any app.
+      unflub fixes a typo the moment you finish the word, system-wide: chat, email, the browser, AI prompt boxes. Built for Windows
+      11 and 10.
     </p>
     <div class="cta-row">
       <DownloadButton />
       <a class="btn btn-quiet" href={SITE.repo}>View on GitHub</a>
     </div>
-    <p class="small fine">Windows 10 and 11. Mac and Linux next. Free and open source, with no paid tier.</p>
+    <p class="small fine">Free and open source, with no paid tier. Mac and Linux next.</p>
   </div>
 
   <div class="wrap">
@@ -106,7 +107,19 @@ const chats = [
     gap: clamp(14px, 2.4vh, 22px);
   }
 
-  h1 span {
+  h1 {
+    display: grid;
+    gap: clamp(10px, 1.8vh, 16px);
+  }
+
+  .kicker {
+    font-size: clamp(1rem, min(1.4vw, 2.4vh), 1.25rem);
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--muted);
+  }
+
+  .slogan > span {
     display: block;
   }
 
