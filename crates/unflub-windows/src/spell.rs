@@ -178,10 +178,32 @@ impl WindowsSpellBackend {
         &self.language
     }
 
+    /// A handle that teaches this checker words from any thread, through the same background
+    /// thread as [`SpellBackend::learn`]. Use it where the backend itself is out of reach
+    /// (it lives inside the engine on the hook thread).
+    pub fn learner(&self) -> SpellLearner {
+        SpellLearner {
+            jobs: self.jobs.clone(),
+        }
+    }
+
     /// Blocking `ComprehensiveCheck` lookup, bypassing the cache. Slow; never call it on the
     /// hook path. For diagnostics and tests.
     pub fn auto_replacement_blocking(&self, word: &str) -> Option<String> {
         comprehensive_replacement(&self.checker, word)
+    }
+}
+
+/// Adds words to the user's Windows dictionary on the `unflub-spell` thread. Never blocks.
+/// Keeps that thread alive while any clone exists.
+#[derive(Clone)]
+pub struct SpellLearner {
+    jobs: Sender<Job>,
+}
+
+impl SpellLearner {
+    pub fn learn(&self, word: &str) {
+        let _ = self.jobs.send(Job::Learn(word.to_owned()));
     }
 }
 

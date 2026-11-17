@@ -10,10 +10,13 @@
 //! | `unflub-overlay` | none | the correction pill window ([`overlay`]): caret lookup, Direct2D drawing, fades |
 //! | `unflub-caret` | MTA | UI Automation caret position for browser and XAML fields, for the pill |
 //!
-//! The pure parts ([`translate`], [`policy`], [`inject::plan`], [`stats`], parts of [`focus`],
-//! [`overlay`] and [`caret`]) compile and
-//! are tested on every OS. Everything that calls Windows is behind `cfg(windows)`, so on
-//! Linux and macOS this crate builds to just those helpers.
+//! Settings change while the hook runs through [`LiveEngine`]: the hook thread picks up a new
+//! config at the start of the next key event, without blocking.
+//!
+//! The pure parts ([`translate`], [`policy`], [`inject::plan`], [`stats`], [`live`], parts of
+//! [`focus`], [`overlay`] and [`caret`]) compile and are tested on every OS. Everything that
+//! calls Windows is behind `cfg(windows)`, so on Linux and macOS this crate builds to just
+//! those helpers.
 //!
 //! Requirements and limitations:
 //! - Windows 10 1607 or later: key translation relies on `ToUnicodeEx`'s "don't change
@@ -27,6 +30,7 @@ pub use unflub_core::Corrector;
 pub mod caret;
 pub mod focus;
 pub mod inject;
+pub mod live;
 pub mod overlay;
 pub mod policy;
 pub mod stats;
@@ -39,8 +43,9 @@ pub mod spell;
 
 #[cfg(windows)]
 pub use hook::{Hook, HookEvent, HookOptions, HookReport, InjectTiming};
+pub use live::{LiveConfig, LiveEngine};
 pub use overlay::{Correction, PillConfig, PillPosition, PillStyle};
 #[cfg(windows)]
 pub use overlay::{Overlay, OverlayHandle};
 #[cfg(windows)]
-pub use spell::WindowsSpellBackend;
+pub use spell::{SpellLearner, WindowsSpellBackend};
