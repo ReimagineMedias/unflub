@@ -144,6 +144,7 @@ impl Settings {
         self
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))] // only the Windows engine host uses it so far
     pub fn to_core(&self) -> unflub_core::Config {
         unflub_core::Config {
             enabled: self.enabled,

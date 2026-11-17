@@ -16,7 +16,8 @@ boundary_p99_us = 1_000       # measured 87-90 us; 1 ms is the whole hook budget
 boundary_max_us = 10_000      # measured 196-951 us; a wall-clock max over 20k keys also
                               # catches OS preemption on shared runners, hence the slack
 char_p99_us = 20              # measured 0.1 us
-hard_max_us = 2_000           # measured 145-454 us: slowest of the hardest unknown words
+hard_max_us = 10_000          # measured 145-454 us locally, 2509 us once on a GitHub runner (one
+                              # preempted sample); same slack as boundary_max_us. p99 is the budget.
 heap_bytes = 25_165_824       # 24 MiB; measured 15_581_387 (14.9 MiB), deterministic
 peak_rss_bytes = 83_886_080   # 80 MiB; measured 43.6-45.7 MiB (index build peak)
 
@@ -36,10 +37,11 @@ handles = 400                  # measured 209-215
 startup_ms = 2_000            # measured 99-183 ms (fits in one scheduling window of the cap)
 boundary_p99_us = 1_000       # measured 88-101 us
 char_p99_us = 20              # measured 0.1 us
-hard_max_us = 2_000           # measured 199-247 us
 heap_bytes = 25_165_824       # 24 MiB; measured 14.9 MiB
 peak_rss_bytes = 83_886_080   # 80 MiB; measured 43.6 MiB
-# No boundary_max_us here: while busy, the hard cap lets the job run ~150 ms and then pauses
+# No boundary_max_us or hard_max_us here: a single sample can land in one of the cap's ~430 ms
+# pauses (CI measured 459 ms on 2026-11-17), so maxima under the cap measure the cap, not unflub.
+# while busy, the hard cap lets the job run ~150 ms and then pauses
 # it ~430 ms, and the key that lands in a pause records it (measured 113 ms).
 
 [lowend.idle]
