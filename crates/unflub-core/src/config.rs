@@ -13,6 +13,9 @@ pub enum EngineMode {
     SystemOnly,
     /// Only the bundled dictionary. Same behaviour on every OS.
     BundledOnly,
+    /// Either engine may flag the word (the OS checker, or a word the bundled dictionary doesn't
+    /// know), but the fix still has to be a confident one, as in `Both`.
+    Balanced,
     /// Take the best candidate whenever any engine flags the word. Phone-like, more wrong fixes.
     Aggressive,
 }

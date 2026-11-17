@@ -20,6 +20,7 @@ mod rank;
 mod session;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub use config::{Config, EngineMode};
@@ -135,6 +136,8 @@ pub struct Engine {
     events: Vec<Event>,
     word: String,
     lower: String,
+    /// Words looked at on a boundary, for the app's local stats. One relaxed add per word.
+    words_checked: Option<Arc<AtomicU64>>,
 }
 
 /// Lookups derived from [`Config`], lowercased once when the config is set.
@@ -197,7 +200,14 @@ impl Engine {
             events: Vec::new(),
             word: String::with_capacity(64),
             lower: String::with_capacity(64),
+            words_checked: None,
         }
+    }
+
+    /// Add one to `counter` for every word the engine decides on (fixed or not). The reader
+    /// takes the count with `swap(0)`.
+    pub fn count_words_into(&mut self, counter: Arc<AtomicU64>) {
+        self.words_checked = Some(counter);
     }
 
     /// Feed one key. Must return within the hook budget.
@@ -278,6 +288,9 @@ impl Engine {
     /// Decides whether the word before the caret should be replaced, given boundary `c`.
     fn decide(&mut self, boundary: char) -> Option<Replacement> {
         let cur = self.session.current()?;
+        if let Some(counter) = &self.words_checked {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
         let skip_code = self.config.skip_code;
         if skip_code && (self.session.backticks || cur.code_like) {
             return None;
@@ -365,6 +378,11 @@ impl Engine {
             }
             EngineMode::SystemOnly => {
                 let flagged = flagged_by_system(&self.backend, &self.word).unwrap_or(false);
+                (flagged, true, 1.0, keep)
+            }
+            EngineMode::Balanced => {
+                let flagged =
+                    flagged_by_system(&self.backend, &self.word).unwrap_or(false) || !known;
                 (flagged, true, 1.0, keep)
             }
             EngineMode::Aggressive => {

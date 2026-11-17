@@ -52,6 +52,45 @@ fn replacement_fields() {
     assert!(t.engine.drain_events().is_empty());
 }
 
+/// Balanced flags what either engine flags, like Aggressive, but keeps Both's confidence margin
+/// and its "might be a name" doubt.
+#[test]
+fn balanced_mode() {
+    let mut t = Typist::new(Config {
+        mode: EngineMode::Balanced,
+        ..Config::default()
+    });
+    assert_eq!(t.type_str("teh "), "the ");
+    let typed = |mode| {
+        Typist::new(Config {
+            mode,
+            ..Config::default()
+        })
+        .type_str("I met Jhon today ")
+        .to_string()
+    };
+    let (both, balanced) = (typed(EngineMode::Both), typed(EngineMode::Balanced));
+    assert_eq!(
+        balanced, both,
+        "a capitalised word mid-sentence is left alone"
+    );
+}
+
+#[test]
+fn counts_words_checked() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+    let counter = Arc::new(AtomicU64::new(0));
+    let mut engine = Engine::new(config(), None);
+    engine.count_words_into(counter.clone());
+    let mut t = Typist::with_engine(engine);
+    assert_eq!(t.type_str("teh cat sat. "), "the cat sat. ");
+    // Three words reached a boundary; the trailing space after "." has no word.
+    assert_eq!(counter.swap(0, Ordering::Relaxed), 3);
+    t.type_str("ok ");
+    assert_eq!(counter.load(Ordering::Relaxed), 1);
+}
+
 #[test]
 fn punctuation_boundaries_keep_their_character() {
     let mut t = Typist::bundled();

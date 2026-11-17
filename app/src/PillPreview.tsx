@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { previewScript as SCRIPT, t } from "./i18n";
 import type { PillPosition, PillStyle } from "./types";
-
-/** Words typed by the preview; a second element is the correction applied on the next boundary. */
-const SCRIPT: [string, string?][] = [
-  ["I "], ["type "], ["fast "], ["and "], ["most "], ["issuses ", "issues"], ["get "], ["caught, "],
-  ["but "], ["teh ", "the"], ["fix "], ["never "], ["landed. "], ["Now "], ["it "], ["does, "], ["liek ", "like"], ["magic."],
-];
 
 interface Segment { text: string; fixed?: boolean; flash?: boolean; underline?: boolean }
 
@@ -64,7 +59,7 @@ export function PillPreview({ style, position, opacity, durationMs }: {
   }, []);
 
   return (
-    <div ref={box} className={`preview ${position}`} style={{ ["--pill-opacity" as string]: opacity }} aria-label="Correction preview">
+    <div ref={box} className={`preview ${position}`} style={{ ["--pill-opacity" as string]: opacity }} aria-label={t("pillPreview.label")}>
       {segments.map((s, i) => (
         <span key={i} className={[s.fixed && "fixed", s.flash && "flash", s.underline && "underline"].filter(Boolean).join(" ")}>
           {s.text}
@@ -74,7 +69,7 @@ export function PillPreview({ style, position, opacity, durationMs }: {
       <div className={`pill${pill.show ? " show" : ""}`} style={{ left: Math.max(8, pill.x), top: pill.y }}>
         <s>{pill.from}</s>
         <span>→ {pill.to}</span>
-        <kbd>⌫ undo</kbd>
+        <kbd>{t("pillPreview.undo")}</kbd>
       </div>
     </div>
   );

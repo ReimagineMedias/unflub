@@ -28,8 +28,21 @@ tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 # Rust-only: checks, downloads and installs run here; the settings UI only sees `update-status`.
 tauri-plugin-updater = "2"
+# Every external link (settings window and tray) opens through this; scoped in capabilities/default.json.
+tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+# Local dates for the Stats page.
+time = { version = "0.3", features = ["local-offset"] }
+sha2 = "0.10"
+semver = "1"
+# Remote config and opt-in usage stats. Same reqwest and rustls (ring) as the updater, so nothing new
+# is linked for TLS.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# Opt-in crash reports. Inert unless SENTRY_DSN is set at build time; see crash.rs.
+sentry = { version = "0.49", default-features = false, features = ["backtrace", "contexts", "debug-images", "panic", "reqwest"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Registry"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_Storage_Packaging_Appx"] }

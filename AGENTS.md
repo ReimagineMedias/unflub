@@ -51,19 +51,43 @@ Repo is private until v0.1, then flipped public.
   fits in one burst (index build) runs at full speed; it doesn't simulate a slower clock.
 - Windows PowerShell 5.1: `$PSScriptRoot` can be empty in `param()` defaults, and a native command's stderr throws
   under `$ErrorActionPreference = 'Stop'`. The perf scripts handle both.
-- Releases: see `docs/releasing.md`. A `v*.*.*` tag runs `.github/workflows/release.yml`, which only ever makes a draft.
-  Matrix jobs just build; one job writes `latest.json` with `scripts/updater-manifest.mjs`, because tauri-action's
-  per-job latest.json upload races in parallel matrices (tauri-action#1270). `node scripts/bump-version.mjs <v>` keeps
+- Releases: see `docs/releasing.md`. A `v*.*.*` tag runs `.github/workflows/release.yml`: build, sign, VirusTotal,
+  attest, upload installers + `.sig` to R2 `rmgn-releases/unflub/<version>/` (wrangler pinned in app/package-lock.json),
+  register with `POST api.rmgn.ca/unflub/v1/admin/releases` (lands PAUSED at 0%; CI's token can only register), and a
+  draft GitHub Release as mirror. Rollout (5% > 25% > 100%, pause, block, min_version) is done by a person in
+  `https://api.rmgn.ca/dashboard/?product=unflub` (Cloudflare Access), never from CI. API contract:
+  `D:\Code\rmgn-api\docs\unflub-contract.md`. `latest.json` is still generated (`scripts/updater-manifest.mjs`) but unused. `node scripts/bump-version.mjs <v>` keeps
   the five version locations in sync (CI runs `--check`). macOS/Linux matrix rows exist with `"enabled": false`.
 - Updater signing keypair: `D:\Code\unflub\.local\updater\unflub-updater.key` and `.password` (git-ignored; never print
   or commit). Only the public key is in `tauri.conf.json`. Updater artifacts are on only with
   `--config src-tauri/tauri.release.conf.json`, so a plain `npm run tauri build` needs no key.
-- Updates run in Rust (`updates.rs`): a daily check when `autoUpdate` is on; download, verify and install only on the
-  About page's Restart (nothing is held in memory while an update waits). Release builds only; dev builds never check in the background or install.
+- Updates run in Rust (`updates.rs`) against api.rmgn.ca: check ~2 min after launch then daily (min interval from
+  remote config), headers `X-Rollout-Bucket` (random per installed version, `net.rs`) and `X-First` (UTC
+  day/week/month), no install id anywhere. `version_comparator` accepts any version != current (server-driven
+  rollbacks). `autoUpdate` downloads + verifies in the background to `%LOCALAPPDATA%\ca.rmgn.unflub\updates`
+  (SHA-256 re-checked before install); install only on Restart now or tray Quit. Only `install-source` = installer or
+  winget self-updates (`install.rs`). Release builds only.
+- Privacy/network map is in `docs/architecture.md#network-and-privacy`. Usage stats (`usage.rs`) and crash reports
+  (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON with a first-run choice; tests pin the
+  payload keys to the contract allowlist. Remote config (`remote.rs`) may only switch things off (tested). Machine
+  policy `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`). Typo-fix pair sharing was cut from v0.1.
+- Settings have `schemaVersion` (`migrations.rs`, step by step, keeps `settings.json.v<N>`), and unknown fields survive
+  in `Settings::extra`. All window strings are in `app/src/i18n/en.ts` (`t()`), tray strings in `strings.rs`. External
+  links only via `<ExternalLink>` / tauri-plugin-opener (scoped to github.com and unflub.rmgn.ca); a cargo test fails
+  on raw `<a>` in `app/src`.
+- The hook ignores unflub's own exe (HookOptions.excluded_apps), so Settings is never autocorrected; the first-run
+  tour's practice box uses a separate engine over IPC (`tour.rs`). The adapter's hook watchdog (GetLastInputInfo vs
+  last callback, plus resume/unlock re-arm) reinstalls dropped LL hooks (`HookEvent::HooksReinstalled`).
+- Preview the settings UI in a plain browser (`cd app; npx vite`): query params `?welcome` (first run), `?page=tour`,
+  `?update=ready&critical`, `?crash`, `?managed`, `?source=scoop`, `?theme=ink&mode=dark`.
 - Uninstall: Tauri's NSIS template already deletes `HKCU\...\Run\unflub` (not on `/UPDATE`) and has a "Delete the
   application data" checkbox; `app/src-tauri/windows/installer-hooks.nsh` removes the StartupApproved value and
-  `HKCU\Software\RMGN\unflub`, `uninstall-cleanup.wxs` does the login entry for the MSI. Start at login is reconciled
-  with the registry at startup and whenever the settings window loads (release builds only).
+  `HKCU\Software\Reimagine Media (RMGN)\unflub` (MANUKEY follows `bundle.publisher`), and `install-source`;
+  `uninstall-cleanup.wxs` does the login entry for the MSI. Start at login follows the
+  registry (Run entry plus Task Manager's StartupApproved flag) at startup and when the window loads, and is never
+  written back on its own. Only installed copies may write it (`install::login_allowed`: `%LOCALAPPDATA%\unflub`,
+  Program Files\unflub, Scoop `apps\unflub\current`); a release build run from `target\release` registered itself
+  once before this rule, so never run one with startAtLogin on outside that check.
 - Binaries: the tray app's executable is `unflub.exe` (`[[bin]] name = "unflub"` in `app/src-tauri/Cargo.toml`; the
   package stays `unflub-app`); the headless developer runner is `unflub-cli` (`crates/unflub-windows/src/bin/unflub-cli`).
 - Site (`site/`): Astro static, hosted on Vercel through its Git integration (Root Directory `site`); headers, CSP,
