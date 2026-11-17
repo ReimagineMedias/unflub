@@ -124,11 +124,13 @@ test("internal links, anchors and assets resolve", async () => {
   }
 });
 
-test("unknown paths get the 404 page, which is not indexed", async () => {
+test("unknown paths get the 404 page with a 404 status", async () => {
   const res = await fetch(`${base}/does-not-exist/`);
   assert.equal(res.status, 404);
   const doc = parse(await res.text());
-  assert.equal(doc.querySelector('meta[name="robots"]')?.getAttribute("content"), "noindex");
+  // The 404 status keeps it out of search; indexing is never switched off with noindex.
+  assert.equal(doc.querySelector('meta[name="robots"]'), null);
+  assert.equal(doc.querySelector('link[rel="canonical"]'), null);
   assert.equal(doc.querySelectorAll("h1").length, 1);
 });
 
@@ -138,6 +140,14 @@ test("the night nav copy never hides the real nav's focus ring", () => {
   assert.ok(night?.hasAttribute("inert") && night.getAttribute("aria-hidden") === "true", "night nav is inert and hidden");
   const css = doc.querySelectorAll("style").map((s) => s.textContent).join("\n");
   assert.match(css, /:focus-within \.night[^{]*\{visibility:hidden\}/, "night nav steps aside on focus");
+});
+
+test("no page or header turns indexing off", async () => {
+  for (const [path, doc] of pages) {
+    assert.equal(doc.querySelector('meta[name="robots"]'), null, `${path} has a robots meta tag`);
+  }
+  const res = await fetch(`${base}/`);
+  assert.equal(res.headers.get("x-robots-tag"), null);
 });
 
 test("robots.txt points at the sitemap", async () => {

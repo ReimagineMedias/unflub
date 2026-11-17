@@ -20,11 +20,12 @@ interface Props {
   schema?: Record<string, unknown>[];
   /** Subpages pass their trail; the home crumb is added for them. */
   crumbs?: Crumb[];
-  noindex?: boolean;
+  /** The 404 page has no address of its own, so no canonical. Every page stays indexable: no noindex anywhere. */
+  canonical?: boolean;
   ogImage?: string;
 }
 
-const { title, description, schema = [], crumbs, noindex = false, ogImage = SITE.ogImage } = Astro.props;
+const { title, description, schema = [], crumbs, canonical: withCanonical = true, ogImage = SITE.ogImage } = Astro.props;
 const site = Astro.site ?? new URL(SITE.url);
 const canonical = new URL(Astro.url.pathname, site).href;
 const image = new URL(ogImage, site).href;
@@ -64,8 +65,7 @@ const beacon = beaconToken ? JSON.stringify({ token: beaconToken }) : undefined;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    {!noindex && <link rel="canonical" href={canonical} />}
-    {noindex && <meta name="robots" content="noindex" />}
+    {withCanonical && <link rel="canonical" href={canonical} />}
     <link rel="preload" href={manrope} as="font" type="font/woff2" crossorigin />
 
     <meta property="og:type" content="website" />
