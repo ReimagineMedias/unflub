@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { sendPreview } from "./api";
-import { Row, Segmented, Switch } from "./components";
+import { Disclosure, Row, Segmented, Switch } from "./components";
 import { t } from "./i18n";
 import type { AppInfo, SendPreview, Settings } from "./types";
 
@@ -27,21 +27,21 @@ export function PrivacyPage({ settings: s, info, update }: {
       <p className="lead">{t("privacy.lead")}</p>
 
       <div className="section-title">{t("privacy.sharing")}</div>
+      <Disclosure />
       <div className="card">
-        <Row label={t("privacy.stats")} hint={m?.disableUsageStats ? t("privacy.managed") : t("privacy.stats.hint")}>
+        <Row label={t("privacy.stats")} hint={m?.disableUsageStats ? t("privacy.managed") : undefined}>
           <Switch label={t("privacy.stats")} disabled={m?.disableUsageStats}
             checked={s.shareUsageStats && !m?.disableUsageStats} onChange={(v) => update({ shareUsageStats: v })} />
         </Row>
         <Row label={t("privacy.crashes")} hint={
           m?.disableCrashReports ? t("privacy.managed")
           : preview && !preview.crashReportsAvailable ? t("privacy.crashes.unavailable")
-          : t("privacy.crashes.hint")
+          : undefined
         }>
           <Switch label={t("privacy.crashes")} disabled={m?.disableCrashReports}
             checked={s.sendCrashReports && !m?.disableCrashReports} onChange={(v) => update({ sendCrashReports: v })} />
         </Row>
       </div>
-      <p className="note">{t("privacy.funding")}</p>
 
       <div className="section-title">{t("privacy.updates")}</div>
       <div className="card">

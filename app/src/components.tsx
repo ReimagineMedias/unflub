@@ -22,6 +22,33 @@ export function AppIcon({ className }: { className?: string }) {
   );
 }
 
+/** Short, plain list of what is shared. Used by the tour and the Privacy page. */
+export function Disclosure() {
+  return (
+    <div className="disclosure">
+      <p>{t("privacy.disclosure.lead")}</p>
+      <ul>
+        <li>{t("privacy.disclosure.usage")}</li>
+        <li>{t("privacy.disclosure.crashes")}</li>
+        <li>{t("privacy.disclosure.update")}</li>
+      </ul>
+    </div>
+  );
+}
+
+/** Green check that scales and fades in. */
+export function SuccessNote({ children }: { children: ReactNode }) {
+  return (
+    <p className="tour-note good" role="status">
+      <svg className="check" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="12" fill="#2E9E5B" />
+        <path d="M7 12.5l3.2 3.2L17 8.8" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <span>{children}</span>
+    </p>
+  );
+}
+
 export function Row({ label, hint, children, stack }: { label: ReactNode; hint?: ReactNode; children: ReactNode; stack?: boolean }) {
   return (
     <div className={stack ? "row stack" : "row"}>
