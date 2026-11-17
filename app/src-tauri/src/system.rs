@@ -1,5 +1,5 @@
 //! What the OS says: its look (accent colour, dark taskbar and apps), its version, our memory
-//! use and our login entry.
+//! use and machine policy.
 
 /// The OS accent colour as `#RRGGBB`, if the platform exposes one.
 pub fn accent_color() -> Option<String> {
@@ -99,13 +99,6 @@ pub fn policy_dword(key: &str, name: &str) -> Option<u32> {
     }
 }
 
-/// True when the per-user `Run` key has an entry called `name`, enabled or not. Task Manager's
-/// "Disable" keeps the entry and marks it off elsewhere; uninstalling removes it.
-#[cfg(windows)]
-pub fn login_entry_exists(name: &str) -> bool {
-    windows_impl::value_exists(r"Software\Microsoft\Windows\CurrentVersion\Run", name)
-}
-
 #[cfg(windows)]
 mod windows_impl {
     use windows::core::HSTRING;
@@ -113,26 +106,9 @@ mod windows_impl {
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
     };
     use windows::Win32::System::Registry::{
-        RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_ANY, RRF_RT_REG_DWORD,
-        RRF_RT_REG_SZ,
+        RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
     };
     use windows::Win32::System::Threading::GetCurrentProcess;
-
-    pub fn value_exists(key: &str, value: &str) -> bool {
-        // SAFETY: no data buffer is passed, so only the value's presence is read.
-        unsafe {
-            RegGetValueW(
-                HKEY_CURRENT_USER,
-                &HSTRING::from(key),
-                &HSTRING::from(value),
-                RRF_RT_ANY,
-                None,
-                None,
-                None,
-            )
-        }
-        .is_ok()
-    }
 
     pub fn read_dword(key: &str, value: &str) -> Option<u32> {
         read_dword_in(HKEY_CURRENT_USER, key, value)

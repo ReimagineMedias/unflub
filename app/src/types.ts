@@ -87,6 +87,8 @@ export type InstallSource = "installer" | "winget" | "scoop" | "store" | "portab
 /** Mirrors `AppInfo` in src-tauri/src/lib.rs and `Managed` in managed.rs. */
 export interface AppInfo {
   installSource: InstallSource;
+  /** Runs from an installed location, so start at login is available. */
+  loginAllowed: boolean;
   managed: {
     disableUpdates: boolean;
     disableUsageStats: boolean;

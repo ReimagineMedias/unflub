@@ -368,9 +368,12 @@ Remove-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Sta
 ```
 
 **Start at login follows Windows.** The toggle in Settings > General reads the `Run` entry and
-Task Manager's switch each time the window opens, so turning unflub off in Task Manager shows
-there too. An upgrade that uninstalls the old version first removes the `Run` entry; if the
-setting was on, unflub adds it back when it next starts.
+Task Manager's switch each time the window opens and at startup, so turning unflub off in Task
+Manager, or removing the entry, shows there too. unflub never writes the entry back on its own;
+only the toggle does. Only an installed copy registers itself (the setup's
+`%LOCALAPPDATA%\unflub`, the MSI's Program Files folder, or Scoop's `apps\unflub\current`); a
+portable copy or a build run from a checkout shows "Start at login is available in the installed
+version" and never touches the registry.
 
 ## Rollback
 

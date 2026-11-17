@@ -52,6 +52,7 @@ export const en = {
   "general.autocorrect.hint": "Also in the tray menu. While paused, unflub doesn't read your keys at all.",
   "general.login": "Start at login",
   "general.login.hint": "Starts quietly in the tray.",
+  "general.login.unavailable": "Start at login is available in the installed version.",
   "general.undo": "Undo teaches unflub",
   "general.undo.hint": "Backspace right after a fix restores your word and stops fixing it.",
 

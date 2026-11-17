@@ -153,8 +153,9 @@ export function Tour({ settings: s, info, update, onClose }: {
               <Switch label={t("privacy.crashes")} disabled={managed?.disableCrashReports}
                 checked={s.sendCrashReports && !managed?.disableCrashReports} onChange={(v) => update({ sendCrashReports: v })} />
             </Row>
-            <Row label={t("general.login")} hint={t("general.login.hint")}>
-              <Switch label={t("general.login")} checked={s.startAtLogin} onChange={(v) => update({ startAtLogin: v })} />
+            <Row label={t("general.login")} hint={info && !info.loginAllowed ? t("general.login.unavailable") : t("general.login.hint")}>
+              <Switch label={t("general.login")} disabled={info ? !info.loginAllowed : false}
+                checked={s.startAtLogin && (info?.loginAllowed ?? true)} onChange={(v) => update({ startAtLogin: v })} />
             </Row>
           </div>
           <small className="muted tour-later">{t("tour.data.later")}</small>

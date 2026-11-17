@@ -165,6 +165,7 @@ const mockInfo = (): AppInfo => {
   const managed = query().has("managed");
   return {
     installSource: (query().get("source") as AppInfo["installSource"] | null) ?? "installer",
+    loginAllowed: !query().has("portable"),
     managed: { disableUpdates: managed, disableUsageStats: managed, disableCrashReports: managed, disableRemoteConfig: managed },
   };
 };

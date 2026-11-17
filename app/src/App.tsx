@@ -220,8 +220,9 @@ export default function App() {
               <Row label={t("general.autocorrect")} hint={t("general.autocorrect.hint")}>
                 <Switch label={t("general.autocorrect")} checked={s.enabled} onChange={(v) => update({ enabled: v })} />
               </Row>
-              <Row label={t("general.login")} hint={t("general.login.hint")}>
-                <Switch label={t("general.login")} checked={s.startAtLogin} onChange={(v) => update({ startAtLogin: v })} />
+              <Row label={t("general.login")} hint={info && !info.loginAllowed ? t("general.login.unavailable") : t("general.login.hint")}>
+                <Switch label={t("general.login")} disabled={info ? !info.loginAllowed : false}
+                  checked={s.startAtLogin && (info?.loginAllowed ?? true)} onChange={(v) => update({ startAtLogin: v })} />
               </Row>
               <Row label={t("general.undo")} hint={t("general.undo.hint")}>
                 <Switch label={t("general.undo")} checked={s.undoLearns} onChange={(v) => update({ undoLearns: v })} />

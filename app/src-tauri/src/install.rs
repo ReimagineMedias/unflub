@@ -11,7 +11,7 @@
 //! has no installer to run.
 
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const MARKER: &str = "install-source";
 
@@ -51,6 +51,61 @@ impl InstallSource {
             return Self::Portable;
         };
         detect_in(&dir, packaged())
+    }
+}
+
+/// May this copy register itself to start at login? Only an installed copy, from where it was
+/// installed: the setup's per-user folder (`%LOCALAPPDATA%\unflub`), the MSI's folder under
+/// Program Files, or Scoop's stable `apps\unflub\current` path. Never a portable copy, a dev or
+/// `target\release` build, or the Store (which has its own startup task).
+pub fn login_allowed(source: InstallSource) -> bool {
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    else {
+        return false;
+    };
+    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    let program_files: Vec<PathBuf> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .map(PathBuf::from)
+        .collect();
+    login_allowed_in(&dir, source, local.as_deref(), &program_files)
+}
+
+/// Windows paths compare without regard to case.
+fn same_path(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| {
+        p.to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
+    };
+    norm(a) == norm(b)
+}
+
+fn login_allowed_in(
+    dir: &Path,
+    source: InstallSource,
+    local_appdata: Option<&Path>,
+    program_files: &[PathBuf],
+) -> bool {
+    match source {
+        InstallSource::Installer | InstallSource::Winget => {
+            local_appdata.is_some_and(|l| same_path(dir, &l.join("unflub")))
+                || program_files
+                    .iter()
+                    .any(|pf| same_path(dir, &pf.join("unflub")))
+        }
+        InstallSource::Scoop => {
+            let parts: Vec<String> = dir
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                .collect();
+            parts.ends_with(&["apps".into(), "unflub".into(), "current".into()])
+        }
+        InstallSource::Store | InstallSource::Portable => false,
     }
 }
 
@@ -147,6 +202,38 @@ mod tests {
         ] {
             assert!(!s.self_updates(), "{s:?}");
         }
+    }
+
+    #[test]
+    fn login_only_from_an_installed_location() {
+        let local = Path::new(r"C:\Users\a\AppData\Local");
+        let pf = vec![PathBuf::from(r"C:\Program Files")];
+        let ok = |dir: &str, source| login_allowed_in(Path::new(dir), source, Some(local), &pf);
+        use InstallSource::*;
+        // The setup's per-user folder and the MSI's folder, any case or trailing slash.
+        assert!(ok(r"C:\Users\a\AppData\Local\unflub", Installer));
+        assert!(ok(r"c:\users\A\appdata\local\UNFLUB\", Winget));
+        assert!(ok(r"C:\Program Files\unflub", Installer));
+        // Dev and release builds in a checkout, even if something calls them "installer".
+        assert!(!ok(
+            r"D:\Code\unflub-wt\api-updates\target\release",
+            Installer
+        ));
+        assert!(!ok(r"D:\Code\unflub\target\debug", Installer));
+        assert!(!ok(r"C:\Users\a\AppData\Local\unflub\sub", Installer));
+        assert!(!ok(r"C:\Users\a\AppData\Local\unflub-old", Installer));
+        // Scoop's stable path only, never a versioned folder.
+        assert!(ok(r"C:\Users\a\scoop\apps\unflub\current", Scoop));
+        assert!(!ok(r"C:\Users\a\scoop\apps\unflub\0.1.0", Scoop));
+        // Portable and Store copies never write the entry.
+        assert!(!ok(r"C:\Users\a\AppData\Local\unflub", Portable));
+        assert!(!ok(r"C:\Users\a\AppData\Local\unflub", Store));
+        assert!(!login_allowed_in(
+            Path::new(r"C:\Users\a\AppData\Local\unflub"),
+            Installer,
+            None,
+            &[]
+        ));
     }
 
     #[test]

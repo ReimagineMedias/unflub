@@ -59,6 +59,9 @@ pub struct AppInfo {
     pub install_source: InstallSource,
     /// Machine policy (`managed.rs`).
     pub managed: Managed,
+    /// Runs from an installed location, so it may add itself to start at login
+    /// (`install::login_allowed`).
+    pub login_allowed: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -92,7 +95,7 @@ fn emit_settings(app: &AppHandle, settings: &Settings) {
 #[tauri::command]
 fn get_settings(app: AppHandle) -> serde_json::Value {
     // Task Manager may have turned the login entry off since the window last looked.
-    sync_login_truth(&app, false);
+    sync_login_truth(&app);
     for_window(&current_settings(&app))
 }
 
@@ -370,9 +373,10 @@ fn stop_engine(app: &AppHandle) {
 }
 
 fn sync_autostart(app: &AppHandle, on: bool) {
-    // A dev build must never register itself to run at login.
-    if cfg!(debug_assertions) {
-        eprintln!("start at login: skipped in dev builds (would be {on})");
+    // A dev build must never register itself to run at login, and neither must a copy outside
+    // an installed location (a release build in a checkout, a portable copy).
+    if cfg!(debug_assertions) || !app.state::<AppInfo>().login_allowed {
+        eprintln!("start at login: skipped outside an installed copy (would be {on})");
         return;
     }
     let launcher = app.autolaunch();
@@ -386,19 +390,16 @@ fn sync_autostart(app: &AppHandle, on: bool) {
     }
 }
 
-/// Make `start_at_login` say what the OS will do at the next login. Turning the entry off in Task
-/// Manager or Windows Settings wins. At startup, an entry that is missing while the setting is on
-/// is put back: an upgrade that uninstalls the old version first removes it. Dev builds never
-/// register, so they leave the setting alone.
-fn sync_login_truth(app: &AppHandle, at_startup: bool) {
-    if cfg!(debug_assertions) {
+/// Make `start_at_login` say what the OS will do at the next login. The OS is the truth: an
+/// entry removed outside unflub, or switched off in Task Manager or Settings > Apps > Startup
+/// (`StartupApproved\Run`, which `is_enabled` reads), is the user's choice and is never written
+/// back, at startup or later; only the toggle turns it on again. Dev builds and copies outside an
+/// installed location never register, so they leave the setting alone.
+fn sync_login_truth(app: &AppHandle) {
+    if cfg!(debug_assertions) || !app.state::<AppInfo>().login_allowed {
         return;
     }
     let wanted = current_settings(app).start_at_login;
-    if at_startup && wanted && !login_entry_exists(app) {
-        sync_autostart(app, true);
-        return;
-    }
     let actual = match app.autolaunch().is_enabled() {
         Ok(on) => on,
         Err(e) => {
@@ -421,18 +422,6 @@ fn sync_login_truth(app: &AppHandle, at_startup: bool) {
         eprintln!("start at login: {e}");
     }
     emit_settings(app, &next);
-}
-
-/// Whether our login entry exists at all, enabled or not.
-fn login_entry_exists(app: &AppHandle) -> bool {
-    #[cfg(windows)]
-    {
-        system::login_entry_exists(&app.package_info().name)
-    }
-    #[cfg(not(windows))]
-    {
-        app.autolaunch().is_enabled().unwrap_or(false)
-    }
 }
 
 fn tray_image(enabled: bool) -> Image<'static> {
@@ -625,9 +614,11 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             let local_dir = app.path().app_local_data_dir()?;
             let version = app.package_info().version.to_string();
+            let install_source = InstallSource::detect();
             let info = AppInfo {
-                install_source: InstallSource::detect(),
+                install_source,
                 managed: Managed::read(),
+                login_allowed: install::login_allowed(install_source),
             };
             app.manage(info);
             // First, so a panic anywhere after this leaves a report.
@@ -679,7 +670,7 @@ pub fn run() {
                 let _ = app.state::<AppState>().store.save(&settings);
                 sync_autostart(handle, start_at_login);
             } else {
-                sync_login_truth(handle, true);
+                sync_login_truth(handle);
             }
             crash::after_start(handle);
             if !cfg!(debug_assertions) {

@@ -83,7 +83,10 @@ Repo is private until v0.1, then flipped public.
 - Uninstall: Tauri's NSIS template already deletes `HKCU\...\Run\unflub` (not on `/UPDATE`) and has a "Delete the
   application data" checkbox; `app/src-tauri/windows/installer-hooks.nsh` removes the StartupApproved value and
   `HKCU\Software\Reimagine Media (RMGN)\unflub` (MANUKEY follows `bundle.publisher`), and `install-source`;
-  `uninstall-cleanup.wxs` does the login entry for the MSI. Start at login is reconciled
-  with the registry at startup and whenever the settings window loads (release builds only).
+  `uninstall-cleanup.wxs` does the login entry for the MSI. Start at login follows the
+  registry (Run entry plus Task Manager's StartupApproved flag) at startup and when the window loads, and is never
+  written back on its own. Only installed copies may write it (`install::login_allowed`: `%LOCALAPPDATA%\unflub`,
+  Program Files\unflub, Scoop `apps\unflub\current`); a release build run from `target\release` registered itself
+  once before this rule, so never run one with startAtLogin on outside that check.
 - Binaries: the tray app's executable is `unflub.exe` (`[[bin]] name = "unflub"` in `app/src-tauri/Cargo.toml`; the
   package stays `unflub-app`); the headless developer runner is `unflub-cli` (`crates/unflub-windows/src/bin/unflub-cli`).
