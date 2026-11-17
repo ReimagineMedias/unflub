@@ -44,9 +44,10 @@ export function parseScript(src: string): Token[] {
   return out;
 }
 
-/** Keeps time only while its element is on screen and the tab is visible. */
+/** Keeps time only while its element is on screen, the tab is visible and nobody pressed pause. */
 export class Clock {
   private visible = false;
+  private paused = false;
   private waiters: (() => void)[] = [];
 
   constructor(target: Element) {
@@ -64,14 +65,28 @@ export class Clock {
 
   private set(v: boolean): void {
     this.visible = v && !document.hidden;
-    if (this.visible) {
-      const w = this.waiters;
-      this.waiters = [];
-      for (const f of w) f();
-    }
+    this.wake();
+  }
+
+  private wake(): void {
+    if (!this.running) return;
+    const w = this.waiters;
+    this.waiters = [];
+    for (const f of w) f();
+  }
+
+  /** Freeze or resume every scene on this clock, mid-word if need be. */
+  setPaused(p: boolean): void {
+    this.paused = p;
+    this.wake();
   }
 
   get running(): boolean {
+    return this.visible && !this.paused;
+  }
+
+  /** Whether the scene is on screen in a visible tab, paused or not. */
+  get onScreen(): boolean {
     return this.visible;
   }
 
@@ -87,7 +102,7 @@ export class Clock {
         { once: true },
       );
     });
-    while (!this.visible) {
+    while (!this.running) {
       await new Promise<void>((resolve) => this.waiters.push(resolve));
       if (signal?.aborted) throw signal.reason;
     }

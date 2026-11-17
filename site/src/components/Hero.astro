@@ -2,6 +2,7 @@
 import Window from "./Window.astro";
 import Pill from "./Pill.astro";
 import DownloadButton from "./DownloadButton.astro";
+import DemoToggle from "./DemoToggle.astro";
 import { SITE } from "../data/site";
 
 const chats = [
@@ -31,6 +32,7 @@ const chats = [
 
   <div class="wrap">
     <div class="studio">
+      <DemoToggle name="hero" class="studio-toggle" />
       <div class="object" aria-hidden="true">
         <span class="studio-pill"><s>teh</s><span class="arr">→</span><b>the</b><kbd>⌫ undo</kbd></span>
         <span class="contact"></span>
@@ -152,6 +154,13 @@ const chats = [
     background:
       radial-gradient(70% 55% at 50% 0%, #ffffff 0%, rgba(255, 255, 255, 0) 70%),
       linear-gradient(var(--surface), #eee9e7);
+  }
+
+  .studio :global(.studio-toggle) {
+    position: absolute;
+    z-index: 3;
+    top: 16px;
+    right: 16px;
   }
 
   .object {

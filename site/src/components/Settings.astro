@@ -4,6 +4,7 @@
  * A small script makes the nav, themes, switches and pill styles respond.
  */
 import Window from "./Window.astro";
+import DemoToggle from "./DemoToggle.astro";
 import Mark from "./Mark.astro";
 import Pill from "./Pill.astro";
 
@@ -276,6 +277,7 @@ const apps = ["windowsterminal.exe", "powershell.exe", "cmd.exe", "wsl.exe", "ke
         </div>
       </div>
     </Window>
+    <div class="demo-row"><DemoToggle name="settings" /></div>
   </div>
 </section>
 
@@ -284,6 +286,13 @@ const apps = ["windowsterminal.exe", "powershell.exe", "cmd.exe", "wsl.exe", "ke
 </script>
 
 <style>
+  .demo-row {
+    display: flex;
+    justify-content: flex-end;
+    max-width: 1040px;
+    margin: 12px auto 0;
+  }
+
   .settings :global(.settings-win) {
     max-width: 1040px;
     height: clamp(560px, 60vw, 660px);

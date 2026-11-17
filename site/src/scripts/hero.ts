@@ -1,4 +1,5 @@
 import { Clock, Typer, parseScript, reducedMotion } from "./typer";
+import { DemoControl } from "./demo";
 
 /** The hero chat: messages type themselves with real typos, unflub fixes them, then they send. */
 const CONVERSATION: { me: string; reply: { who: string; av: string; text: string } }[] = [
@@ -15,6 +16,7 @@ const track = win?.querySelector<HTMLElement>(".track");
 if (win && field && track && !reducedMotion()) {
   const clock = new Clock(win);
   const typer = new Typer(field, clock);
+  const control = new DemoControl(clock, document.querySelector<HTMLButtonElement>('[data-demo-toggle="hero"]'));
 
   /** Add a bubble at the bottom; older bubbles slide up using transforms only. */
   const post = (el: HTMLElement): void => {
@@ -54,6 +56,7 @@ if (win && field && track && !reducedMotion()) {
     // Let the still frame (a fix mid-flight) register before the loop takes over.
     await clock.wait(1600);
     for (;;) {
+      await control.round();
       for (const turn of CONVERSATION) {
         typer.clear();
         await clock.wait(700);

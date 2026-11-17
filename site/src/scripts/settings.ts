@@ -1,4 +1,5 @@
 import { Clock, Typer, parseScript, reducedMotion, type PillStyle } from "./typer";
+import { DemoControl } from "./demo";
 
 /** Makes the settings recreation respond: pages, themes, light or dark, switches, pill styles. */
 const app = document.querySelector<HTMLElement>("[data-settings]");
@@ -82,12 +83,14 @@ if (app) {
     if (typer) typer.opts.pill = v as PillStyle;
   });
   if (field && clock && typer) {
+    const control = new DemoControl(clock, document.querySelector<HTMLButtonElement>('[data-demo-toggle="settings"]'));
     let started = false;
     const io = new IntersectionObserver((entries) => {
       if (started || !entries.some((e) => e.isIntersecting)) return;
       started = true;
       void (async () => {
         for (;;) {
+          await control.round();
           typer.clear();
           await clock.wait(500);
           await typer.play(parseScript(field.dataset["script"] ?? ""));
