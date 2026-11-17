@@ -46,6 +46,10 @@ jobs:
         run: npm run check
       - id: build
         run: npm run build
+        env:
+          # Cloudflare Web Analytics site token. It is public (it ships in every page), so a repository variable,
+          # not a secret. Unset means no beacon.
+          PUBLIC_CF_BEACON_TOKEN: ${{ vars.PUBLIC_CF_BEACON_TOKEN }}
       - id: lint
         run: npm run lint
       - id: test

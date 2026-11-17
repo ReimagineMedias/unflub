@@ -51,6 +51,10 @@ const breadcrumb = crumbs && {
 };
 
 const graph = [organization, ...(breadcrumb ? [breadcrumb] : []), ...schema];
+
+/** Cloudflare Web Analytics (cookieless). Set at build time; no token, no beacon. */
+const beaconToken: string | undefined = import.meta.env.PUBLIC_CF_BEACON_TOKEN;
+const beacon = beaconToken ? JSON.stringify({ token: beaconToken }) : undefined;
 ---
 
 <!doctype html>
@@ -87,6 +91,7 @@ const graph = [organization, ...(breadcrumb ? [breadcrumb] : []), ...schema];
     <link rel="sitemap" href="/sitemap-index.xml" />
 
     {graph.map((g) => <script type="application/ld+json" set:html={JSON.stringify(g)} />)}
+    {beacon && <script is:inline defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon={beacon}></script>}
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>

@@ -1,7 +1,7 @@
-# Cloudflare Workers static assets headers. Keep the CSP at script-src 'self': Astro is set to
-# emit every script as a file (vite.build.assetsInlineLimit = 0). Styles are inlined per page.
+# Cloudflare Workers static assets headers. Keep the CSP at script-src 'self' plus Cloudflare's Web Analytics
+# beacon: Astro is set to emit every script as a file (vite.build.assetsInlineLimit = 0). Styles are inlined per page.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; manifest-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
