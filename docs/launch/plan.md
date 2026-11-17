@@ -184,6 +184,10 @@ workflow ping above is the one to rely on.
 
 ## Cloudflare Web Analytics
 
+> Update 2026-11-17: the site now runs on Vercel at unflub.rmgn.net, so Cloudflare's automatic injection does not
+> apply. The site adds the beacon itself when `PUBLIC_CF_BEACON_TOKEN` is set at build time, and the CSP already
+> allows it. Create the Web Analytics site in the dashboard as a manual (JS snippet) site and copy its token.
+
 Cookie-free page views and Core Web Vitals, with no code in the page beyond Cloudflare's beacon. Cloudflare
 says it "does not collect or use your visitors' personal data."
 
