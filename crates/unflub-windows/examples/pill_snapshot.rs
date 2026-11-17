@@ -37,6 +37,13 @@ mod win {
             corrected: "receive".into(),
             source: Source::Bundled,
         });
+        let pending = Correction::undo_pending(&Replacement {
+            delete: 7,
+            insert: "receive ".into(),
+            original: "recieve".into(),
+            corrected: "receive".into(),
+            source: Source::Bundled,
+        });
         let mut shots: Vec<(String, PillConfig, &Correction, u32)> = Vec::new();
         for style in [
             PillStyle::UnderlineCapsule,
@@ -67,6 +74,12 @@ mod win {
                 ..PillConfig::default()
             },
             &undo,
+            144,
+        ));
+        shots.push((
+            "underline-capsule-undo-pending@150".into(),
+            PillConfig::default(),
+            &pending,
             144,
         ));
         for (name, config, correction, dpi) in shots {
