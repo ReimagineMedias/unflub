@@ -13,6 +13,11 @@
 //!
 //! Without `SENTRY_DSN` at build time (local and dev builds) there is nowhere to send to: the
 //! hook still notes the crash for the usage stats, and nothing is ever asked or sent.
+//!
+//! The keyboard engine is its own process (`unflub-engine.exe`) with no network code. Its panic
+//! hook writes `engine-crash.json`: the panic location, frame addresses, loaded modules and the
+//! thread, never the message, with the home folder already cut out. [`take_engine_report`]
+//! turns it into a pending report here, under exactly the same rules as the app's own.
 
 use sentry::protocol::{DebugMeta, Event};
 use serde_json::Value;
@@ -54,13 +59,26 @@ pub enum Answer {
 pub struct Crashes {
     pending_path: PathBuf,
     pending: Mutex<bool>,
+    /// Written by a panicking engine (see the module docs).
+    engine_marker: PathBuf,
+    release: String,
+    /// The `DisableCrashReports` policy.
+    disabled: bool,
 }
 
 impl Crashes {
     pub fn pending(&self) -> bool {
         *self.pending.lock().unwrap()
     }
+
+    /// Where the engine writes its panic marker.
+    pub fn engine_marker(&self) -> PathBuf {
+        self.engine_marker.clone()
+    }
 }
+
+/// The marker's file name, in the same folder as `crash-pending.json`.
+pub const ENGINE_MARKER: &str = "engine-crash.json";
 
 /// Install the panic hook and look for a report from the last run. Call once, early in setup.
 /// Returns the state to manage and whether the last run crashed. Under the
@@ -94,9 +112,58 @@ pub fn install(dir: &Path, version: &str, disabled: bool) -> (Crashes, bool) {
         Crashes {
             pending_path,
             pending: Mutex::new(has_report),
+            engine_marker: dir.join(ENGINE_MARKER),
+            release: format!("unflub@{version}"),
+            disabled,
         },
         crashed_last_time,
     )
+}
+
+/// Turn a marker left by a panicking engine into a pending report, if crash reports can be
+/// sent from this build and policy allows; otherwise just delete it. The first report waiting
+/// wins, as with the app's own panics. True if there was a marker (the caller counts a crash).
+pub fn take_engine_report(app: &AppHandle) -> bool {
+    let crashes = app.state::<Crashes>();
+    let Ok(bytes) = fs::read(&crashes.engine_marker) else {
+        return false;
+    };
+    let _ = fs::remove_file(&crashes.engine_marker);
+    if !enabled() || crashes.disabled || crashes.pending_path.exists() {
+        return true;
+    }
+    let Some(event) = event_from_engine(&bytes, &crashes.release, home_dir().as_deref()) else {
+        return true;
+    };
+    let written = serde_json::to_vec(&event)
+        .map_err(std::io::Error::other)
+        .and_then(|json| fs::write(&crashes.pending_path, json));
+    if written.is_ok() {
+        if crate::effective_settings(app).send_crash_reports {
+            send_in_background(app.clone());
+        } else {
+            set_pending(app, true);
+        }
+    }
+    true
+}
+
+/// The engine's marker as a report from this app version, scrubbed again here. The engine
+/// already withholds every panic message; any other message is withheld too.
+fn event_from_engine(bytes: &[u8], release: &str, home: Option<&str>) -> Option<Event<'static>> {
+    let mut event: Event<'static> = serde_json::from_slice(bytes).ok()?;
+    for exception in event.exception.values.iter_mut() {
+        let withheld = exception
+            .value
+            .as_deref()
+            .is_some_and(|v| v.starts_with("panic message withheld"));
+        if !withheld {
+            exception.value = Some(WITHHELD.into());
+        }
+    }
+    event.release = Some(Cow::Owned(release.to_string()));
+    event.tags.insert("process".into(), "unflub-engine".into());
+    Some(scrub(event, home))
 }
 
 fn event_from_panic(
@@ -354,6 +421,49 @@ mod tests {
         assert!(text.contains(WITHHELD));
         assert_eq!(event.tags["thread"], "unflub-hook");
         assert_eq!(event.release.as_deref(), Some("unflub@test"));
+    }
+
+    /// What `crates/unflub-engine/src/crash.rs` writes, cut down.
+    const ENGINE_MARKER_JSON: &str = r#"{
+        "platform": "native", "level": "fatal",
+        "exception": { "values": [{ "type": "panic",
+            "value": "panic message withheld: unflub-engine handles typed text (at src/runtime.rs:1:1)",
+            "mechanism": { "type": "panic", "handled": false },
+            "stacktrace": { "frames": [{ "instruction_addr": "0x7ff6a0001234" }] } }] },
+        "debug_meta": { "images": [{ "type": "symbolic",
+            "name": "C:\\Users\\Reima\\AppData\\Local\\unflub\\unflub-engine.exe",
+            "code_id": "6738A5B21F000", "id": "00112233-4455-6677-8899-aabbccddeeff-1",
+            "debug_file": "unflub_engine.pdb", "image_addr": "0x7ff6a0000000",
+            "image_size": 2031616 }] },
+        "tags": { "thread": "unflub-hook", "process": "unflub-engine" }
+    }"#;
+
+    #[test]
+    fn engine_markers_become_scrubbed_reports() {
+        let event = event_from_engine(
+            ENGINE_MARKER_JSON.as_bytes(),
+            "unflub@9.9.9",
+            Some(r"C:\Users\Reima"),
+        )
+        .expect("parses as a Sentry event");
+        assert_eq!(event.release.as_deref(), Some("unflub@9.9.9"));
+        assert_eq!(event.tags["thread"], "unflub-hook");
+        assert_eq!(event.tags["process"], "unflub-engine");
+        assert_eq!(event.debug_meta.images.len(), 1);
+        let text = serde_json::to_string(&event).unwrap();
+        assert!(!text.to_lowercase().contains("reima"), "{text}");
+        assert!(text.contains("0x7ff6a0001234"), "{text}");
+        assert!(text.contains("panic message withheld"), "{text}");
+
+        // A message that isn't the engine's withheld text is withheld here.
+        let leaky = ENGINE_MARKER_JSON.replace(
+            "panic message withheld: unflub-engine handles typed text (at src/runtime.rs:1:1)",
+            "the user typed hunter2",
+        );
+        let event = event_from_engine(leaky.as_bytes(), "unflub@1", None).unwrap();
+        let text = serde_json::to_string(&event).unwrap();
+        assert!(!text.contains("hunter2"), "{text}");
+        assert!(event_from_engine(b"not json", "unflub@1", None).is_none());
     }
 
     #[test]

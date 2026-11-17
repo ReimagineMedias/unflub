@@ -4963,7 +4963,7 @@ dependencies = [
  "tauri-plugin-updater",
  "time",
  "unflub-core",
- "unflub-windows",
+ "unflub-engine",
  "uuid",
  "windows 0.58.0",
 ]

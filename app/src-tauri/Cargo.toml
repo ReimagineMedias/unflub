@@ -1,6 +1,6 @@
 [package]
 name = "unflub-app"
-description = "unflub desktop app: tray, settings, pill"
+description = "unflub desktop app: tray, settings, updates; runs and supervises unflub-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,9 +20,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# The tour's practice engine runs in this process (no hook).
 unflub-core.workspace = true
-# Builds on every OS (only its pure helpers outside Windows), so the pill mapping is tested in CI.
-unflub-windows.workspace = true
+# The IPC contract with unflub-engine.exe, which holds the keyboard hook. Builds on every OS
+# (the pipe only on Windows), so the settings mapping is tested in CI.
+unflub-engine.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"

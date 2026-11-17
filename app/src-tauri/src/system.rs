@@ -1,5 +1,5 @@
-//! What the OS says: its look (accent colour, dark taskbar and apps), its version, our memory
-//! use and machine policy.
+//! What the OS says: its look (accent colour, dark taskbar), its version, our memory use and
+//! machine policy. The pill's OS look is read by the engine process (`unflub_engine::look`).
 
 /// The OS accent colour as `#RRGGBB`, if the platform exposes one.
 pub fn accent_color() -> Option<String> {
@@ -30,24 +30,6 @@ pub fn taskbar_is_dark() -> bool {
     #[cfg(not(windows))]
     {
         true
-    }
-}
-
-/// True when apps are set to dark mode ("Choose your app mode"), the same switch web views see
-/// as `prefers-color-scheme`. Light when the OS doesn't say.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub fn apps_use_dark() -> bool {
-    #[cfg(windows)]
-    {
-        windows_impl::read_dword(
-            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-            "AppsUseLightTheme",
-        )
-        .is_some_and(|v| v == 0)
-    }
-    #[cfg(not(windows))]
-    {
-        false
     }
 }
 

@@ -39,6 +39,11 @@ const TRAY_ID: &str = "main";
 const BACKGROUND_ARG: &str = "--background";
 /// Asks an open settings window to switch page.
 const OPEN_PAGE_EVENT: &str = "open-page";
+/// `--perf-idle <dir>`: for perf/idle.ps1. Settings and data live in `<dir>`, every network
+/// feature is off as if by machine policy, no other copy of unflub is contacted (no single
+/// instance), no window opens, nothing registers at login, and the engine runs `--dry-run`
+/// (its hook only watches: nothing is injected or swallowed).
+const PERF_IDLE_ARG: &str = "--perf-idle";
 
 struct AppState {
     store: Store,
@@ -350,7 +355,19 @@ fn observe(app: &AppHandle, event: Observed) {
         }
         Observed::CorrectorPanicked => usage.crash(),
         Observed::HookReinstalled => usage.hook_reinstall(),
+        Observed::EngineCrashed => {
+            usage.crash();
+            // A panic left a marker for the opt-in crash report; other exits leave none.
+            crash::take_engine_report(app);
+        }
     }
+}
+
+/// The directory after `--perf-idle`, if given.
+fn perf_idle_dir(args: impl IntoIterator<Item = String>) -> Option<std::path::PathBuf> {
+    let mut args = args.into_iter();
+    args.find(|a| a == PERF_IDLE_ARG)?;
+    args.next().filter(|d| !d.is_empty()).map(Into::into)
 }
 
 /// Unhook and stop the engine. Safe to call more than once.
@@ -599,26 +616,47 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+    let perf_idle = perf_idle_dir(std::env::args());
+    let mut builder = tauri::Builder::default();
+    if perf_idle.is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             open_settings(app, None)
-        }))
+        }));
+    }
+    let app = builder
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![BACKGROUND_ARG]),
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
-            let config_dir = app.path().app_config_dir()?;
-            let data_dir = app.path().app_data_dir()?;
-            let local_dir = app.path().app_local_data_dir()?;
+        .setup(move |app| {
+            let (config_dir, data_dir, local_dir) = match &perf_idle {
+                Some(dir) => (dir.clone(), dir.clone(), dir.clone()),
+                None => (
+                    app.path().app_config_dir()?,
+                    app.path().app_data_dir()?,
+                    app.path().app_local_data_dir()?,
+                ),
+            };
             let version = app.package_info().version.to_string();
             let install_source = InstallSource::detect();
-            let info = AppInfo {
-                install_source,
-                managed: Managed::read(),
-                login_allowed: install::login_allowed(install_source),
+            let info = match perf_idle {
+                Some(_) => AppInfo {
+                    install_source,
+                    managed: Managed {
+                        disable_updates: true,
+                        disable_usage_stats: true,
+                        disable_crash_reports: true,
+                        disable_remote_config: true,
+                    },
+                    login_allowed: false,
+                },
+                None => AppInfo {
+                    install_source,
+                    managed: Managed::read(),
+                    login_allowed: install::login_allowed(install_source),
+                },
             };
             app.manage(info);
             // First, so a panic anywhere after this leaves a report.
@@ -657,7 +695,12 @@ pub fn run() {
             let learner = handle.clone();
             let observer_app = handle.clone();
             let observer: engine::Observer = Arc::new(move |event| observe(&observer_app, event));
+            let launch = engine::Launch::beside_app(
+                app.state::<Crashes>().engine_marker(),
+                perf_idle.is_some(),
+            );
             let engine = EngineHost::start(
+                launch,
                 settings.clone(),
                 app.state::<Remote>().flags(),
                 app.state::<Stats>().words_checked.clone(),
@@ -672,6 +715,10 @@ pub fn run() {
             } else {
                 sync_login_truth(handle);
             }
+            // The engine may have crashed while unflub was closing.
+            if crash::take_engine_report(handle) {
+                app.state::<Usage>().crash();
+            }
             crash::after_start(handle);
             if !cfg!(debug_assertions) {
                 let remote_app = handle.clone();
@@ -683,7 +730,7 @@ pub fn run() {
             usage::spawn(handle.clone());
             let background = std::env::args().any(|a| a == BACKGROUND_ARG);
             let welcome = !current_settings(handle).onboarded;
-            if first_run || welcome || !background {
+            if perf_idle.is_none() && (first_run || welcome || !background) {
                 open_settings(handle, None);
             }
             Ok(())
@@ -731,6 +778,17 @@ mod tests {
         let mut from_window = vec!["rmgn".to_string()];
         merge_learned(&mut from_window, &learned);
         assert_eq!(from_window, ["rmgn", "unflub", "Teh"]);
+    }
+
+    #[test]
+    fn perf_idle_takes_a_directory() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            perf_idle_dir(args(&["unflub.exe", "--perf-idle", "C:/tmp/x"])),
+            Some("C:/tmp/x".into())
+        );
+        assert_eq!(perf_idle_dir(args(&["unflub.exe", "--perf-idle"])), None);
+        assert_eq!(perf_idle_dir(args(&["unflub.exe", "--background"])), None);
     }
 
     #[test]

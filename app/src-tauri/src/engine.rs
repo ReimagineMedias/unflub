@@ -1,19 +1,28 @@
-//! Runs the autocorrect stack inside the app: keyboard hook, engine, OS spell checker and the
-//! correction pill, with the same threads as the `unflub` CLI.
+//! Runs and supervises the keyboard engine, a separate process: `unflub-engine.exe`
+//! (`crates/unflub-engine`). That process holds the keyboard hook, the engine, the OS spell
+//! checker and the pill, and has no network code at all. This process has the network
+//! (updates, remote config, usage stats, crash reports) and never sees a key.
 //!
-//! [`EngineHost`] owns one `unflub-engine` thread. It builds everything, applies settings and
-//! reads the hook's events (pill, learned words). Every change applies live:
+//! [`EngineHost`] owns one `unflub-supervisor` thread:
 //!
-//! - Engine settings go to the hook thread through [`unflub_windows::LiveConfig`], picked up at
-//!   the next key without blocking the hook. Excluded apps travel in the same `Config`; the
-//!   hook's own exclude list holds only unflub's own exe, so its windows are never corrected.
-//! - Pausing removes the keyboard hook (and the pill) entirely; resuming installs a new one.
-//! - A language change restarts the hook with a spell checker for the new language.
-//! - The pill gets new options and theme colours through `OverlayHandle::set_config`. The OS
-//!   look (dark mode, accent) is read again before each pill, so "match system" follows it.
-//! - Remote flags ([`RemoteFlags`]) can turn the pill or its UI Automation caret lookup off.
-//! - Fixes and undos are reported to the app as [`Observed`] (local stats, opt-in usage counts
-//!   and shared corrections decide what to keep), never from the hook thread itself.
+//! - **Start.** It creates a named pipe for the current user only, spawns the engine beside
+//!   `unflub.exe` in a kill-on-close Job Object, accepts only the pid it spawned, checks the
+//!   protocol version, and sends the settings ([`engine_settings`]).
+//! - **Settings and remote flags** go to the engine as one `Configure` message on every change;
+//!   it applies them live (the hook thread picks the new config up at the next key).
+//! - **Pause** ends the engine process; resume starts a new one. While paused nothing holds a
+//!   keyboard hook or a single typed character, and the engine's memory is returned. Unhooking
+//!   inside a live engine would keep ~20 MB and a process that could still see keys for a
+//!   resume that takes only ~0.3 s anyway (most of it the dictionary index, which an
+//!   in-process resume rebuilt too).
+//! - **Crashes** restart it with backoff: 1 s, doubling up to 5 min, back to 1 s once it has run
+//!   for a minute. A panic leaves a scrubbed marker that `crash.rs` turns into the usual
+//!   opt-in report.
+//! - **Quit and updates** send `Shutdown` and wait for the process (killing it after 3 s); the
+//!   updater calls this before the installer runs, so `unflub-engine.exe` is never locked.
+//!
+//! What the engine reports arrives on an `unflub-engine-io` thread as [`Observed`] (local stats,
+//! usage counts), learned words, and words-checked counts.
 //!
 //! On macOS and Linux this is a no-op until their adapters exist.
 
@@ -21,15 +30,15 @@
 
 use crate::remote::RemoteFlags;
 use crate::settings::{self, Appearance, Settings, Theme};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use unflub_windows::overlay::Rgba;
-use unflub_windows::{PillConfig, PillPosition, PillStyle};
+use unflub_engine::protocol::{self, EngineSettings, PillSettings};
 
 pub use host::EngineHost;
 
-/// What happened on the engine thread that the app may count. Words stay on this machine
-/// unless the user turned on "Help improve corrections" (`corrections.rs` filters them).
+/// What the engine did that the app may count. Words stay on this machine: they reach only the
+/// local Stats page.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Observed {
     Corrected {
@@ -48,175 +57,139 @@ pub enum Observed {
         user_rule: bool,
     },
     CorrectorPanicked,
-    /// The adapter's watchdog installed the hooks again (Windows dropped them, or the computer
+    /// The engine's watchdog installed the hooks again (Windows dropped them, or the computer
     /// resumed or was unlocked).
     HookReinstalled,
+    /// The engine process ended without being asked to. It is restarted with backoff.
+    EngineCrashed,
 }
 
 pub type Observer = Arc<dyn Fn(Observed) + Send + Sync>;
 
-/// What the OS look contributes to the pill.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct OsLook {
-    /// Apps are in dark mode.
-    pub apps_dark: bool,
-    /// Accent colour as `#RRGGBB`.
-    pub accent: Option<String>,
+/// How to start the engine.
+#[derive(Debug, Clone)]
+pub struct Launch {
+    pub exe: PathBuf,
+    /// Where a panicking engine leaves its marker (`crash.rs` reads it).
+    pub crash_file: PathBuf,
+    /// Hook installed but never injects or swallows a key (`--perf-idle` runs).
+    pub dry_run: bool,
 }
 
-impl OsLook {
-    pub fn read() -> Self {
-        Self {
-            apps_dark: crate::system::apps_use_dark(),
-            accent: crate::system::accent_color(),
-        }
+impl Launch {
+    /// `unflub-engine.exe` beside this executable.
+    pub fn beside_app(crash_file: PathBuf, dry_run: bool) -> Option<Self> {
+        let exe = std::env::current_exe()
+            .ok()?
+            .with_file_name(unflub_engine::ENGINE_EXE);
+        Some(Self {
+            exe,
+            crash_file,
+            dry_run,
+        })
     }
 }
 
-/// Is the pill drawn in its dark variant?
-pub fn is_dark(appearance: Appearance, os: &OsLook) -> bool {
-    match appearance {
-        Appearance::Light => false,
-        Appearance::Dark => true,
-        Appearance::Auto => os.apps_dark,
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PillColours {
-    pub background: Rgba,
-    pub text: Rgba,
-    pub keycap: Rgba,
-    pub accent: Rgba,
-}
-
-const fn colours(background: Rgba, text: u32, keycap: u32, accent: u32) -> PillColours {
-    PillColours {
-        background,
-        text: Rgba::hex(text),
-        keycap: Rgba::hex(keycap),
-        accent: Rgba::hex(accent),
-    }
-}
-
-/// The pill's colours for a theme. `accent` is the OS accent (`#RRGGBB`), used by the system
-/// theme only.
-pub fn pill_colours(theme: Theme, dark: bool, accent: Option<&str>) -> PillColours {
-    match (theme, dark) {
-        (Theme::Unflub, false) => colours(Rgba::hex(0x2D1916), 0xF2E6E3, 0xE0A595, 0xB06A5C),
-        (Theme::Unflub, true) => colours(Rgba::hex(0xF2E6E3), 0x2D1916, 0x79453A, 0xD08A7B),
-        (Theme::Paper, false) => colours(Rgba::hex(0x292827), 0xE7E2DA, 0xC69C72, 0xA77A55),
-        (Theme::Paper, true) => colours(Rgba::hex(0xE7E2DA), 0x292827, 0xA77A55, 0xC69C72),
-        (Theme::Ink, false) => colours(
-            Rgba {
-                a: 0xE0,
-                ..Rgba::hex(0x121214)
+/// What the engine runs with: the user's settings with the remote flags applied. Remote flags
+/// only ever switch the pill or its UI Automation lookup off.
+pub fn engine_settings(s: &Settings, flags: &RemoteFlags) -> EngineSettings {
+    EngineSettings {
+        core: s.to_core(),
+        pill: PillSettings {
+            style: match s.pill_style {
+                _ if !flags.pill_enabled => protocol::PillStyle::Off,
+                settings::PillStyle::UnderlineCapsule => protocol::PillStyle::UnderlineCapsule,
+                settings::PillStyle::Capsule => protocol::PillStyle::Capsule,
+                settings::PillStyle::Underline => protocol::PillStyle::Underline,
+                settings::PillStyle::Off => protocol::PillStyle::Off,
             },
-            0xEDEDEF,
-            0xC69C72,
-            0xA77A55,
-        ),
-        (Theme::Ink, true) => colours(Rgba::hex(0x2A2B30), 0xEDEDEF, 0xC69C72, 0xC69C72),
-        (Theme::System, dark) => {
-            let fallback = Rgba::hex(if dark { 0x60CDFF } else { 0x005FB8 });
-            let accent = accent.and_then(parse_hex).unwrap_or(fallback);
-            let (background, text) = if dark {
-                (0x2C2C2C, 0xFFFFFF)
-            } else {
-                (0xF9F9F9, 0x1B1B1B)
-            };
-            PillColours {
-                background: Rgba::hex(background),
-                text: Rgba::hex(text),
-                keycap: accent,
-                accent,
-            }
-        }
+            position: match s.pill_position {
+                settings::PillPosition::Above => protocol::PillPosition::Above,
+                settings::PillPosition::Below => protocol::PillPosition::Below,
+            },
+            opacity: s.pill_opacity,
+            duration_ms: s.pill_duration_ms,
+            theme: match s.theme {
+                Theme::Unflub => protocol::Theme::Unflub,
+                Theme::Paper => protocol::Theme::Paper,
+                Theme::Ink => protocol::Theme::Ink,
+                Theme::System => protocol::Theme::System,
+            },
+            appearance: match s.appearance {
+                Appearance::Auto => protocol::Appearance::Auto,
+                Appearance::Light => protocol::Appearance::Light,
+                Appearance::Dark => protocol::Appearance::Dark,
+            },
+            uia_caret: flags.uia_caret,
+        },
     }
 }
 
-/// `#RRGGBB` or `#RRGGBBAA`.
-fn parse_hex(s: &str) -> Option<Rgba> {
-    let hex = s.strip_prefix('#')?;
-    if !matches!(hex.len(), 6 | 8) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    let v = u32::from_str_radix(hex, 16).ok()?;
-    Some(if hex.len() == 6 {
-        Rgba::hex(v)
+/// Wait before restart number `failures` (1-based): 1 s, 2 s, 4 s ... up to 5 minutes.
+pub fn backoff(failures: u32) -> Duration {
+    const MAX: Duration = Duration::from_secs(5 * 60);
+    let shift = failures.saturating_sub(1).min(16);
+    Duration::from_secs(1u64 << shift).min(MAX)
+}
+
+/// A run at least this long counts as healthy: the next crash starts the backoff over.
+pub const STABLE_RUN: Duration = Duration::from_secs(60);
+
+/// Consecutive failures after a run of `ran` that ended badly, given `failures` before it.
+pub fn failures_after(failures: u32, ran: Duration) -> u32 {
+    if ran >= STABLE_RUN {
+        1
     } else {
-        Rgba {
-            a: v as u8,
-            ..Rgba::hex(v >> 8)
-        }
-    })
-}
-
-/// The overlay's settings for the user's settings, the remote flags and the current OS look.
-pub fn pill_config(s: &Settings, flags: &RemoteFlags, os: &OsLook) -> PillConfig {
-    let c = pill_colours(s.theme, is_dark(s.appearance, os), os.accent.as_deref());
-    PillConfig {
-        style: match s.pill_style {
-            _ if !flags.pill_enabled => PillStyle::Off,
-            settings::PillStyle::UnderlineCapsule => PillStyle::UnderlineCapsule,
-            settings::PillStyle::Capsule => PillStyle::Capsule,
-            settings::PillStyle::Underline => PillStyle::Underline,
-            settings::PillStyle::Off => PillStyle::Off,
-        },
-        position: match s.pill_position {
-            settings::PillPosition::Above => PillPosition::Above,
-            settings::PillPosition::Below => PillPosition::Below,
-        },
-        opacity: s.pill_opacity,
-        duration_ms: s.pill_duration_ms,
-        background: c.background,
-        text: c.text,
-        keycap: c.keycap,
-        accent: c.accent,
-        uia_caret: flags.uia_caret,
+        failures.saturating_add(1)
     }
 }
 
 #[cfg(windows)]
 mod host {
-    use std::sync::atomic::AtomicU64;
-    use std::sync::mpsc::{self, Receiver, Sender};
-    use std::sync::Arc;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+    use std::sync::{Arc, Mutex};
     use std::thread::JoinHandle;
+    use std::time::{Duration, Instant};
 
-    use unflub_core::{Engine, Source, SpellBackend};
-    use unflub_windows::{
-        Correction, Hook, HookEvent, HookOptions, LiveConfig, LiveEngine, Overlay, OverlayHandle,
-        PillConfig, PillStyle, SpellLearner, WindowsSpellBackend,
-    };
+    use unflub_engine::job::KillOnClose;
+    use unflub_engine::pipe::{self, Listener, Pipe};
+    use unflub_engine::protocol::{FromEngine, ToEngine};
+    use unflub_engine::{frame, session};
 
-    use super::{pill_config, Observed, Observer, OsLook};
+    use super::{backoff, engine_settings, failures_after, Launch, Observed, Observer};
     use crate::remote::RemoteFlags;
     use crate::settings::Settings;
 
-    enum Msg {
+    /// No console window for the engine (it inherits our std handles, if any).
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    /// How long a shutdown may take before the engine is killed.
+    const STOP_TIMEOUT: Duration = Duration::from_secs(3);
+
+    type Learned = Arc<Mutex<Box<dyn FnMut(String) + Send>>>;
+
+    enum Cmd {
         Apply(Box<Settings>),
         Flags(RemoteFlags),
-        Hook(HookEvent),
-        /// A word the user taught the engine by undoing its fix.
-        Learned(String),
+        /// The engine of this generation closed its pipe.
+        Exited(u64),
         Shutdown,
     }
 
-    /// The running autocorrect stack. Every method returns at once except
-    /// [`shutdown`](Self::shutdown).
+    /// The supervised engine. Every method returns at once except [`shutdown`](Self::shutdown).
     pub struct EngineHost {
-        tx: Sender<Msg>,
+        tx: Sender<Cmd>,
         thread: Option<JoinHandle<()>>,
     }
 
     impl EngineHost {
-        /// Start the engine thread, which installs the hook if `settings.enabled`. Returns at
-        /// once: building the dictionary index takes a moment. `on_learned` runs on the engine
-        /// thread for each word learned by undo, after the OS spell checker was told;
-        /// `observer` for each fix, undo and health event. Every engine adds the words it
-        /// checks to `words_checked`.
+        /// Start supervising: the engine starts at once if `settings.enabled`. `on_learned` runs
+        /// for each word learned by undo; `observer` for each fix, undo and health event; the
+        /// engine's checked-word counts are added to `words_checked`.
         pub fn start(
+            launch: Option<Launch>,
             settings: Settings,
             flags: RemoteFlags,
             words_checked: Arc<AtomicU64>,
@@ -224,44 +197,45 @@ mod host {
             on_learned: impl FnMut(String) + Send + 'static,
         ) -> Self {
             let (tx, rx) = mpsc::channel();
-            let worker_tx = tx.clone();
+            let supervisor = Supervisor {
+                launch,
+                settings,
+                flags,
+                tx: tx.clone(),
+                words_checked,
+                observer,
+                on_learned: Arc::new(Mutex::new(Box::new(on_learned))),
+                running: None,
+                generation: 0,
+                failures: 0,
+                next_start: None,
+            };
             let thread = std::thread::Builder::new()
-                .name("unflub-engine".into())
-                .spawn(move || {
-                    let state = State {
-                        settings,
-                        flags,
-                        tx: worker_tx,
-                        running: None,
-                        pill: None,
-                        words_checked,
-                        observer,
-                    };
-                    run(state, rx, on_learned)
-                })
-                .map_err(|e| eprintln!("autocorrect: can't start the engine thread: {e}"))
+                .name("unflub-supervisor".into())
+                .spawn(move || supervisor.run(rx))
+                .map_err(|e| eprintln!("autocorrect: can't start the supervisor: {e}"))
                 .ok();
             Self { tx, thread }
         }
 
-        /// Apply new settings (already sanitised).
+        /// Apply new settings (already sanitised). Pausing ends the engine; resuming starts it.
         pub fn apply(&self, settings: &Settings) {
-            let _ = self.tx.send(Msg::Apply(Box::new(settings.clone())));
+            let _ = self.tx.send(Cmd::Apply(Box::new(settings.clone())));
         }
 
         /// Apply new remote flags.
         pub fn set_flags(&self, flags: RemoteFlags) {
-            let _ = self.tx.send(Msg::Flags(flags));
+            let _ = self.tx.send(Cmd::Flags(flags));
         }
 
-        /// Unhook, close the pill and end the engine thread.
+        /// Stop the engine process and the supervisor.
         pub fn shutdown(mut self) {
             self.stop();
         }
 
         fn stop(&mut self) {
             if let Some(thread) = self.thread.take() {
-                let _ = self.tx.send(Msg::Shutdown);
+                let _ = self.tx.send(Cmd::Shutdown);
                 let _ = thread.join();
             }
         }
@@ -273,226 +247,296 @@ mod host {
         }
     }
 
-    /// An installed hook and what talks to it.
     struct Running {
-        hook: Hook,
-        config: LiveConfig,
-        learner: Option<SpellLearner>,
-        /// The language the user asked for (the checker may have fallen back to another).
-        language: String,
+        child: Child,
+        pipe: Arc<Pipe>,
+        /// Ends the engine if this process dies first.
+        _job: Option<KillOnClose>,
+        generation: u64,
+        started: Instant,
+        reader: Option<JoinHandle<()>>,
     }
 
-    struct State {
+    struct Supervisor {
+        launch: Option<Launch>,
         settings: Settings,
         flags: RemoteFlags,
-        tx: Sender<Msg>,
-        running: Option<Running>,
-        pill: Option<(OverlayHandle, PillConfig)>,
+        tx: Sender<Cmd>,
         words_checked: Arc<AtomicU64>,
         observer: Observer,
+        on_learned: Learned,
+        running: Option<Running>,
+        generation: u64,
+        /// Failed starts and crashes in a row.
+        failures: u32,
+        /// When to try again after a failure.
+        next_start: Option<Instant>,
     }
 
-    fn run(mut state: State, rx: Receiver<Msg>, mut on_learned: impl FnMut(String)) {
-        state.sync();
-        while let Ok(msg) = rx.recv() {
-            match msg {
-                Msg::Apply(next) => {
-                    state.settings = *next;
-                    state.sync();
-                }
-                Msg::Flags(flags) => {
-                    state.flags = flags;
-                    state.sync_pill();
-                }
-                Msg::Hook(event) => state.on_hook_event(event),
-                Msg::Learned(word) => {
-                    if let Some(learner) = state.running.as_ref().and_then(|r| r.learner.as_ref()) {
-                        learner.learn(&word);
+    impl Supervisor {
+        fn run(mut self, rx: Receiver<Cmd>) {
+            loop {
+                self.converge();
+                let cmd = match self.next_start {
+                    Some(at) => {
+                        match rx.recv_timeout(at.saturating_duration_since(Instant::now())) {
+                            Ok(cmd) => cmd,
+                            Err(RecvTimeoutError::Timeout) => {
+                                self.next_start = None;
+                                continue;
+                            }
+                            Err(RecvTimeoutError::Disconnected) => Cmd::Shutdown,
+                        }
                     }
-                    on_learned(word);
+                    None => rx.recv().unwrap_or(Cmd::Shutdown),
+                };
+                match cmd {
+                    Cmd::Apply(next) => {
+                        let resumed = !self.settings.enabled && next.enabled;
+                        self.settings = *next;
+                        if resumed {
+                            // The user asked for it: try now, whatever the backoff said.
+                            self.failures = 0;
+                            self.next_start = None;
+                        }
+                        self.configure();
+                    }
+                    Cmd::Flags(flags) => {
+                        self.flags = flags;
+                        self.configure();
+                    }
+                    Cmd::Exited(generation) => self.on_exit(generation),
+                    Cmd::Shutdown => break,
                 }
-                Msg::Shutdown => break,
+            }
+            self.stop();
+        }
+
+        /// Start or stop the engine to match the settings.
+        fn converge(&mut self) {
+            if !self.settings.enabled {
+                // Pause: no process, no hook.
+                self.stop();
+                self.next_start = None;
+                return;
+            }
+            if self.running.is_some() || self.next_start.is_some() {
+                return;
+            }
+            match self.spawn() {
+                Ok(running) => self.running = Some(running),
+                Err(e) => {
+                    eprintln!("autocorrect: can't start the engine: {e}");
+                    self.failures = self.failures.saturating_add(1);
+                    self.next_start = Some(Instant::now() + backoff(self.failures));
+                }
             }
         }
-        state.stop();
-    }
 
-    impl State {
-        /// Make the running stack match `self.settings`.
-        fn sync(&mut self) {
-            let s = &self.settings;
-            let restart = self
+        fn configure(&self) {
+            if let Some(r) = &self.running {
+                let settings = engine_settings(&self.settings, &self.flags);
+                if let Err(e) = frame::write(&mut &*r.pipe, &ToEngine::Configure { settings }) {
+                    eprintln!("autocorrect: can't reach the engine: {e}");
+                }
+            }
+        }
+
+        fn spawn(&mut self) -> std::io::Result<Running> {
+            let launch = self
+                .launch
+                .as_ref()
+                .ok_or_else(|| std::io::Error::other("no engine executable"))?;
+            let name = pipe::unique_name();
+            let listener = Listener::create(&name)?;
+            let mut command = Command::new(&launch.exe);
+            command
+                .arg("--pipe")
+                .arg(&name)
+                .arg("--app-pid")
+                .arg(std::process::id().to_string())
+                .arg("--crash-file")
+                .arg(&launch.crash_file)
+                .stdin(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW);
+            if launch.dry_run {
+                command.arg("--dry-run");
+            }
+            let mut child = command.spawn().map_err(|e| {
+                std::io::Error::new(e.kind(), format!("{}: {e}", launch.exe.display()))
+            })?;
+            let job = KillOnClose::new()
+                .and_then(|job| job.assign(&child).map(|()| job))
+                .map_err(|e| eprintln!("autocorrect: engine job object: {e}"))
+                .ok();
+            let pipe = match session::serve(
+                listener,
+                child.id(),
+                &own_exe(),
+                session::HANDSHAKE_TIMEOUT,
+            ) {
+                Ok((pipe, _version)) => Arc::new(pipe),
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(e);
+                }
+            };
+            self.generation += 1;
+            let generation = self.generation;
+            let settings = engine_settings(&self.settings, &self.flags);
+            frame::write(&mut &*pipe, &ToEngine::Configure { settings })?;
+            let reader = {
+                let pipe = pipe.clone();
+                let tx = self.tx.clone();
+                let observer = self.observer.clone();
+                let learned = self.on_learned.clone();
+                let words = self.words_checked.clone();
+                std::thread::Builder::new()
+                    .name("unflub-engine-io".into())
+                    .spawn(move || {
+                        read_engine(&pipe, &observer, &learned, &words);
+                        let _ = tx.send(Cmd::Exited(generation));
+                    })?
+            };
+            Ok(Running {
+                child,
+                pipe,
+                _job: job,
+                generation,
+                started: Instant::now(),
+                reader: Some(reader),
+            })
+        }
+
+        /// The engine's pipe closed without our asking: count it and restart with backoff.
+        fn on_exit(&mut self, generation: u64) {
+            if self
                 .running
                 .as_ref()
-                .is_some_and(|r| !s.enabled || r.language != s.language);
-            if restart {
-                self.stop();
-            }
-            if let Some(r) = &self.running {
-                r.config.set(self.settings.to_core());
-            } else if self.settings.enabled {
-                self.running = start(&self.settings, &self.tx, &self.words_checked);
-            }
-            self.sync_pill();
-        }
-
-        /// Spawn, update or close the pill to match the settings and the OS look right now.
-        fn sync_pill(&mut self) {
-            let want = pill_config(&self.settings, &self.flags, &OsLook::read());
-            if self.running.is_none() || want.style == PillStyle::Off {
-                if let Some((overlay, _)) = self.pill.take() {
-                    overlay.shutdown();
-                }
+                .is_none_or(|r| r.generation != generation)
+            {
                 return;
             }
-            match &mut self.pill {
-                Some((overlay, current)) => {
-                    if *current != want {
-                        overlay.set_config(want.clone());
-                        *current = want;
-                    }
-                }
-                None => match Overlay::spawn(want.clone()) {
-                    Ok(overlay) => self.pill = Some((overlay, want)),
-                    Err(e) => eprintln!("autocorrect: correction pill unavailable ({e})"),
-                },
-            }
-        }
-
-        fn on_hook_event(&mut self, event: HookEvent) {
-            if let Some(correction) = Correction::from_hook_event(&event) {
-                // The OS may have switched dark mode or accent since the last pill.
-                self.sync_pill();
-                let pill = self.pill.is_some();
-                if let Some((overlay, _)) = &self.pill {
-                    overlay.show(correction);
-                }
-                match event {
-                    HookEvent::Corrected {
-                        replacement,
-                        timing,
-                        ..
-                    } => (self.observer)(Observed::Corrected {
-                        user_rule: replacement.source == Source::UserRule,
-                        original: replacement.original,
-                        corrected: replacement.corrected,
-                        decide: timing.decide,
-                        inject: timing.inject,
-                        pill,
-                    }),
-                    HookEvent::Undone { replacement, .. } => (self.observer)(Observed::Undone {
-                        user_rule: replacement.source == Source::UserRule,
-                        original: replacement.original,
-                        corrected: replacement.corrected,
-                    }),
-                    _ => {}
-                }
+            let Some(mut running) = self.running.take() else {
                 return;
+            };
+            let status = wait_for(&mut running.child, STOP_TIMEOUT);
+            if let Some(reader) = running.reader.take() {
+                let _ = reader.join();
             }
-            match event {
-                HookEvent::Warning(w) => eprintln!("autocorrect: {w}"),
-                HookEvent::HooksReinstalled { reason } => {
-                    eprintln!("autocorrect: hooks installed again ({reason})");
-                    (self.observer)(Observed::HookReinstalled);
-                }
-                HookEvent::CorrectorPanicked(msg) => {
-                    eprintln!("autocorrect: the engine panicked ({msg}); keys pass through");
-                    (self.observer)(Observed::CorrectorPanicked);
-                }
-                HookEvent::InjectFailed { sent, total, .. } => {
-                    eprintln!("autocorrect: SendInput sent {sent}/{total} events")
-                }
-                _ => {}
+            let crashed = status.is_none_or(|s| !s.success());
+            eprintln!(
+                "autocorrect: the engine stopped ({}); restarting",
+                status.map_or("killed".into(), |s| s.to_string())
+            );
+            if crashed {
+                (self.observer)(Observed::EngineCrashed);
             }
+            self.failures = failures_after(self.failures, running.started.elapsed());
+            self.next_start = Some(Instant::now() + super::backoff(self.failures));
         }
 
-        /// Unhook and close the pill.
+        /// Ask the engine to stop, then make sure it has.
         fn stop(&mut self) {
-            if let Some(running) = self.running.take() {
-                running.hook.stop();
+            let Some(mut running) = self.running.take() else {
+                return;
+            };
+            let _ = frame::write(&mut &*running.pipe, &ToEngine::Shutdown);
+            if wait_for(&mut running.child, STOP_TIMEOUT).is_none() {
+                eprintln!("autocorrect: the engine didn't stop; ending it");
+                let _ = running.child.kill();
+                let _ = running.child.wait();
             }
-            if let Some((overlay, _)) = self.pill.take() {
-                overlay.shutdown();
+            if let Some(reader) = running.reader.take() {
+                let _ = reader.join();
             }
         }
     }
 
-    /// Build the spell checker and engine, and install the hook. `None` if the hook can't be
-    /// installed.
-    fn start(s: &Settings, tx: &Sender<Msg>, words_checked: &Arc<AtomicU64>) -> Option<Running> {
-        let backend = spell_backend(&s.language);
-        let learner = backend.as_ref().map(WindowsSpellBackend::learner);
-        let mut engine = Engine::new(
-            s.to_core(),
-            backend.map(|b| Box::new(b) as Box<dyn SpellBackend>),
-        );
-        engine.count_words_into(words_checked.clone());
-        let learned = tx.clone();
-        let (corrector, config) = LiveEngine::new(engine, move |word| {
-            let _ = learned.send(Msg::Learned(word));
-        });
-        // Excluded apps are in the engine's Config, which changes live; see the module docs. The
-        // hook's own list holds only unflub itself: words typed in Settings (your dictionary,
-        // app names) are never "fixed", and the tour's practice box has its own engine.
-        let options = HookOptions {
-            excluded_apps: own_exe().into_iter().collect(),
-            ..HookOptions::default()
-        };
-        let (hook, events) = match Hook::start(corrector, options) {
-            Ok(h) => h,
-            Err(e) => {
-                eprintln!("autocorrect: can't install the keyboard hook: {e}");
-                return None;
+    /// Wait up to `timeout` for the child. `None` if it is still running.
+    fn wait_for(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                _ => return None,
             }
-        };
-        // The hook's channel ends when the hook stops, which ends this thread.
-        let forward = tx.clone();
-        let forwarder = std::thread::Builder::new()
-            .name("unflub-events".into())
-            .spawn(move || {
-                for event in events {
-                    if forward.send(Msg::Hook(event)).is_err() {
-                        break;
+        }
+    }
+
+    /// Hand the engine's messages to the app until its pipe closes.
+    fn read_engine(pipe: &Pipe, observer: &Observer, learned: &Learned, words: &AtomicU64) {
+        loop {
+            let body = match frame::read(&mut &*pipe) {
+                Ok(Some(body)) => body,
+                Ok(None) | Err(_) => return,
+            };
+            let message = match frame::decode::<FromEngine>(&body) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("autocorrect: skipped an engine message ({e})");
+                    continue;
+                }
+            };
+            match message {
+                FromEngine::Corrected {
+                    original,
+                    corrected,
+                    user_rule,
+                    decide_us,
+                    inject_us,
+                    pill,
+                } => observer(Observed::Corrected {
+                    original,
+                    corrected,
+                    user_rule,
+                    decide: Duration::from_micros(decide_us),
+                    inject: Duration::from_micros(inject_us),
+                    pill,
+                }),
+                FromEngine::Undone {
+                    original,
+                    corrected,
+                    user_rule,
+                } => observer(Observed::Undone {
+                    original,
+                    corrected,
+                    user_rule,
+                }),
+                FromEngine::WordsChecked { count } => {
+                    words.fetch_add(count, Ordering::Relaxed);
+                }
+                FromEngine::Learned { word } => {
+                    (learned.lock().unwrap_or_else(|e| e.into_inner()))(word)
+                }
+                FromEngine::HookReinstalled => observer(Observed::HookReinstalled),
+                FromEngine::CorrectorPanicked => observer(Observed::CorrectorPanicked),
+                FromEngine::Ready { hooked } => {
+                    if !hooked {
+                        eprintln!("autocorrect: the engine couldn't install the keyboard hook");
                     }
                 }
-            });
-        if let Err(e) = forwarder {
-            // Nobody would read the hook's events; don't run without them.
-            eprintln!("autocorrect: can't start the event thread: {e}");
-            hook.stop();
-            return None;
+                FromEngine::Hello { .. } => {}
+            }
         }
-        Some(Running {
-            hook,
-            config,
-            learner,
-            language: s.language.clone(),
-        })
     }
 
     /// unflub's own executable name, lowercased, as the hook names the focused app.
-    fn own_exe() -> Option<String> {
-        let exe = std::env::current_exe().ok()?;
-        Some(exe.file_name()?.to_str()?.to_lowercase())
-    }
-
-    /// The Windows spell checker for `language`, or for the user's UI language if Windows has
-    /// no dictionary for it. Called on the engine thread, which may join the COM MTA (the
-    /// Tauri main thread is an STA and can't).
-    fn spell_backend(language: &str) -> Option<WindowsSpellBackend> {
-        WindowsSpellBackend::new(Some(language))
-            .or_else(|e| {
-                eprintln!("autocorrect: no {language} spell checker ({e}); using the default");
-                WindowsSpellBackend::new(None)
-            })
-            .map_err(|e| eprintln!("autocorrect: Windows spell checker unavailable ({e})"))
+    fn own_exe() -> String {
+        std::env::current_exe()
             .ok()
+            .and_then(|p| Some(p.file_name()?.to_str()?.to_lowercase()))
+            .unwrap_or_else(|| "unflub.exe".into())
     }
 }
 
 #[cfg(not(windows))]
 mod host {
-    use super::Observer;
+    use super::{Launch, Observer};
     use crate::remote::RemoteFlags;
     use crate::settings::Settings;
     use std::sync::atomic::AtomicU64;
@@ -503,6 +547,7 @@ mod host {
 
     impl EngineHost {
         pub fn start(
+            _launch: Option<Launch>,
             _settings: Settings,
             _flags: RemoteFlags,
             _words_checked: Arc<AtomicU64>,
@@ -524,175 +569,68 @@ mod host {
 mod tests {
     use super::*;
 
-    fn rgb(hex: u32) -> Rgba {
-        Rgba::hex(hex)
-    }
-
-    fn look(apps_dark: bool, accent: Option<&str>) -> OsLook {
-        OsLook {
-            apps_dark,
-            accent: accent.map(String::from),
-        }
-    }
-
     #[test]
-    fn appearance_resolves_against_the_os() {
-        for os_dark in [false, true] {
-            let os = look(os_dark, None);
-            assert!(!is_dark(Appearance::Light, &os));
-            assert!(is_dark(Appearance::Dark, &os));
-            assert_eq!(is_dark(Appearance::Auto, &os), os_dark);
-        }
-    }
-
-    #[test]
-    fn theme_colours() {
-        let c = |t, dark| {
-            let c = pill_colours(t, dark, Some("#123456"));
-            (c.background, c.text, c.keycap, c.accent)
-        };
-        let table = [
-            (
-                Theme::Unflub,
-                false,
-                [0x2D1916, 0xF2E6E3, 0xE0A595, 0xB06A5C],
-            ),
-            (
-                Theme::Unflub,
-                true,
-                [0xF2E6E3, 0x2D1916, 0x79453A, 0xD08A7B],
-            ),
-            (
-                Theme::Paper,
-                false,
-                [0x292827, 0xE7E2DA, 0xC69C72, 0xA77A55],
-            ),
-            (Theme::Paper, true, [0xE7E2DA, 0x292827, 0xA77A55, 0xC69C72]),
-            (Theme::Ink, true, [0x2A2B30, 0xEDEDEF, 0xC69C72, 0xC69C72]),
-            (
-                Theme::System,
-                false,
-                [0xF9F9F9, 0x1B1B1B, 0x123456, 0x123456],
-            ),
-            (
-                Theme::System,
-                true,
-                [0x2C2C2C, 0xFFFFFF, 0x123456, 0x123456],
-            ),
-        ];
-        for (theme, dark, [bg, text, key, accent]) in table {
-            assert_eq!(
-                c(theme, dark),
-                (rgb(bg), rgb(text), rgb(key), rgb(accent)),
-                "{theme:?} dark={dark}"
-            );
-        }
-        let ink = pill_colours(Theme::Ink, false, None);
-        assert_eq!(
-            ink.background,
-            Rgba {
-                r: 0x12,
-                g: 0x12,
-                b: 0x14,
-                a: 0xE0
-            }
-        );
-        assert_eq!(
-            (ink.text, ink.keycap, ink.accent),
-            (rgb(0xEDEDEF), rgb(0xC69C72), rgb(0xA77A55))
-        );
-    }
-
-    #[test]
-    fn system_theme_falls_back_to_the_default_accent() {
-        for accent in [None, Some("not a colour"), Some("#12345")] {
-            assert_eq!(
-                pill_colours(Theme::System, false, accent).accent,
-                rgb(0x005FB8)
-            );
-            assert_eq!(
-                pill_colours(Theme::System, true, accent).keycap,
-                rgb(0x60CDFF)
-            );
-        }
-    }
-
-    #[test]
-    fn parses_hex_colours() {
-        assert_eq!(parse_hex("#0078D4"), Some(rgb(0x0078D4)));
-        assert_eq!(
-            parse_hex("#121214E0"),
-            Some(Rgba {
-                r: 0x12,
-                g: 0x12,
-                b: 0x14,
-                a: 0xE0
-            })
-        );
-        for bad in ["0078D4", "#0078D", "#0078D4F", "#GG0000", "#+078D4", ""] {
-            assert_eq!(parse_hex(bad), None, "{bad:?}");
-        }
-    }
-
-    #[test]
-    fn maps_settings_to_the_pill() {
+    fn maps_settings_for_the_engine() {
         let s = Settings {
             pill_style: settings::PillStyle::Capsule,
             pill_position: settings::PillPosition::Below,
             pill_opacity: 0.5,
             pill_duration_ms: 2000,
             theme: Theme::Paper,
-            appearance: Appearance::Auto,
+            appearance: Appearance::Dark,
             ..Settings::default()
         };
-        let on = RemoteFlags::default();
-        let p = pill_config(&s, &on, &look(true, None));
-        assert_eq!(p.style, PillStyle::Capsule);
-        assert_eq!(p.position, PillPosition::Below);
-        assert_eq!(p.opacity, 0.5);
-        assert_eq!(p.duration_ms, 2000);
-        assert_eq!(p.background, rgb(0xE7E2DA), "paper, dark from the OS");
+        let e = engine_settings(&s, &RemoteFlags::default());
+        assert_eq!(e.core, s.to_core());
         assert_eq!(
-            pill_config(&s, &on, &look(false, None)).background,
-            rgb(0x292827)
+            e.pill,
+            PillSettings {
+                style: protocol::PillStyle::Capsule,
+                position: protocol::PillPosition::Below,
+                opacity: 0.5,
+                duration_ms: 2000,
+                theme: protocol::Theme::Paper,
+                appearance: protocol::Appearance::Dark,
+                uia_caret: true,
+            }
         );
-
-        // Defaults match the overlay's own defaults (the unflub light pill).
-        let d = pill_config(&Settings::default(), &on, &look(false, None));
-        let o = PillConfig::default();
+        // The app's defaults are the engine's defaults, but for the app's slightly
+        // translucent pill.
         assert_eq!(
-            (
-                d.style,
-                d.position,
-                d.background,
-                d.text,
-                d.keycap,
-                d.accent
-            ),
-            (
-                o.style,
-                o.position,
-                o.background,
-                o.text,
-                o.keycap,
-                o.accent
-            )
+            engine_settings(&Settings::default(), &RemoteFlags::default()).pill,
+            PillSettings {
+                opacity: Settings::default().pill_opacity,
+                ..PillSettings::default()
+            }
         );
         for (from, to) in [
             (
                 settings::PillStyle::UnderlineCapsule,
-                PillStyle::UnderlineCapsule,
+                protocol::PillStyle::UnderlineCapsule,
             ),
-            (settings::PillStyle::Underline, PillStyle::Underline),
-            (settings::PillStyle::Off, PillStyle::Off),
+            (
+                settings::PillStyle::Underline,
+                protocol::PillStyle::Underline,
+            ),
+            (settings::PillStyle::Off, protocol::PillStyle::Off),
         ] {
             let s = Settings {
                 pill_style: from,
                 ..Settings::default()
             };
-            assert_eq!(pill_config(&s, &on, &OsLook::default()).style, to);
+            assert_eq!(engine_settings(&s, &RemoteFlags::default()).pill.style, to);
         }
-        assert!(d.uia_caret);
+        for (from, to) in [
+            (Theme::Unflub, protocol::Theme::Unflub),
+            (Theme::Ink, protocol::Theme::Ink),
+            (Theme::System, protocol::Theme::System),
+        ] {
+            let s = Settings {
+                theme: from,
+                ..Settings::default()
+            };
+            assert_eq!(engine_settings(&s, &RemoteFlags::default()).pill.theme, to);
+        }
     }
 
     #[test]
@@ -702,8 +640,32 @@ mod tests {
             uia_caret: false,
             ..RemoteFlags::default()
         };
-        let p = pill_config(&Settings::default(), &flags, &OsLook::default());
-        assert_eq!(p.style, PillStyle::Off);
+        let p = engine_settings(&Settings::default(), &flags).pill;
+        assert_eq!(p.style, protocol::PillStyle::Off);
         assert!(!p.uia_caret);
+    }
+
+    #[test]
+    fn restarts_back_off_and_recover() {
+        let secs: Vec<u64> = (1..=11).map(|n| backoff(n).as_secs()).collect();
+        assert_eq!(secs, [1, 2, 4, 8, 16, 32, 64, 128, 256, 300, 300]);
+        assert_eq!(backoff(0), Duration::from_secs(1));
+        assert_eq!(backoff(u32::MAX), Duration::from_secs(300));
+        // Quick crashes add up; a healthy run starts over.
+        assert_eq!(failures_after(3, Duration::from_secs(5)), 4);
+        assert_eq!(failures_after(9, STABLE_RUN), 1);
+    }
+
+    #[test]
+    fn the_engine_is_found_beside_the_app() {
+        let launch = Launch::beside_app("crash.json".into(), false).unwrap();
+        assert_eq!(
+            launch.exe.file_name().unwrap(),
+            std::ffi::OsStr::new(unflub_engine::ENGINE_EXE)
+        );
+        assert_eq!(
+            launch.exe.parent(),
+            std::env::current_exe().unwrap().parent()
+        );
     }
 }

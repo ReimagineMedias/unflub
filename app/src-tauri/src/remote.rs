@@ -298,12 +298,8 @@ mod tests {
                             pill_style: crate::settings::PillStyle::Off,
                             ..crate::settings::Settings::default()
                         };
-                        let p = crate::engine::pill_config(
-                            &pill_off,
-                            &f,
-                            &crate::engine::OsLook::default(),
-                        );
-                        assert_eq!(p.style, unflub_windows::PillStyle::Off);
+                        let p = crate::engine::engine_settings(&pill_off, &f).pill;
+                        assert_eq!(p.style, unflub_engine::protocol::PillStyle::Off);
                     }
                 }
             }

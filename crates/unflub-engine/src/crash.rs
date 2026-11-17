@@ -122,7 +122,8 @@ mod native {
     use findshlibs::{SharedLibrary, SharedLibraryId, TargetSharedLibrary};
     use serde_json::{json, Value};
 
-    /// Frame addresses (oldest first, as Sentry wants them) and the loaded PE modules.
+    /// Frame addresses (oldest first, as Sentry wants them) and the loaded PE modules, as
+    /// Sentry's `symbolic` debug images (what `sentry::integrations::debug_images` produces).
     pub fn stack_and_modules(home: Option<&str>) -> (Vec<Value>, Vec<Value>) {
         let bt = backtrace::Backtrace::new_unresolved();
         let mut frames: Vec<Value> = bt
@@ -139,10 +140,10 @@ mod native {
             };
             let name = super::scrub(&lib.name().to_string_lossy(), home);
             images.push(json!({
-                "type": "pe",
-                "code_file": name,
+                "type": "symbolic",
+                "name": name,
                 "code_id": lib.id().map(|id| id.to_string()),
-                "debug_id": debug_id(&guid, age),
+                "id": debug_id(&guid, age),
                 "debug_file": lib.debug_name().map(|n| super::scrub(&n.to_string_lossy(), home)),
                 // On Windows this is the module base, which Sentry symbolicates against.
                 "image_addr": format!("{:#x}", lib.virtual_memory_bias().0),
@@ -228,7 +229,7 @@ mod tests {
             .unwrap()
             .is_empty());
         let images = m["debug_meta"]["images"].as_array().unwrap();
-        assert!(images.iter().any(|i| i["code_file"]
+        assert!(images.iter().any(|i| i["name"]
             .as_str()
             .is_some_and(|f| f.to_lowercase().ends_with(".exe"))));
     }
