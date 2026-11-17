@@ -30,7 +30,7 @@ serde_json = "1"
 # Sentry event (symbolicated on Sentry's side, like the app's own reports).
 backtrace = "0.3"
 findshlibs = "0.10"
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
