@@ -1,0 +1,70 @@
+name: Tag release
+
+# When a release PR (title "chore(release): x.y.z", from scripts/prepare-release.mjs) is squash-merged,
+# tag the merge commit vx.y.z and start the Release workflow on that tag. A tag pushed with the
+# workflow's own token doesn't start other workflows, so this dispatches Release directly; a tag
+# pushed by a person still starts it through its own `push: tags` trigger.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag and release
+    if: startsWith(github.event.head_commit.message, 'chore(release):')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the tag
+      actions: write # start the Release workflow
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Tag the release commit
+        id: tag
+        env:
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          node scripts/bump-version.mjs --check "$version"
+          # "chore(release): 0.2.0 (#42)" after a squash merge; the title must name the version in the files.
+          first_line=${SUBJECT%%$'\n'*}
+          if [[ ! "$first_line" =~ ^chore\(release\):\ v?([0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?)( \(#[0-9]+\))?$ ]]; then
+            echo "::error::'$first_line' is not 'chore(release): x.y.z'."
+            exit 1
+          fi
+          if [ "${BASH_REMATCH[1]}" != "$version" ]; then
+            echo "::error::The title says ${BASH_REMATCH[1]} but the files say $version."
+            exit 1
+          fi
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::$tag already exists. Releases are never rewritten; prepare a new version."
+            exit 1
+          fi
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Start the Release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh workflow run release.yml --ref "$TAG" -f dry_run=false
+          {
+            echo "### Tagged $TAG"
+            echo
+            echo "The Release workflow is building it: https://github.com/$GITHUB_REPOSITORY/actions/workflows/release.yml"
+          } >> "$GITHUB_STEP_SUMMARY"
