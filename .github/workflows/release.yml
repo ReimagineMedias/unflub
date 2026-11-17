@@ -140,6 +140,8 @@ jobs:
     name: Build (${{ matrix.name }})
     needs: prepare
     runs-on: ${{ matrix.os }}
+    # The updater signing key lives in the release environment, which only main, release/* and v* tags can use.
+    environment: release
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
