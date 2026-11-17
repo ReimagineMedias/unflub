@@ -4,7 +4,7 @@
 // Run `npm run build` first.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { parse } from "node-html-parser";
 import { startServer } from "../scripts/serve.mjs";
 
@@ -173,6 +173,14 @@ test("the Turnstile notice sits by the download buttons and in the footer when a
     for (const n of notices) assert.ok(n.querySelector('a[href="https://www.cloudflare.com/turnstile-privacy-policy/"]'));
   }
   assert.ok(pages.get("/privacy/").querySelector('a[href="https://www.cloudflare.com/turnstile-privacy-policy/"]'));
+});
+
+test("the IndexNow key file is served and holds its own name", async () => {
+  const name = readdirSync(new URL("../public/", import.meta.url)).find((f) => /^[0-9a-f]{32}\.txt$/.test(f));
+  assert.ok(name, "public/<32 hex>.txt exists");
+  const res = await fetch(`${base}/${name}`);
+  assert.equal(res.status, 200);
+  assert.equal((await res.text()).trim(), name.slice(0, -4));
 });
 
 test("no page or header turns indexing off", async () => {

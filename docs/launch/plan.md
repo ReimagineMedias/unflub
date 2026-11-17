@@ -63,7 +63,7 @@ These findings shaped the plan more than the general advice did. Sources are at 
 | Site | Cloudflare Web Analytics, steps below | Matias | Site deployed, CSP change merged | Page views show in the dashboard within a day |
 | Search | Google Search Console, steps below | Matias | Site deployed | Domain property verified; sitemap status "Success" with 5 URLs |
 | Search | Bing Webmaster Tools, import from Search Console | Matias | Search Console verified | Site verified in Bing; sitemap accepted |
-| Search | IndexNow key file and a post-deploy ping in `site.yml` | agent | Site deployed | Ping returns 200 or 202; Bing Webmaster Tools lists the URLs under IndexNow |
+| Search | Done 2026-11-17: IndexNow key file and a post-deploy ping in `site.yml` | agent | Site deployed | Ping returns 200 or 202; Bing Webmaster Tools lists the URLs under IndexNow |
 | Search | On `/autocorrect-windows/`, add short answers to "Does Windows have autocorrect?" and "How do I get autocorrect on my PC?" | agent | none | Page shows for those queries in Search Console within weeks |
 | GitHub | Make the repo public | Matias | README accurate, no secrets in history | Repo visible logged out |
 | GitHub | Rewrite the README in Handy's shape: one-line pitch, hero GIF, install lines for the setup, winget and Scoop, how it works, privacy, limits | agent | v0.1 facts final; privacy section from `feat/engine-process` | README states what is sent and what is not, matching /privacy |
@@ -160,27 +160,19 @@ the Worker's custom domain record, which is one more reason to use the apex.
 IndexNow tells Bing, Naver, Seznam, Yandex and Yep about changed URLs, and engines that join share the
 submissions. Google does not take part, so the sitemap is still what Google reads.
 
-Agent steps, in one small PR:
+How it works now (done 2026-11-17):
 
-1. Generate a key of 32 hex characters and commit `site/public/<key>.txt` containing only the key.
-   The key is public by design; it proves the submitter controls the host.
-2. Add a step to the `deploy` job in `.github/workflows/site.yml`, after `wrangler deploy` succeeds. It reads
-   the `<loc>` URLs from `dist/sitemap-0.xml` and posts them:
-
-   ```sh
-   curl -sS -o /dev/null -w "%{http_code}" -X POST https://api.indexnow.org/IndexNow \
-     -H "Content-Type: application/json; charset=utf-8" \
-     -d '{"host":"unflub.rmgn.net","key":"<key>","keyLocation":"https://unflub.rmgn.net/<key>.txt","urlList":[...]}'
-   ```
-
-   200 means received. 202 means received with the key still being checked. Write the code to the job
-   summary next to the deploy row. A failed ping should not fail the deploy.
+1. The key is `site/public/6af18d0852ede47babb318a1c6af5758.txt`, served at
+   https://unflub.rmgn.net/6af18d0852ede47babb318a1c6af5758.txt. It is public by design; it proves the
+   submitter controls the host. A test checks the file is served and holds its own name.
+2. The `production` job in `.github/workflows/site.yml` runs `node scripts/indexnow.mjs unflub.rmgn.net` after
+   `vercel deploy --prebuilt --prod`. The script posts every `<loc>` in `dist/sitemap-0.xml` to
+   `https://api.indexnow.org/indexnow`. 200 means received; 202 means received with the key still being checked.
+   The code goes into the job summary next to the deploy row. A failed ping does not fail the deploy.
+   `node scripts/indexnow.mjs --dry-run` prints the request without sending it.
 3. In Bing Webmaster Tools, the **IndexNow** page shows what arrived.
 
-Also turn on **Crawler Hints**: Cloudflare dashboard > rmgn.ca > **Caching > Configuration > Crawler
-Hints**. It is free on every plan and sends IndexNow pings for the whole zone when Cloudflare's cache sees
-changed content. I could not confirm that it sees Workers static-asset responses, which is why the
-workflow ping above is the one to rely on.
+To rotate the key, replace the file with a new `<32 hex>.txt`; the script finds it by name.
 
 ## Cloudflare Web Analytics
 

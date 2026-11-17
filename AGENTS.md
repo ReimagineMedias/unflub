@@ -100,8 +100,8 @@ Repo is private until v0.1, then flipped public.
   `dl.rmgn.net/unflub/{version}/tauri-{target}-{arch}.json`, accepts exactly that version (rollbacks work), and its
   URL/signature must equal the manifest's; installer bytes must match the manifest's sha256/size. Installer URLs:
   GitHub Release assets or dl.rmgn.net (302 to them); redirects only to that GitHub path and GitHub's asset hosts
-  (`links.rs`). Update requests carry only `User-Agent`; no install id. `X-First: week,month` goes only on the daily stats report (contract v2). `keys.rs` still holds a PLACEHOLDER
-  key (verifies nothing); release CI fails until the real one from rmgn-api is in. `autoUpdate` downloads + verifies in the background to `%LOCALAPPDATA%\ca.rmgn.unflub\updates`
+  (`links.rs`). Update requests carry only `User-Agent`; no install id. `X-First: week,month` goes only on the daily stats report (contract v2). `keys.rs` holds the production
+  key `76df971d6ca36a1a` (2026-11-17; rotate by adding the new key first). `autoUpdate` downloads + verifies in the background to `%LOCALAPPDATA%\ca.rmgn.unflub\updates`
   (SHA-256 re-checked before install); install only on Restart now or tray Quit. Only `install-source` = installer
   self-updates (`install.rs`); winget, chocolatey, scoop, store show "Update with ..." instead. Release builds only.
 - Privacy/network map is in `docs/architecture.md#network-and-privacy`. Usage stats (`usage.rs`) and crash reports
@@ -128,7 +128,9 @@ Repo is private until v0.1, then flipped public.
 - Binaries: the tray app's executable is `unflub.exe` (`[[bin]] name = "unflub"` in `app/src-tauri/Cargo.toml`; the
   package stays `unflub-app`); the keyboard engine is `unflub-engine.exe` (`crates/unflub-engine`); the headless
   developer runner is `unflub-cli` (`crates/unflub-windows/src/bin/unflub-cli`, whole stack in one process).
-- Site (`site/`): Astro static, hosted on Vercel through its Git integration (Root Directory `site`); headers, CSP,
+- Site (`site/`): Astro static on Vercel (project "unflub", team rmgn1), deployed by `.github/workflows/site.yml` with
+  the pinned Vercel CLI (Hobby has no Git integration for a private org repo): PR previews with a comment, production
+  on main, then an IndexNow ping (`site/scripts/indexnow.mjs`, key file `site/public/<32 hex>.txt`). Headers, CSP,
   trailing slashes and caching live in `site/vercel.json`, which `scripts/serve.mjs` and the tests also read. CI only
   checks, builds and tests. Performance figures live in `site/src/data/performance.ts`; keep them in step with
   docs/performance.md. Scripts must stay external files (the CSP has no 'unsafe-inline' for scripts; a test enforces it).
