@@ -1,0 +1,115 @@
+name: Site
+
+# unflub.rmgn.ca: check, build and test on pull requests; deploy to Cloudflare from main.
+# Deploying needs two repository secrets: CLOUDFLARE_API_TOKEN (Workers Scripts edit, plus
+# Workers Routes / DNS edit on the rmgn.ca zone for the custom domain) and CLOUDFLARE_ACCOUNT_ID.
+
+on:
+  pull_request:
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  ASTRO_TELEMETRY_DISABLED: "1"
+  WRANGLER_SEND_METRICS: "false"
+
+jobs:
+  build:
+    name: Check, build, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - id: check
+        run: npm run check
+      - id: build
+        run: npm run build
+      - id: lint
+        run: npm run lint
+      - id: test
+        run: npm test
+      - id: dry
+        name: Deploy dry run
+        run: npx wrangler deploy --dry-run
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: site-dist
+          path: site/dist
+          include-hidden-files: true
+          retention-days: 3
+      - name: Summary
+        if: always()
+        run: |
+          mark() { [ "$1" = "success" ] && echo "✅" || { [ "$1" = "skipped" ] && echo "⏭️" || echo "❌"; }; }
+          {
+            echo "### Site"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Type check (astro check) | $(mark '${{ steps.check.outcome }}') |"
+            echo "| Build | $(mark '${{ steps.build.outcome }}') |"
+            echo "| HTML validation | $(mark '${{ steps.lint.outcome }}') |"
+            echo "| Tests (pages, links, metadata, JSON-LD, headers) | $(mark '${{ steps.test.outcome }}') |"
+            echo "| Wrangler deploy dry run | $(mark '${{ steps.dry.outcome }}') |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to unflub.rmgn.ca
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://unflub.rmgn.ca
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+        working-directory: site
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-dist
+          path: site/dist
+      - id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: site
+          command: deploy
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Site deploy"
+            echo ""
+            echo "| Step | Result |"
+            echo "|---|---|"
+            echo "| Deploy to https://unflub.rmgn.ca | ${{ steps.deploy.outcome == 'success' && '✅' || '❌' }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
