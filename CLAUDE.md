@@ -31,8 +31,19 @@ Repo is private until v0.1, then flipped public.
   has `recieve`->`receive`, `becuase`->`because` but nothing for `teh`. `CORRECTIVE_ACTION_REPLACE` is rare; don't rely on it.
 - `unflub-windows` tests call the real `ISpellChecker` but never install hooks or inject input. Try the hook live with
   `cargo run --release --bin unflub -- --demo` (rules teh/adn/recieve). Never run it in automation on a machine someone
-  is typing on.
+  is typing on, except with `--dry-run`.
 - Windows `ISpellChecker::Check` reports any word of 64+ UTF-16 units as correct.
 - UI Automation (and MSAA) queries switch on Chromium's accessibility tree, costing CPU and memory in Chrome and Electron.
   The adapter asks UIA only on focus changes, clicks, Tab and Enter, for every class except the standard edits (Edit, RichEdit*: ES_PASSWORD alone);
   unknown classes fail closed (secure until UIA says otherwise). Tests only create the UIA client and never query an app.
+- Perf gate (`docs/performance.md`, limits in `perf/limits.toml` with measured values in comments): core bench
+  `cargo run --release -p unflub-core --example bench -- --check perf/limits.toml [--json]`, Windows idle footprint
+  `pwsh perf/idle.ps1`, low-end sim `pwsh perf/lowend.ps1` (Job Object via `examples/jobrun.rs`). The scripts run
+  `unflub --dry-run --pill off`: hook and engine live, but every action is vetoed (`policy::DRY_RUN`), so nothing is
+  injected or swallowed. Safe on a machine someone is typing on; they stop only processes they started.
+- Idle measured 2026-11-16 (dry run, pill off): private 18.8 MB, working set 38-40 MB, ~0.03 s CPU per 20 s, 12
+  threads dropping to 9 after ~1 min (Windows thread-pool workers from DLL loading retire), ~210 handles.
+- A Job Object hard CPU cap is a duty cycle: at 25 % of one core the job runs ~150 ms then pauses ~430 ms. Work that
+  fits in one burst (index build) runs at full speed; it doesn't simulate a slower clock.
+- Windows PowerShell 5.1: `$PSScriptRoot` can be empty in `param()` defaults, and a native command's stderr throws
+  under `$ErrorActionPreference = 'Stop'`. The perf scripts handle both.
