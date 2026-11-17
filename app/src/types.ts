@@ -37,7 +37,11 @@ export const defaultSettings: Settings = {
   minWordLen: 2,
   skipCode: true,
   undoLearns: true,
-  excludedApps: [],
+  // Mirrors DEFAULT_EXCLUDED_APPS in src-tauri/src/settings.rs.
+  excludedApps: [
+    "windowsterminal.exe", "openconsole.exe", "conhost.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "wsl.exe",
+    "mintty.exe", "wezterm-gui.exe", "alacritty.exe", "keepass.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe",
+  ],
   personalWords: [],
   userRules: [],
   pillStyle: "underline-capsule",

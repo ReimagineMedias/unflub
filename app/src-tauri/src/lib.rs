@@ -228,7 +228,10 @@ pub fn run() {
 
     // Closing the settings window keeps unflub running in the tray.
     app.run(|_app, event| {
-        if let RunEvent::ExitRequested { api, code: None, .. } = event {
+        if let RunEvent::ExitRequested {
+            api, code: None, ..
+        } = event
+        {
             api.prevent_exit();
         }
     });

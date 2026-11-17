@@ -51,6 +51,25 @@ pub enum Appearance {
     Dark,
 }
 
+/// Off by default: terminals can't report password prompts (sudo, ssh), and password managers
+/// hold secrets. A correction there would silently change what the user typed.
+pub const DEFAULT_EXCLUDED_APPS: &[&str] = &[
+    "windowsterminal.exe",
+    "openconsole.exe",
+    "conhost.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "wsl.exe",
+    "mintty.exe",
+    "wezterm-gui.exe",
+    "alacritty.exe",
+    "keepass.exe",
+    "keepassxc.exe",
+    "1password.exe",
+    "bitwarden.exe",
+];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -83,7 +102,10 @@ impl Default for Settings {
             min_word_len: core.min_word_len,
             skip_code: core.skip_code,
             undo_learns: core.undo_learns,
-            excluded_apps: Vec::new(),
+            excluded_apps: DEFAULT_EXCLUDED_APPS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             personal_words: Vec::new(),
             user_rules: Vec::new(),
             pill_style: PillStyle::UnderlineCapsule,
@@ -111,7 +133,10 @@ impl Settings {
         self
     }
 
-    #[expect(dead_code, reason = "wired to the engine once the Windows adapter lands")]
+    #[expect(
+        dead_code,
+        reason = "wired to the engine once the Windows adapter lands"
+    )]
     pub fn to_core(&self) -> unflub_core::Config {
         unflub_core::Config {
             enabled: self.enabled,
@@ -138,7 +163,9 @@ pub struct Store {
 
 impl Store {
     pub fn new(dir: PathBuf) -> Self {
-        Self { path: dir.join("settings.json") }
+        Self {
+            path: dir.join("settings.json"),
+        }
     }
 
     pub fn exists(&self) -> bool {
