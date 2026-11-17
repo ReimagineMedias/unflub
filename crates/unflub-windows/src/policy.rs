@@ -173,12 +173,21 @@ pub fn is_terminal_input_class(class: &str) -> bool {
 }
 
 /// While a first Backspace is held (double-Backspace undo), does this key-down release it (send
-/// it on, ahead of the key)? Every key does except a fresh, plain Backspace, which undoes the
-/// fix: an auto-repeat or a Backspace with Ctrl, Alt, Shift or Win releases it too. There is no
-/// timeout, and nothing else waits on the hold.
-pub fn releases_held_backspace(vk: u16, auto_repeat: bool, modifier: bool) -> bool {
+/// it on, ahead of the key)? Every key does except a fresh, plain Backspace from the user, which
+/// undoes the fix: an auto-repeat or a Backspace with Ctrl, Alt, Shift or Win releases it too,
+/// and so does every replayed key (one of ours sent again after an injection), so no key ever
+/// reaches the app or the engine ahead of a Backspace typed before it. There is no timeout, and
+/// nothing else waits on the hold.
+pub fn releases_held_backspace(vk: u16, auto_repeat: bool, modifier: bool, replayed: bool) -> bool {
     const BACK: u16 = 0x08;
-    vk != BACK || auto_repeat || modifier
+    replayed || vk != BACK || auto_repeat || modifier
+}
+
+/// May a first Backspace be held for a double-Backspace undo? Only one straight from the user:
+/// a replayed Backspace was typed while an injection was in flight, and holding it would put
+/// it behind keys already on their way to the app.
+pub fn may_hold_backspace(replayed: bool) -> bool {
+    !replayed
 }
 
 /// Primary-language ids of layouts that normally come with an IME (Chinese, Japanese, Korean).
@@ -262,14 +271,27 @@ mod tests {
     #[test]
     fn what_releases_a_held_backspace() {
         assert!(
-            !releases_held_backspace(0x08, false, false),
+            !releases_held_backspace(0x08, false, false, false),
             "second Backspace undoes"
         );
-        assert!(releases_held_backspace(0x08, true, false), "auto-repeat");
-        assert!(releases_held_backspace(0x08, false, true), "Ctrl+Backspace");
+        assert!(
+            releases_held_backspace(0x08, true, false, false),
+            "auto-repeat"
+        );
+        assert!(
+            releases_held_backspace(0x08, false, true, false),
+            "Ctrl+Backspace"
+        );
         for vk in [0xBC, 0x41, 0x25, 0x10, 0x0D, 0x20] {
-            assert!(releases_held_backspace(vk, false, false), "{vk:#x}");
+            assert!(releases_held_backspace(vk, false, false, false), "{vk:#x}");
         }
+        // Review blocker: replayed keys release it too, a plain Backspace included, and never
+        // start a hold of their own.
+        for vk in [0x08, 0xBC, 0x41] {
+            assert!(releases_held_backspace(vk, false, false, true), "{vk:#x}");
+        }
+        assert!(may_hold_backspace(false));
+        assert!(!may_hold_backspace(true));
     }
 
     #[test]

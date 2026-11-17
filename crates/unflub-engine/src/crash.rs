@@ -8,7 +8,8 @@
 //! handles typed text. The home folder is cut out of every path.
 //!
 //! Any panic ends the process at once with exit code [`PANIC_EXIT`], in debug builds too, so a
-//! half-dead engine never keeps the keyboard hooked; the app restarts it. The hook ends it
+//! half-dead engine never keeps the keyboard hooked; the app restarts it. Before that it sends a
+//! held first Backspace on, so that keypress isn't lost (a kill from outside can't). The hook ends it
 //! itself rather than returning to the release build's `abort()`, which would also start
 //! Windows Error Reporting (seconds of CPU and a dump with whatever was in memory).
 
@@ -22,6 +23,10 @@ pub const PANIC_EXIT: u32 = 101;
 
 pub fn install(path: Option<PathBuf>) {
     std::panic::set_hook(Box::new(move |info| {
+        // First the user's keypress: a first Backspace held for a double-Backspace undo would
+        // otherwise end with the process (`unflub_windows::hook::send_held_backspace_now`).
+        #[cfg(windows)]
+        let _ = unflub_windows::hook::send_held_backspace_now();
         // No stderr: the default hook would print the message, which may hold typed text, and
         // nothing here may block. Keep the first report if several threads panic at once, or a
         // report the app hasn't picked up yet.

@@ -218,6 +218,9 @@ struct Pending {
     sent: Option<usize>,
     trigger: RawEvent,
     trigger_up: TriggerUp,
+    /// A first Backspace held for a double-Backspace undo that this (undo) injection spends.
+    /// If nothing is sent it goes back to the app ahead of the trigger.
+    held: Option<RawEvent>,
 }
 
 #[derive(Debug)]
@@ -298,6 +301,9 @@ impl Pipeline {
 
     fn alloc_batch(&mut self) -> u16 {
         self.next_batch = (self.next_batch + 1) & BATCH_MASK;
+        if self.next_batch == PASS_BATCH {
+            self.next_batch = 1;
+        }
         self.next_batch
     }
 
@@ -308,11 +314,12 @@ impl Pipeline {
         if let Origin::Replay(batch) = origin {
             self.count_replay(batch);
         }
-        // A replay is older than anything still held, so only a new injection holds it back.
-        // Degraded, nothing is ever held.
+        // A replay is older than any user key still held, so only a new injection, or older
+        // replays queued again in front (a released Backspace, keys held back by an injection),
+        // hold it back. Degraded, nothing is ever held.
         let hold = !self.degraded
             && if replayed {
-                self.pending.is_some()
+                self.pending.is_some() || self.replay_front > 0
             } else {
                 self.busy()
             };
@@ -373,6 +380,18 @@ impl Pipeline {
     /// Returns its batch number for the tag. Only one injection is pending at a time; keys are
     /// only processed when none is.
     pub fn begin(&mut self, trigger: RawEvent, total: usize) -> u16 {
+        self.begin_with(trigger, None, total)
+    }
+
+    /// [`Pipeline::begin`] for an undo that spends `held`, the first Backspace held with
+    /// [`Pipeline::hold`]. If `SendInput` takes none of the undo, both Backspaces go back to the
+    /// app in order. If it takes only part, the held key counts as spent: the undo's own deletes
+    /// already changed the text, and replaying it as well would delete one more character.
+    pub fn begin_undo(&mut self, trigger: RawEvent, held: Option<RawEvent>, total: usize) -> u16 {
+        self.begin_with(trigger, held, total)
+    }
+
+    fn begin_with(&mut self, trigger: RawEvent, held: Option<RawEvent>, total: usize) -> u16 {
         debug_assert!(self.pending.is_none(), "one injection at a time");
         debug_assert!(!self.degraded, "no injections while degraded");
         let batch = self.alloc_batch();
@@ -383,6 +402,7 @@ impl Pipeline {
             sent: None,
             trigger,
             trigger_up: TriggerUp::Waiting,
+            held,
         });
         batch
     }
@@ -445,8 +465,13 @@ impl Pipeline {
             .expect("finish with a pending injection");
         let sent = p.sent.unwrap_or(p.total);
         if sent == 0 {
-            // Nothing was typed: give the user their key back, ahead of everything held.
-            let mut back = vec![p.trigger];
+            // Nothing was typed: give the user their key back, ahead of everything held (and
+            // the first Backspace of an undo ahead of that).
+            let mut back = Vec::with_capacity(4);
+            if let Some(held) = p.held {
+                back.extend([held, RawEvent { up: true, ..held }]);
+            }
+            back.push(p.trigger);
             if p.trigger_up == TriggerUp::Taken {
                 back.push(RawEvent {
                     up: true,
@@ -499,6 +524,44 @@ impl Pipeline {
         std::mem::take(&mut self.outbox)
     }
 
+    /// The hook is stopping and its hooks are already removed: everything still owed to the
+    /// app, in order, to send once without a tag. Call after the injector has finished (or a
+    /// bounded wait for it): replays already decided, then the trigger of an injection that
+    /// sent nothing (with an undo's held Backspace ahead of it), then the held-back keys. An
+    /// injection whose result is unknown counts as sent, so nothing is typed twice. Key-ups of
+    /// key-downs the app never saw are left out, as replaying them would have done.
+    pub fn drain(&mut self) -> Vec<RawEvent> {
+        if self.pending.as_ref().is_some_and(|p| p.sent == Some(0)) {
+            self.finish();
+        } else if self.pending.is_some() {
+            self.claim_trigger_up();
+            if let Some(p) = self.pending.take() {
+                if p.trigger_up == TriggerUp::Waiting {
+                    self.swallow.swallowed(p.trigger.vk);
+                }
+            }
+        }
+        let mut out: Vec<RawEvent> = std::mem::take(&mut self.outbox)
+            .into_iter()
+            .flat_map(|r| r.events)
+            .collect();
+        for ev in std::mem::take(&mut self.queue) {
+            let keep = if ev.up {
+                !self.swallow.on_up(ev.vk)
+            } else {
+                self.swallow.on_down(ev.vk, false);
+                true
+            };
+            if keep {
+                out.push(ev);
+            }
+        }
+        self.replay_front = 0;
+        self.flights.clear();
+        self.busy_since = None;
+        out
+    }
+
     /// Busy for longer than `limit`: our events aren't coming back. Give up on them, replay
     /// what is held, and turn degraded ([`Pipeline::abandon`]). Returns true if it did. Call
     /// [`Pipeline::pump`] afterwards.
@@ -515,7 +578,11 @@ impl Pipeline {
 }
 
 #[cfg(windows)]
-pub use win::{probe_inputs, replay_inputs, send, to_inputs};
+pub use win::{pass_inputs, probe_inputs, replay_inputs, send, to_inputs};
+
+/// The batch number no injection ever gets: events tagged `Tag::Inject(PASS_BATCH)` match no
+/// pending batch, so the hook lets them through untouched (see [`pass_inputs`]).
+pub const PASS_BATCH: u16 = 0;
 
 /// The probe's key: unassigned in Windows, so even a program that sees it ignores it.
 pub const PROBE_VK: u16 = 0xE8;
@@ -570,14 +637,26 @@ mod win {
 
     /// Held-back user keys, as they were, tagged as replay `batch`.
     pub fn replay_inputs(events: &[RawEvent], batch: u16) -> Vec<INPUT> {
+        tagged(events, |e| {
+            Tag::Replay {
+                batch,
+                foreign: e.foreign,
+            }
+            .encode()
+        })
+    }
+
+    /// User keys to hand to the app directly: a hook of ours still installed lets them through
+    /// without counting or holding them (`Tag::Inject(PASS_BATCH)`).
+    pub fn pass_inputs(events: &[RawEvent]) -> Vec<INPUT> {
+        tagged(events, |_| Tag::Inject(super::PASS_BATCH).encode())
+    }
+
+    fn tagged(events: &[RawEvent], tag: impl Fn(&RawEvent) -> usize) -> Vec<INPUT> {
         events
             .iter()
             .map(|e| {
-                let tag = Tag::Replay {
-                    batch,
-                    foreign: e.foreign,
-                }
-                .encode();
+                let tag = tag(e);
                 let up = if e.up {
                     KEYEVENTF_KEYUP
                 } else {
@@ -923,6 +1002,131 @@ mod tests {
             Input::Queued,
             "behind the replay in flight"
         );
+    }
+
+    /// Review blocker: a replayed key that releases a held Backspace waits behind it, and so
+    /// do the rest of its replay batch still on the way.
+    #[test]
+    fn replays_released_behind_a_held_backspace_stay_in_order() {
+        let mut p = Pipeline::new();
+        user(&mut p, down(BACK));
+        p.hold(down(BACK));
+        assert_eq!(user(&mut p, up(BACK)), Input::Consumed);
+        // A replay batch (keys held back earlier) arrives: [comma down, comma up, N down].
+        let batch = 7;
+        p.flights.push(Flight {
+            batch,
+            remaining: 3,
+        });
+        // The comma releases the Backspace first (the hook does this for replays too) and is
+        // queued behind it instead of reaching the app ahead of it.
+        p.release_held(down(BACK));
+        assert_eq!(
+            p.on_input(down(COMMA), Origin::Replay(batch), false),
+            Input::Queued
+        );
+        // The rest of the batch follows it, not ahead of it.
+        assert_eq!(
+            p.on_input(up(COMMA), Origin::Replay(batch), false),
+            Input::Queued
+        );
+        assert_eq!(
+            p.on_input(down(N), Origin::Replay(batch), false),
+            Input::Queued
+        );
+        let r = p.pump(now());
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            r[0].events,
+            vec![down(BACK), up(BACK), down(COMMA), up(COMMA), down(N)]
+        );
+        // They come back as replays and are processed in that order.
+        assert_eq!(
+            replay(&mut p, &r[0]),
+            vec![Input::Process { repeat: false }; 5]
+        );
+        assert!(!p.busy());
+    }
+
+    /// Review finding 4: an undo that sends nothing gives back both Backspaces, held one first.
+    #[test]
+    fn a_failed_undo_gives_back_both_backspaces() {
+        let mut p = Pipeline::new();
+        user(&mut p, down(BACK));
+        p.hold(down(BACK));
+        assert_eq!(user(&mut p, up(BACK)), Input::Consumed);
+        assert_eq!(user(&mut p, down(BACK)), Input::Process { repeat: false });
+        let b = p.begin_undo(down(BACK), Some(down(BACK)), 10);
+        assert_eq!(user(&mut p, up(BACK)), Input::Queued);
+        assert_eq!(
+            p.on_sent(b, 0),
+            Some(Finished {
+                batch: b,
+                sent: 0,
+                total: 10
+            })
+        );
+        let r = p.pump(now());
+        assert_eq!(
+            r[0].events,
+            vec![down(BACK), up(BACK), down(BACK), up(BACK)]
+        );
+
+        // A partial undo spends the held key: only nothing extra goes back.
+        let mut p = Pipeline::new();
+        user(&mut p, down(BACK));
+        p.hold(down(BACK));
+        user(&mut p, up(BACK));
+        user(&mut p, down(BACK));
+        let b = p.begin_undo(down(BACK), Some(down(BACK)), 10);
+        assert_eq!(p.on_sent(b, 4), None);
+        for _ in 0..3 {
+            assert_eq!(p.on_injected(b), None);
+        }
+        assert!(p.on_injected(b).is_some());
+        assert!(p.pump(now()).is_empty());
+    }
+
+    /// Review finding 6: stopping hands back what is held, in order, without typing twice.
+    #[test]
+    fn drain_returns_what_is_owed_in_order() {
+        // An injection in flight with keys behind it: the injection counts as typed.
+        let mut p = Pipeline::new();
+        let b = inject(&mut p, down(SPACE), 8);
+        for ev in [down(SHIFT), up(SPACE), down(N), up(N), up(SHIFT)] {
+            assert_eq!(user(&mut p, ev), Input::Queued);
+        }
+        let _ = b;
+        assert_eq!(
+            p.drain(),
+            vec![down(SHIFT), down(N), up(N), up(SHIFT)],
+            "the trigger's key-up is left out; the Shift release is kept"
+        );
+        assert!(!p.busy());
+
+        // An injection that sent nothing: its trigger goes first.
+        let mut p = Pipeline::new();
+        assert_eq!(user(&mut p, down(SPACE)), Input::Process { repeat: false });
+        let b = p.begin(down(SPACE), 8);
+        assert_eq!(user(&mut p, down(N)), Input::Queued);
+        p.pending.as_mut().unwrap().sent = Some(0);
+        let _ = b;
+        assert_eq!(p.drain(), vec![down(SPACE), down(N)]);
+
+        // A result that never came: assumed typed, never sent twice.
+        let mut p = Pipeline::new();
+        assert_eq!(user(&mut p, down(SPACE)), Input::Process { repeat: false });
+        p.begin(down(SPACE), 8);
+        assert_eq!(user(&mut p, down(O)), Input::Queued);
+        assert_eq!(p.drain(), vec![down(O)]);
+    }
+
+    #[test]
+    fn batch_numbers_skip_the_pass_through_batch() {
+        let mut p = Pipeline::new();
+        p.next_batch = BATCH_MASK;
+        assert_eq!(p.alloc_batch(), 1);
+        assert_ne!(p.alloc_batch(), PASS_BATCH);
     }
 
     #[test]

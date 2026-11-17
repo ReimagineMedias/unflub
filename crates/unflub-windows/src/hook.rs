@@ -30,6 +30,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -91,6 +92,49 @@ const STALE_CHECK_MS: u32 = 100;
 /// The first degraded spell probes after this long; each later one waits twice as long.
 const FIRST_DEGRADE_BACKOFF: Duration = Duration::from_secs(30);
 const MAX_DEGRADE_BACKOFF: Duration = Duration::from_secs(30 * 60);
+
+/// On stop, how long to wait for the injector to finish what it was handed before the held-back
+/// keys go to the app.
+const STOP_DRAIN: Duration = Duration::from_secs(1);
+
+/// The first Backspace held for a double-Backspace undo, also kept here (0: none) so the
+/// engine's panic hook can still send it ([`send_held_backspace_now`]). Everything else about it
+/// lives in the hook thread's state.
+static HELD_FOR_CRASH: AtomicU64 = AtomicU64::new(0);
+
+fn encode_held(ev: RawEvent) -> u64 {
+    1 << 63
+        | u64::from(ev.vk)
+        | u64::from(ev.scan) << 16
+        | u64::from(ev.extended) << 32
+        | u64::from(ev.foreign) << 33
+}
+
+fn decode_held(bits: u64) -> Option<RawEvent> {
+    (bits >> 63 == 1).then_some(RawEvent {
+        vk: bits as u16,
+        scan: (bits >> 16) as u16,
+        extended: bits >> 32 & 1 == 1,
+        up: false,
+        foreign: bits >> 33 & 1 == 1,
+    })
+}
+
+/// For a panic hook that is about to end the process: send a held first Backspace on (down and
+/// up) so the user's keypress isn't lost with the process. Our own hook, if it is still
+/// running, lets it through untouched. Returns true if there was one.
+///
+/// What can't be saved: a process ended from outside (the app killing a stuck engine, or the
+/// Job Object when the app itself dies) runs no code, so a Backspace held at that moment is
+/// lost. The hold only ever lasts until the user's next key or click.
+#[cfg(windows)]
+pub fn send_held_backspace_now() -> bool {
+    let Some(held) = decode_held(HELD_FOR_CRASH.swap(0, Ordering::AcqRel)) else {
+        return false;
+    };
+    let _ = inject::send(&inject::pass_inputs(&[held, RawEvent { up: true, ..held }]));
+    true
+}
 
 /// Posted by the session window: the computer resumed or the session was unlocked.
 const WM_APP_REARM: u32 = WM_APP + 2;
@@ -513,13 +557,14 @@ fn run(
             session.destroy();
         }
         hooks.uninstall();
-        // Pausing or quitting with a Backspace held: send it, so the keypress isn't lost. Our
-        // hooks are gone, so it goes straight to the app.
-        if let Some(held) = with_state(State::take_held).flatten() {
-            let _ = inject::send(&inject::replay_inputs(
-                &[held, RawEvent { up: true, ..held }],
-                0,
-            ));
+        // Pausing, quitting or restarting the hook: our hooks are gone, so whatever the user
+        // typed that we still hold (a held Backspace, keys held back behind an injection, an
+        // injection's trigger that never went out) goes straight to the app, in order. Nothing
+        // is dropped, a modifier's key-up included.
+        if let Some(owed) = with_state(State::drain_for_stop) {
+            if !owed.is_empty() {
+                let _ = inject::send(&inject::pass_inputs(&owed));
+            }
         }
     }
     take_report()
@@ -951,27 +996,33 @@ impl State {
             foreign,
         };
         let async_down = !ev.up && already_down(vk);
-        // A held first Backspace goes out before any other key-down (the pipeline then holds
-        // this key behind it), so deleting the space to add a comma keeps working. Only a fresh,
-        // plain second Backspace reaches the corrector, which undoes the fix. There is no
-        // timeout: the hold ends with the next key, a click, or the hook stopping.
+        let replayed = matches!(origin, Origin::Replay(_));
+        // A held first Backspace goes out before any other key-down, user or replayed (the
+        // pipeline then holds this key behind it), so deleting the space to add a comma keeps
+        // working. Only a fresh, plain second Backspace from the user reaches the corrector,
+        // which undoes the fix. There is no timeout: the hold ends with the next key, a click,
+        // or the hook stopping.
         if !ev.up
-            && origin == Origin::User
             && self.held.is_some()
-            && crate::policy::releases_held_backspace(vk, async_down, modifier_down())
+            && crate::policy::releases_held_backspace(
+                vk,
+                async_down,
+                !replayed && modifier_down(),
+                replayed,
+            )
         {
             self.release_held();
         }
         let swallow = match self.pipeline.on_input(ev, origin, async_down) {
             Input::Queued | Input::Consumed => true,
-            Input::Process { repeat } => !ev.up && self.on_key_down(ev, repeat, start),
+            Input::Process { repeat } => !ev.up && self.on_key_down(ev, repeat, replayed, start),
         };
         self.pump();
         self.report.keyboard.record(start.elapsed());
         swallow
     }
 
-    fn on_key_down(&mut self, ev: RawEvent, repeat: bool, start: Instant) -> bool {
+    fn on_key_down(&mut self, ev: RawEvent, repeat: bool, replayed: bool, start: Instant) -> bool {
         if MISSED.with(Cell::take) {
             self.reset();
         }
@@ -996,7 +1047,7 @@ impl State {
         let swallow = match key {
             Some(key) => {
                 let ime = is_ime_language((layout.0 as usize & 0xFFFF) as u16);
-                self.handle_key(key, ev, mods, repeat, ime, start)
+                self.handle_key(key, ev, mods, repeat, replayed, ime, start)
             }
             None => false,
         };
@@ -1008,12 +1059,14 @@ impl State {
         swallow
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_key(
         &mut self,
         key: Key,
         ev: RawEvent,
         mods: Modifiers,
         repeat: bool,
+        replayed: bool,
         ime: bool,
         start: Instant,
     ) -> bool {
@@ -1041,25 +1094,29 @@ impl State {
             Action::Pass => return false,
             Action::Replace(r) => (r, false),
             Action::Undo(r) => (r, true),
-            Action::HoldBackspace(r) => return self.hold_backspace(r, key, ev, mods, repeat),
+            Action::HoldBackspace(r) => {
+                return self.hold_backspace(r, key, ev, mods, repeat, replayed)
+            }
         };
         if let Some(reason) = injection_veto(key, mods, repeat, self.dry_run) {
             return self.skip(replacement, reason);
         }
-        if undo {
-            // The second Backspace: the held one is spent with the undo.
-            self.held = None;
+        // The second Backspace: the held one goes with the undo, and back to the app with it if
+        // SendInput takes none of the undo (see `Pipeline::begin_undo`).
+        let held = if undo {
             self.undo_deadline = None;
+            self.set_held(None)
         } else {
             self.undo_deadline = self.corrector.undo_window().map(|w| Instant::now() + w);
-        }
+            None
+        };
         // Swallow the key and hand the batch over; SendInput runs on the injector thread.
         let strokes = if undo {
             inject::plan(replacement.delete, &replacement.insert)
         } else {
             inject::plan_correction(replacement.delete, &replacement.insert)
         };
-        let batch = self.pipeline.begin(ev, strokes.len() * 2);
+        let batch = self.pipeline.begin_undo(ev, held, strokes.len() * 2);
         let job = Job {
             kind: JobKind::Inject,
             batch,
@@ -1135,7 +1192,8 @@ impl State {
     }
 
     /// A first Backspace after a fix: swallow it and hold it (the pill asks "Undo?"), unless
-    /// it mustn't be swallowed (dry run, modifier held, auto-repeat).
+    /// it mustn't be swallowed (dry run, modifier held, auto-repeat) or it is a replay (keys
+    /// typed after it may already be on their way to the app).
     fn hold_backspace(
         &mut self,
         replacement: Replacement,
@@ -1143,22 +1201,36 @@ impl State {
         ev: RawEvent,
         mods: Modifiers,
         repeat: bool,
+        replayed: bool,
     ) -> bool {
+        if !crate::policy::may_hold_backspace(replayed) {
+            // A plain Backspace after all: close the window and let the engine count it as one.
+            if self.corrector.end_undo_window() {
+                let _ = self.call(Key::Backspace);
+            }
+            return false;
+        }
         if let Some(reason) = injection_veto(key, mods, repeat, self.dry_run) {
             self.corrector.end_undo_window();
             return self.skip(replacement, reason);
         }
         self.pipeline.hold(ev);
-        self.held = Some(ev);
+        self.set_held(Some(ev));
         // Held until answered: no timer may end it (see `check_undo_deadline`).
         self.undo_deadline = None;
         let _ = self.events.send(HookEvent::UndoPending { replacement });
         true
     }
 
+    /// Set or clear the held Backspace (kept in [`HELD_FOR_CRASH`] too). Returns the old one.
+    fn set_held(&mut self, held: Option<RawEvent>) -> Option<RawEvent> {
+        HELD_FOR_CRASH.store(held.map_or(0, encode_held), Ordering::Release);
+        std::mem::replace(&mut self.held, held)
+    }
+
     /// Send a held Backspace on, ahead of anything typed after it, and close the undo window.
     fn release_held(&mut self) {
-        if let Some(held) = self.held.take() {
+        if let Some(held) = self.set_held(None) {
             self.corrector.end_undo_window();
             self.pipeline.release_held(held);
             let _ = self.events.send(HookEvent::UndoDeclined);
@@ -1169,7 +1241,7 @@ impl State {
     /// A click or focus change: a held Backspace was meant for the old caret, so it is dropped
     /// (sending it now would delete a character wherever the click put the caret).
     fn drop_held(&mut self) {
-        if self.held.take().is_some() {
+        if self.set_held(None).is_some() {
             self.corrector.end_undo_window();
             let _ = self.events.send(HookEvent::UndoDeclined);
         }
@@ -1186,10 +1258,29 @@ impl State {
         }
     }
 
-    /// The hook is stopping (pause, quit, engine stop): a held Backspace is the user's keypress,
-    /// so it is returned for sending after the hooks are gone.
-    fn take_held(&mut self) -> Option<RawEvent> {
-        self.held.take()
+    /// The hook is stopping (pause, quit, engine stop, language change) and its hooks are gone:
+    /// let the injector finish what it was handed (up to [`STOP_DRAIN`]), then return every
+    /// user key still owed to the app, in order: a held Backspace first (anything typed after
+    /// it would have released it), then what the pipeline holds ([`Pipeline::drain`]).
+    fn drain_for_stop(&mut self) -> Vec<RawEvent> {
+        // Dropping our sender ends the injector once its queue is empty.
+        self.jobs = mpsc::channel().0;
+        let deadline = Instant::now() + STOP_DRAIN;
+        while let Ok(r) = self
+            .done
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        {
+            if let JobKind::Inject = r.kind {
+                // No echo can come back now: only the count matters.
+                let _ = self.pipeline.on_sent(r.batch, r.sent);
+            }
+        }
+        let mut owed = Vec::new();
+        if let Some(held) = self.set_held(None) {
+            owed.extend([held, RawEvent { up: true, ..held }]);
+        }
+        owed.extend(self.pipeline.drain());
+        owed
     }
 
     /// The stale-batch timer fired.
@@ -1393,6 +1484,29 @@ impl State {
 #[cfg(test)]
 mod watchdog_tests {
     use super::*;
+
+    #[test]
+    fn a_held_backspace_survives_the_round_trip_for_the_panic_hook() {
+        for ev in [
+            RawEvent {
+                vk: 0x08,
+                scan: 0x0E,
+                extended: false,
+                up: false,
+                foreign: false,
+            },
+            RawEvent {
+                vk: 0x08,
+                scan: 0xFFFF,
+                extended: true,
+                up: false,
+                foreign: true,
+            },
+        ] {
+            assert_eq!(decode_held(encode_held(ev)), Some(ev));
+        }
+        assert_eq!(decode_held(0), None);
+    }
 
     #[test]
     fn missed_input_needs_a_gap() {
