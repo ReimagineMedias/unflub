@@ -33,7 +33,7 @@ export const en = {
   "tour.undo.title": "Take it back",
   "tour.undo.lead": "Changed your mind? Press Backspace twice.",
   "tour.undo.done": "Got it. unflub won't fix that again.",
-  "tour.undo.waiting": "Type a typo, a space, then Backspace.",
+  "tour.undo.waiting": "Type a typo, a space, then Backspace twice.",
   "tour.skips.title": "unflub doesn't touch things it shouldn't.",
   "tour.skips.lead": "Code, passwords and terminals are left alone.",
   "tour.data.title": "Your choices",
