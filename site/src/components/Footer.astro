@@ -36,6 +36,10 @@ const groups = [
       <div class="brand">
         <Wordmark />
         <p>Phone-style autocorrect for every text box on your computer.</p>
+        <div class="support" aria-label="Support unflub" role="group">
+          <a class="chip" href={SITE.repo}>Star on GitHub</a>
+          <a class="chip" href={SITE.sponsor}>Sponsor</a>
+        </div>
       </div>
       {
         groups.map((g) => (
@@ -84,6 +88,27 @@ const groups = [
   .brand p {
     color: var(--muted);
     max-width: 26ch;
+  }
+
+  .support {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .support .chip {
+    padding: 7px 14px;
+    border-radius: 999px;
+    color: var(--ink);
+    font-size: 0.875rem;
+    font-weight: 600;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  .support .chip:hover {
+    text-decoration: none;
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   h2 {

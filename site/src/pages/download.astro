@@ -13,7 +13,7 @@ import { softwareApplication } from "../data/schema";
   cta={false}
 >
   <h1>Download unflub</h1>
-  <p class="lead">Free, open source, and nothing you type leaves your machine. Pick your system.</p>
+  <p class="lead">Free and open source, with no paid tier. Nothing you type leaves your computer.</p>
 
   <div class="systems">
     <section class="os ready" aria-labelledby="os-windows">
@@ -46,10 +46,20 @@ import { softwareApplication } from "../data/schema";
     <li>Open settings from the tray icon to pick a theme, change how fixes look, or add your own words and shortcuts.</li>
   </ol>
 
+  <h2>Support unflub</h2>
+  <p>
+    unflub has no paid tier. If it earns a place on your computer, a star on GitHub helps other people find it, and sponsoring
+    pays for the hours that go into it.
+  </p>
+  <div class="cta-row support">
+    <a class="btn btn-quiet" href={SITE.repo}>Star on GitHub</a>
+    <a class="btn btn-quiet" href={SITE.sponsor}>Sponsor</a>
+  </div>
+
   <h2>Build it yourself</h2>
   <p>
-    unflub is MIT licensed. You can read the code, build it with Rust and the Visual Studio Build Tools, and send fixes. The
-    <a href={SITE.repo}>README on GitHub</a> has the steps.
+    unflub is MIT licensed. You can read the code, build it with Rust and the Visual Studio Build Tools, and send fixes. The <a href={SITE.repo}>README on GitHub</a>
+    has the steps.
   </p>
 </Subpage>
 
@@ -113,6 +123,10 @@ import { softwareApplication } from "../data/schema";
   .os.ready :global(.btn) {
     width: auto;
     padding: 0 26px;
+  }
+
+  .support {
+    margin-top: 20px;
   }
 
   .more {

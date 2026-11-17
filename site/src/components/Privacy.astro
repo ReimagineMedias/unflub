@@ -1,15 +1,14 @@
 ---
 import { SITE } from "../data/site";
 
-const statement =
-  "Nothing you type leaves your machine. unflub works fully offline, with no account to make, no telemetry to switch off and no cloud to trust.";
+const statement = "Nothing you type ever leaves your computer. unflub only does what you turn on.";
 const words = statement.split(" ");
 
 const facts = [
-  { title: "Offline", text: "Every fix is decided on your computer. It works on a plane." },
-  { title: "No account", text: "Install it and type. There is nothing to sign up for." },
-  { title: "No telemetry", text: "No usage stats, no analytics, no tracking. The one request it makes is an optional daily update check." },
-  { title: "Hands off secrets", text: "Password fields, password managers and terminals are skipped." },
+  { title: "Fixed on your computer", text: "Every correction is worked out locally. It works on a plane with Wi-Fi off." },
+  { title: "No account", text: "Install it and type. There's nothing to sign up for, and no ads." },
+  { title: "Stats are opt-in", text: "Usage stats are off unless you switch them on. They're counts, like fixes per day, never words." },
+  { title: "Passwords skipped", text: "Password fields are ignored. Password managers and terminals are skipped by default." },
   { title: "Open source", text: "Every line is on GitHub under the MIT licence.", href: SITE.repo },
 ];
 ---
@@ -19,6 +18,10 @@ const facts = [
     <h2 id="privacy-title" class="chapter">Private by design.</h2>
     <p class="statement">
       {words.map((w) => <span class="w">{w} </span>)}
+    </p>
+    <p class="exception">
+      The only thing it sends by itself is a daily update check: app version, Windows version and a random ID that isn't tied to
+      you. <a href="/privacy/">See everything it sends</a>
     </p>
     <ul class="facts">
       {
@@ -81,6 +84,19 @@ const facts = [
     to {
       opacity: 1;
     }
+  }
+
+  .exception {
+    margin-top: 28px;
+    max-width: 40em;
+    font-size: clamp(1.0625rem, 1.5vw, 1.25rem);
+    color: var(--muted);
+  }
+
+  .exception a {
+    color: var(--ink);
+    text-decoration-color: var(--accent);
+    white-space: nowrap;
   }
 
   .facts {

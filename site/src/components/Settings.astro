@@ -89,8 +89,12 @@ const apps = ["windowsterminal.exe", "powershell.exe", "cmd.exe", "wsl.exe", "ke
                 <button type="button" class="switch" role="switch" aria-checked="true" aria-label="Start at login"></button>
               </div>
               <div class="row">
-                <div class="label"><span>Check for updates</span><small>Once a day, from GitHub. Nothing you type is sent.</small></div>
+                <div class="label"><span>Check for updates</span><small>Once a day. Sends the app and Windows version, never what you type.</small></div>
                 <button type="button" class="switch" role="switch" aria-checked="true" aria-label="Check for updates"></button>
+              </div>
+              <div class="row">
+                <div class="label"><span>Share usage stats</span><small>Counts only, like fixes per day. Off unless you turn it on.</small></div>
+                <button type="button" class="switch" role="switch" aria-checked="false" aria-label="Share usage stats"></button>
               </div>
               <div class="row">
                 <div class="label"><span>Undo teaches unflub</span><small>Backspace right after a fix restores your word and stops fixing it.</small></div>
@@ -228,7 +232,7 @@ const apps = ["windowsterminal.exe", "powershell.exe", "cmd.exe", "wsl.exe", "ke
                 <div class="label"><span>unflub 0.1.0</span><small>Phone-style autocorrect for every text field.</small></div>
               </div>
               <div class="row">
-                <div class="label"><span>Private by design</span><small>Works offline. Nothing you type is stored or sent anywhere.</small></div>
+                <div class="label"><span>Private by design</span><small>Nothing you type is stored or sent anywhere. The only connection unflub makes is the update check.</small></div>
               </div>
               <div class="row">
                 <div class="label"><span>Open source</span><small>MIT licensed. An RMGN product.</small></div>

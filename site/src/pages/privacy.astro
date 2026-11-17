@@ -4,40 +4,54 @@ import { SITE } from "../data/site";
 ---
 
 <Subpage
-  title="Privacy: unflub collects nothing"
-  description="unflub works offline and never sends what you type. No account, no telemetry, no analytics. What the app and this website collect, in plain words."
+  title="Privacy: nothing you type leaves your computer"
+  description="What you type stays on your computer. unflub sends one daily update check with no personal data, and usage stats only if you turn them on."
   crumb="Privacy"
 >
-  <h1>We collect nothing.</h1>
-  <p class="lead">unflub runs on your computer and keeps to itself. This page says exactly what that means.</p>
+  <h1>Nothing you type leaves your computer.</h1>
+  <p class="lead">
+    unflub only does what you turn on. The only thing it sends by itself is a daily update check: app version, Windows version
+    and a random ID that isn't tied to you.
+  </p>
 
-  <h2>The app</h2>
+  <h2>What you type</h2>
   <ul>
-    <li>Corrections are decided on your computer. unflub never sends what you type anywhere.</li>
+    <li>Corrections are worked out on your computer. Your text is never sent anywhere.</li>
     <li>
-      It only holds the word you are typing, and the one before it for context, in memory. Nothing you type is written to disk.
-    </li>
-    <li>There is no account, no telemetry, no analytics and no advertising ID.</li>
-    <li>
-      Password fields are always skipped. Terminals and password managers are on the skip list from the start, and you can add
-      any other app.
+      unflub holds the word you are typing, and the one before it for context, in memory. It never writes what you type to disk.
     </li>
     <li>
-      Your settings, your words and your shortcuts are saved in a file on your computer. Uninstalling unflub removes the app;
-      you can delete that file at any time.
+      Password fields are always skipped. Terminals and password managers are skipped by default, and you can add any other app.
     </li>
-    <li>
-      The only network request unflub makes is an optional update check: once a day it asks GitHub whether a new version is
-      out. That request carries nothing you typed, no account and no identifier. Turn it off in Settings, under General, and
-      unflub never goes online.
-    </li>
+    <li>There's no account and no advertising ID. We don't sell or share data, and unflub shows no ads.</li>
   </ul>
 
-  <h2>This website</h2>
+  <h2>The daily update check</h2>
+  <p>Once a day, unflub asks whether a newer version is out. The request carries this and nothing else:</p>
+  <ul>
+    <li>the unflub version, such as {SITE.version}</li>
+    <li>your Windows version and processor type, x64 or ARM</li>
+    <li>
+      a random install ID, made when you install unflub. It isn't based on your name, your account, your hardware or anything
+      you type. It lets us count how many computers run unflub without counting one twice.
+    </li>
+  </ul>
   <p>
-    unflub.rmgn.ca sets no cookies and runs no analytics or tracking scripts. It is served by Cloudflare, which handles each
-    request (including your IP address) to deliver the page and protect the site from abuse. Download links point to GitHub,
-    which has its own privacy statement.
+    Turn off Automatic updates on the About page in Settings and unflub stops checking. With that off, it makes no network
+    requests at all.
+  </p>
+
+  <h2>Usage stats, if you turn them on</h2>
+  <p>
+    Usage stats are off unless you switch them on in Settings. If you do, unflub sends counts once a day: how many fixes it made,
+    how often you undid one, and which settings you use. They never include a word you typed. Switch them off again and they
+    stop.
+  </p>
+
+  <h2>Your settings</h2>
+  <p>
+    Your settings, your words and your shortcuts are saved in a file on your computer. Uninstalling unflub removes the app and its
+    login entry, and the uninstaller asks whether to delete that file too.
   </p>
 
   <h2>Check for yourself</h2>
