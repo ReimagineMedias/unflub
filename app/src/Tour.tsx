@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { tourKey, tourReset } from "./api";
-import { AppIcon, Row, Switch } from "./components";
+import { AppIcon, Disclosure, Row, Switch, SuccessNote } from "./components";
 import { t } from "./i18n";
 import type { AppInfo, Settings, TourAction } from "./types";
 
@@ -67,12 +67,6 @@ function PracticeBox({ onAction }: { onAction: (a: TourAction) => void }) {
       <textarea ref={box} value={text} onChange={() => {}} onKeyDown={onKeyDown} onPaste={(e) => e.preventDefault()}
         onDrop={(e) => e.preventDefault()} placeholder={t("tour.box.placeholder")} aria-label={t("tour.box")}
         spellCheck={false} autoCorrect="off" autoCapitalize="off" rows={3} />
-      <button className="link" onClick={() => {
-        setText("");
-        setPill(null);
-        void tourReset();
-        box.current?.focus();
-      }}>{t("tour.box.clear")}</button>
     </div>
   );
 }
@@ -108,10 +102,10 @@ export function Tour({ settings: s, info, update, onClose }: {
 
       {step === 1 && (
         <>
-          <h1>{t("tour.try.title")}</h1>
+          <h1 className="tour-instruction">{t("tour.try.before")}<strong>{t("tour.try.word")}</strong>{t("tour.try.after")}</h1>
           <p className="lead">{t("tour.try.lead")}</p>
-          <PracticeBox onAction={(a) => a.kind === "replace" && setFixed(true)} />
-          <p className={fixed ? "tour-note good" : "tour-note"}>{fixed ? t("tour.try.done") : t("tour.try.waiting")}</p>
+          <PracticeBox onAction={(a) => a.kind === "replace" && a.original.toLowerCase() === "teh" && a.corrected.toLowerCase() === "the" && setFixed(true)} />
+          <div className="tour-note-slot">{fixed && <SuccessNote>{t("tour.try.done")}</SuccessNote>}</div>
         </>
       )}
 
@@ -120,9 +114,7 @@ export function Tour({ settings: s, info, update, onClose }: {
           <h1>{t("tour.undo.title")}</h1>
           <p className="lead">{t("tour.undo.lead")}</p>
           <PracticeBox onAction={(a) => a.kind === "undo" && setUndone(a.original)} />
-          <p className={undone ? "tour-note good" : "tour-note"}>
-            {undone ? t("tour.undo.done", { word: undone }) : t("tour.undo.waiting")}
-          </p>
+          {undone ? <SuccessNote>{t("tour.undo.done")}</SuccessNote> : <p className="tour-note">{t("tour.undo.waiting")}</p>}
         </>
       )}
 
@@ -130,12 +122,6 @@ export function Tour({ settings: s, info, update, onClose }: {
         <>
           <h1>{t("tour.skips.title")}</h1>
           <p className="lead">{t("tour.skips.lead")}</p>
-          <ul className="tour-list">
-            <li>{t("tour.skips.code")}</li>
-            <li>{t("tour.skips.passwords")}</li>
-            <li>{t("tour.skips.apps")}</li>
-            <li>{t("tour.skips.yours")}</li>
-          </ul>
         </>
       )}
 
@@ -143,13 +129,13 @@ export function Tour({ settings: s, info, update, onClose }: {
         <>
           <h1>{t("tour.data.title")}</h1>
           <p className="lead">{t("tour.data.lead")}</p>
-          <p className="tour-funding">{t("tour.data.funding")}</p>
+          <Disclosure />
           <div className="card">
-            <Row label={t("privacy.stats")} hint={managed?.disableUsageStats ? t("privacy.managed") : t("privacy.stats.hint")}>
+            <Row label={t("privacy.stats")} hint={managed?.disableUsageStats ? t("privacy.managed") : undefined}>
               <Switch label={t("privacy.stats")} disabled={managed?.disableUsageStats}
                 checked={s.shareUsageStats && !managed?.disableUsageStats} onChange={(v) => update({ shareUsageStats: v })} />
             </Row>
-            <Row label={t("privacy.crashes")} hint={managed?.disableCrashReports ? t("privacy.managed") : t("privacy.crashes.hint")}>
+            <Row label={t("privacy.crashes")} hint={managed?.disableCrashReports ? t("privacy.managed") : undefined}>
               <Switch label={t("privacy.crashes")} disabled={managed?.disableCrashReports}
                 checked={s.sendCrashReports && !managed?.disableCrashReports} onChange={(v) => update({ sendCrashReports: v })} />
             </Row>
@@ -167,7 +153,7 @@ export function Tour({ settings: s, info, update, onClose }: {
         <div className="actions">
           {step < STEPS && <button className="btn ghost" onClick={() => setStep(STEPS)}>{t("tour.skip")}</button>}
           {step < STEPS
-            ? <button className="btn" onClick={() => setStep(step + 1)}>{t("tour.next")}</button>
+            ? <button className="btn" disabled={(step === 1 && !fixed) || (step === 2 && !undone)} onClick={() => setStep(step + 1)}>{t("tour.next")}</button>
             : <button className="btn" autoFocus onClick={done}>{t("tour.done")}</button>}
         </div>
       </div>

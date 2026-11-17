@@ -281,6 +281,7 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
     }
     if prev.enabled != next.enabled {
         refresh_tray(app, next.enabled);
+        refresh_window_icon(app, next.enabled);
     }
     if prev.share_usage_stats != next.share_usage_stats {
         let managed = app.state::<AppInfo>().managed;
@@ -470,6 +471,22 @@ fn refresh_tray(app: &AppHandle, enabled: bool) {
     }
 }
 
+/// The settings window's taskbar icon: the app icon, in greys while paused.
+fn window_icon(enabled: bool) -> Image<'static> {
+    let bytes: &'static [u8] = if enabled {
+        include_bytes!("../icons/128x128@2x.png")
+    } else {
+        include_bytes!("../icons/icon-paused.png")
+    };
+    Image::from_bytes(bytes).expect("bundled window icon is a valid PNG")
+}
+
+fn refresh_window_icon(app: &AppHandle, enabled: bool) {
+    if let Some(win) = app.get_webview_window(SETTINGS_WINDOW) {
+        let _ = win.set_icon(window_icon(enabled));
+    }
+}
+
 /// Open the settings window, on `page` if given (`?page=` for a new window, an event for an
 /// open one).
 fn open_settings(app: &AppHandle, page: Option<&str>) {
@@ -498,8 +515,13 @@ fn open_settings(app: &AppHandle, page: Option<&str>) {
             effects: vec![tauri::window::Effect::Mica],
             ..Default::default()
         });
-    if let Err(e) = builder.build() {
-        eprintln!("settings window: {e}");
+    match builder.build() {
+        Ok(win) => {
+            if !current_settings(app).enabled {
+                let _ = win.set_icon(window_icon(false));
+            }
+        }
+        Err(e) => eprintln!("settings window: {e}"),
     }
 }
 

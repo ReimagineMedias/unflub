@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ExternalUrl } from "./links";
 import {
-  defaultSettings, type AppInfo, type CrashAnswer, type RemoteMessage, type SendPreview, type Settings, type StatsView,
+  defaultSettings, type AppInfo, type CrashAnswer, type RemoteMessage, type Settings, type StatsView,
   type SystemLook, type TourAction, type UpdateStatus,
 } from "./types";
 
@@ -87,27 +87,6 @@ export async function onOpenPage(cb: (page: string) => void): Promise<() => void
 export async function openExternal(url: ExternalUrl): Promise<void> {
   if (inTauri) await openUrl(url);
   else console.info("would open", url);
-}
-
-const mockPreview = (): SendPreview => ({
-  stats: mock.shareUsageStats
-    ? JSON.stringify({
-      schema: 1, version: "0.1.0", target: "windows", period: "day",
-      counters: { corrections: 42, undos: 3, suggestions_shown: 40 },
-      settings: { engine: mock.mode, pill: mock.pillStyle, theme: mock.theme, appearance: mock.appearance,
-        excluded_count: mock.excludedApps.length, personal_words_count: mock.personalWords.length,
-        rules_count: mock.userRules.length, auto_update: mock.autoUpdate },
-      perf: { decide_p99_us: 90, inject_p99_us: 400, idle_private_mb: 20 },
-      health: { crashes: 0, hook_reinstalls: 0 },
-    }, null, 2)
-    : null,
-  headers: [["User-Agent", "unflub/0.1.0"], ["X-OS-Version", "10.0.26300"], ["X-Rollout-Bucket", "37"], ["X-First", "day"]],
-  crashReportsAvailable: true,
-});
-
-/** The payloads the next daily send would post, for the Privacy page. */
-export async function sendPreview(): Promise<SendPreview> {
-  return inTauri ? invoke<SendPreview>("send_preview") : mockPreview();
 }
 
 const mockStats: StatsView = {

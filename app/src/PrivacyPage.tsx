@@ -1,25 +1,14 @@
-import { useEffect, useState } from "react";
-import { sendPreview } from "./api";
-import { Row, Segmented, Switch } from "./components";
+import { Disclosure, Row, Segmented, Switch } from "./components";
 import { t } from "./i18n";
-import type { AppInfo, SendPreview, Settings } from "./types";
+import type { AppInfo, Settings } from "./types";
 
-/** What leaves the computer, the switches for it, and exactly what is shared. */
+/** What leaves the computer, and the switches for it. */
 export function PrivacyPage({ settings: s, info, update }: {
   settings: Settings;
   info: AppInfo | null;
   update: (patch: Partial<Settings>) => void;
 }) {
-  const [preview, setPreview] = useState<SendPreview | null>(null);
-  const [open, setOpen] = useState(false);
   const m = info?.managed;
-
-  // The preview follows the switches and settings it reports.
-  useEffect(() => {
-    if (!open) return;
-    const timer = window.setTimeout(() => void sendPreview().then(setPreview), 250);
-    return () => window.clearTimeout(timer);
-  }, [open, s]);
 
   return (
     <>
@@ -27,21 +16,17 @@ export function PrivacyPage({ settings: s, info, update }: {
       <p className="lead">{t("privacy.lead")}</p>
 
       <div className="section-title">{t("privacy.sharing")}</div>
+      <Disclosure />
       <div className="card">
-        <Row label={t("privacy.stats")} hint={m?.disableUsageStats ? t("privacy.managed") : t("privacy.stats.hint")}>
+        <Row label={t("privacy.stats")} hint={m?.disableUsageStats ? t("privacy.managed") : undefined}>
           <Switch label={t("privacy.stats")} disabled={m?.disableUsageStats}
             checked={s.shareUsageStats && !m?.disableUsageStats} onChange={(v) => update({ shareUsageStats: v })} />
         </Row>
-        <Row label={t("privacy.crashes")} hint={
-          m?.disableCrashReports ? t("privacy.managed")
-          : preview && !preview.crashReportsAvailable ? t("privacy.crashes.unavailable")
-          : t("privacy.crashes.hint")
-        }>
+        <Row label={t("privacy.crashes")} hint={m?.disableCrashReports ? t("privacy.managed") : undefined}>
           <Switch label={t("privacy.crashes")} disabled={m?.disableCrashReports}
             checked={s.sendCrashReports && !m?.disableCrashReports} onChange={(v) => update({ sendCrashReports: v })} />
         </Row>
       </div>
-      <p className="note">{t("privacy.funding")}</p>
 
       <div className="section-title">{t("privacy.updates")}</div>
       <div className="card">
@@ -58,24 +43,6 @@ export function PrivacyPage({ settings: s, info, update }: {
           <span />
         </Row>
       </div>
-
-      <details className="exact" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-        <summary>{t("privacy.exact")}</summary>
-        {preview && (
-          <div className="exact-body">
-            <div className="section-title">{t("privacy.exact.headers")}</div>
-            <dl className="headers">
-              {preview.headers.map(([k, v]) => (
-                <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
-              ))}
-            </dl>
-            <div className="section-title">{t("privacy.exact.stats")}</div>
-            {preview.stats ? <pre className="json">{preview.stats}</pre> : <p className="empty">{t("privacy.exact.statsOff")}</p>}
-            <p className="empty">{t("privacy.exact.crash")}</p>
-            <p className="empty">{t("privacy.local")}</p>
-          </div>
-        )}
-      </details>
     </>
   );
 }

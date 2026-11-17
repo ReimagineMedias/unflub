@@ -22,6 +22,32 @@ export function AppIcon({ className }: { className?: string }) {
   );
 }
 
+/** Short, plain list of what is shared. Used by the tour and the Privacy page. */
+export function Disclosure() {
+  return (
+    <div className="disclosure">
+      <p>{t("privacy.disclosure.lead")}</p>
+      <ul>
+        <li>{t("privacy.disclosure.usage")}</li>
+        <li>{t("privacy.disclosure.crashes")}</li>
+      </ul>
+    </div>
+  );
+}
+
+/** Green check that scales and fades in. */
+export function SuccessNote({ children }: { children: ReactNode }) {
+  return (
+    <p className="tour-note good" role="status">
+      <svg className="check" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="12" fill="#2E9E5B" />
+        <path d="M7 12.5l3.2 3.2L17 8.8" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <span>{children}</span>
+    </p>
+  );
+}
+
 export function Row({ label, hint, children, stack }: { label: ReactNode; hint?: ReactNode; children: ReactNode; stack?: boolean }) {
   return (
     <div className={stack ? "row stack" : "row"}>
@@ -75,6 +101,21 @@ export function Switch({ checked, onChange, label, disabled }: {
   return (
     <button className="switch" role="switch" aria-checked={checked} aria-label={label} disabled={disabled}
       onClick={() => onChange(!checked)} />
+  );
+}
+
+/** The sidebar's on/off switch for autocorrect: the unflub mark, a label and a knob. */
+export function PowerSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button className="power" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}>
+      <span className="power-label">{checked ? t("status.on") : t("status.paused")}</span>
+      <span className="power-knob">
+        <svg viewBox="0 0 64 64" aria-hidden="true">
+          <path d="M14 18 V36 a10.5 10.5 0 0 0 21 0 V18" fill="none" stroke="currentColor" strokeWidth="7.5" strokeLinecap="round" />
+          <rect className="caret" x="42" y="9" width="4.5" height="46" rx="2.25" />
+        </svg>
+      </span>
+    </button>
   );
 }
 
