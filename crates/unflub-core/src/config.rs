@@ -40,9 +40,13 @@ pub struct Config {
     pub user_rules: Vec<(String, String)>,
     /// Backspace right after a correction restores the original and stops correcting that word.
     pub undo_learns: bool,
-    /// BCP 47 tag for the system spell checker (e.g. `"en-US"`). The bundled engine is English
-    /// only for now and ignores this.
+    /// BCP 47 tag for the system spell checker (e.g. `"en-US"`). The bundled dictionary is
+    /// English only: for any other language its candidates are off (only the OS checker's own
+    /// fixes apply) unless [`Config::english_for_other_languages`] or `BundledOnly`.
     pub language: String,
+    /// Use the bundled English dictionary's fixes even though `language` isn't English. Off by
+    /// default: it rewrites words of other languages into English (`bien` to `been`).
+    pub english_for_other_languages: bool,
 }
 
 impl Default for Config {
@@ -58,6 +62,26 @@ impl Default for Config {
             user_rules: Vec::new(),
             undo_learns: true,
             language: "en-US".to_string(),
+            english_for_other_languages: false,
+        }
+    }
+}
+
+/// Is `tag` (BCP 47) English? An empty tag counts as English, the bundled dictionary's language.
+pub fn is_english(tag: &str) -> bool {
+    let primary = tag.split(['-', '_']).next().unwrap_or("");
+    primary.is_empty() || primary.eq_ignore_ascii_case("en")
+}
+
+#[cfg(test)]
+mod lang_tests {
+    #[test]
+    fn english_tags() {
+        for tag in ["en", "en-US", "EN-gb", "en_AU", ""] {
+            assert!(super::is_english(tag), "{tag:?}");
+        }
+        for tag in ["fr-FR", "es", "de-DE", "eng", "pt-BR"] {
+            assert!(!super::is_english(tag), "{tag:?}");
         }
     }
 }

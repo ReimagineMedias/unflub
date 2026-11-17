@@ -41,6 +41,8 @@ export interface Settings {
   appearance: Appearance;
   /** BCP 47 tag for the system spell checker, like "en-US". */
   language: string;
+  /** English dictionary fixes even when `language` isn't English. */
+  englishForOtherLanguages: boolean;
 }
 
 /** Mirrors `UpdateStatus` in src-tauri/src/updates.rs. */
@@ -132,4 +134,5 @@ export const defaultSettings: Settings = {
   theme: "unflub",
   appearance: "auto",
   language: "en-US",
+  englishForOtherLanguages: false,
 };

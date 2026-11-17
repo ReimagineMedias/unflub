@@ -385,6 +385,18 @@ impl Engine {
         let flagged_by_system = |backend: &Option<Box<dyn SpellBackend>>, word: &str| {
             backend.as_ref().map(|b| !b.is_correct(word))
         };
+        // The bundled dictionary is English. For another language only the OS checker's own
+        // fixes apply, unless the user asked for English fixes too (or chose BundledOnly).
+        let bundled = config::is_english(&self.config.language)
+            || self.config.english_for_other_languages
+            || self.config.mode == EngineMode::BundledOnly;
+        if !bundled {
+            if flagged_by_system(&self.backend, &self.word) != Some(true) {
+                return None;
+            }
+            let fix = self.backend.as_ref()?.auto_replacement(&self.word)?;
+            return (fix != self.word && !fix.is_empty()).then_some((Source::System, fix));
+        }
         let (flagged, system_fix, margin_scale, leave_alone) = match self.config.mode {
             EngineMode::BundledOnly => (!known, false, 1.0, keep),
             EngineMode::Both => {
@@ -396,8 +408,9 @@ impl Engine {
                 (flagged, true, 1.0, keep)
             }
             EngineMode::Balanced => {
-                let flagged =
-                    flagged_by_system(&self.backend, &self.word).unwrap_or(false) || !known;
+                // Never a word the OS checker calls correct; without one, the bundled
+                // dictionary decides.
+                let flagged = flagged_by_system(&self.backend, &self.word).unwrap_or(!known);
                 (flagged, true, 1.0, keep)
             }
             EngineMode::Aggressive => {

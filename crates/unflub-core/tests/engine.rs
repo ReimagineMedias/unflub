@@ -391,6 +391,62 @@ fn system_only_mode() {
     assert_eq!(t.type_str("teh "), "teh ");
 }
 
+/// Review S5: Balanced never rewrites a word the system checker calls correct.
+#[test]
+fn balanced_trusts_the_system_checker() {
+    let checker = FakeChecker {
+        known: vec!["bien", "teh"],
+        fixes: vec![],
+    };
+    let mut t = with_backend(EngineMode::Balanced, Some(checker));
+    assert_eq!(t.type_str("ok bien teh adn "), "ok bien teh and ");
+    // Without a checker the bundled dictionary decides, as before.
+    let mut t = with_backend(EngineMode::Balanced, None);
+    assert_eq!(t.type_str("ok teh "), "ok the ");
+}
+
+/// Review S5: with a non-English language, the English dictionary rewrites nothing unless the
+/// user opts in; the OS checker's own fixes still apply.
+#[test]
+fn other_languages_get_no_english_fixes() {
+    let french = |mode, english_for_other_languages, backend: Option<FakeChecker>| {
+        let config = Config {
+            mode,
+            language: "fr-FR".into(),
+            english_for_other_languages,
+            ..Config::default()
+        };
+        let backend = backend.map(|b| Box::new(b) as Box<dyn SpellBackend>);
+        Typist::with_engine(Engine::new(config, backend))
+    };
+    let checker = || FakeChecker {
+        known: vec!["bien", "merci", "raison", "allons"],
+        fixes: vec![("ecole", "école")],
+    };
+    for mode in [
+        EngineMode::Both,
+        EngineMode::Balanced,
+        EngineMode::Aggressive,
+        EngineMode::SystemOnly,
+    ] {
+        let mut t = french(mode, false, Some(checker()));
+        assert_eq!(
+            t.type_str("ok bien merci raison allons teh ecole "),
+            "ok bien merci raison allons teh école ",
+            "{mode:?}"
+        );
+        // No checker at all: nothing to go on.
+        let mut t = french(mode, false, None);
+        assert_eq!(t.type_str("ok bien teh "), "ok bien teh ", "{mode:?}");
+    }
+    // Opting in brings the English fixes back.
+    let mut t = french(EngineMode::Both, true, None);
+    assert_eq!(t.type_str("ok teh "), "ok the ");
+    // BundledOnly is an explicit choice of the English dictionary.
+    let mut t = french(EngineMode::BundledOnly, false, None);
+    assert_eq!(t.type_str("ok teh "), "ok the ");
+}
+
 #[test]
 fn aggressive_mode_takes_low_margin_fixes() {
     let mut bundled = Typist::bundled();

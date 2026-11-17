@@ -129,6 +129,9 @@ pub struct Settings {
     pub appearance: Appearance,
     /// BCP 47 tag for the system spell checker, like `en-US`.
     pub language: String,
+    /// Use the English dictionary's fixes even when `language` isn't English (off: only the
+    /// OS checker's own fixes there). Not in the settings window yet; settings.json only.
+    pub english_for_other_languages: bool,
     /// Fields this version doesn't know, from a newer unflub. Kept and written back, so running
     /// an older version for a while doesn't wipe them.
     #[serde(flatten)]
@@ -168,6 +171,7 @@ impl Default for Settings {
             theme: Theme::Unflub,
             appearance: Appearance::Auto,
             language: core.language,
+            english_for_other_languages: core.english_for_other_languages,
             extra: serde_json::Map::new(),
         }
     }
@@ -207,6 +211,7 @@ impl Settings {
             user_rules: self.user_rules.clone(),
             undo_learns: self.undo_learns,
             language: self.language.clone(),
+            english_for_other_languages: self.english_for_other_languages,
         }
     }
 }
@@ -353,6 +358,7 @@ mod tests {
             personal_words: vec!["rmgn".into()],
             user_rules: vec![("omw".into(), "on my way".into())],
             language: "en-GB".into(),
+            english_for_other_languages: true,
             ..Settings::default()
         };
         assert_eq!(
@@ -368,6 +374,7 @@ mod tests {
                 user_rules: vec![("omw".into(), "on my way".into())],
                 undo_learns: false,
                 language: "en-GB".into(),
+                english_for_other_languages: true,
             }
         );
         // Defaults agree with the engine's, apart from the apps the app excludes.

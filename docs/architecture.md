@@ -251,10 +251,15 @@ Its top suggestion was right for 20 of 23 real typos, but it ranks without conte
   short words and for capitalised words mid-sentence, and weaker for long words.
 
 Engine modes (user setting): `Both` (default: OS flags it and the bundled ranking is confident),
-`SystemOnly`, `BundledOnly` (identical on every OS), `Aggressive` (phone-like).
+`SystemOnly`, `BundledOnly` (identical on every OS), `Balanced` (like `Both`, plus the OS
+checker's own auto-replace fixes; it never fixes a word the OS checker calls correct, and
+without an OS checker the bundled dictionary decides), `Aggressive` (phone-like: either may
+flag the word, low margin).
 
 `Config::language` (default `en-US`) tells the adapter which language to open the OS checker
-in. The bundled dictionary is English only for now and ignores it.
+in. The bundled dictionary is English only, so for any other language its candidates are off
+and only the OS checker's own fixes apply (French `bien` must never become `been`), unless
+`english_for_other_languages` is set (settings.json only for now) or the mode is `BundledOnly`.
 
 The bundled dictionary includes about 1,000 programming terms (`data/tech_words.txt`):
 keywords, standard types, tools and jargon. People write prose about code all day, so these
