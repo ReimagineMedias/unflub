@@ -21,8 +21,10 @@ Repo is private until v0.1, then flipped public.
   Scripts:Edit and rmgn.ca Workers Routes:Edit + DNS:Edit only) and `CLOUDFLARE_ACCOUNT_ID`. Deploys with the lockfile's
   wrangler (`npx --no-install`), no third-party deploy action; workflow actions are SHA-pinned. Performance figures live in `site/src/data/performance.ts`; keep them in step with
   docs/performance.md. Scripts must stay external files (CSP is `script-src 'self'`; a test enforces it).
-- Site privacy copy (owner, 2026-11-17): "Nothing you type ever leaves your computer. unflub only does what you turn on."
-  The one thing sent by itself is a daily update check (app version, Windows version + architecture, random install ID);
-  usage stats are opt-in counts only. Never imply tracking, ads or data selling. Sponsor/star links come from `SITE.sponsor`
-  and `SITE.repo` in `site/src/data/site.ts`. FAQ performance answer reads `performance.ts`.
+- Site privacy copy (owner, 2026-11-17): "Nothing you type leaves your computer. unflub counts how it's used, never what
+  you write, and you can switch that off in one click." On by default (one switch off): usage counts and scrubbed crash
+  reports, plus the daily update check (version, Windows version + architecture, random install ID). Off unless turned on:
+  "Help improve corrections" (typo/fix pairs, common words only, kept once 5+ installs send the same pair). The app's Stats
+  page is local only. Never imply tracking, ads or data selling. Sponsor/star links come from `SITE.sponsor` and `SITE.repo`
+  in `site/src/data/site.ts`. The FAQ performance answer reads `performance.ts`.
 - In Git Bash, `--flag=/path`-style args get rewritten to Windows paths (MSYS); pass names, not leading-slash paths.

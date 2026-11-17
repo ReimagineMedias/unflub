@@ -14,7 +14,7 @@ export const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Does unflub send anything over the internet?",
-    a: "Nothing you type ever leaves your computer. The only thing it sends by itself is a daily update check: app version, Windows version and a random ID that isn't tied to you. Turn off Automatic updates in Settings and that stops too. Usage stats are off unless you switch them on, and even then they're counts like fixes per day, never words.",
+    a: "Never what you type. By default it sends usage counts like corrections per day, crash reports with your text scrubbed out, and a daily update check with the app version, Windows version and a random ID that isn't tied to you. One switch in Settings turns off the stats and crash reports. Sharing typo and fix pairs, like teh → the, stays off unless you turn it on.",
   },
   {
     q: "Will it mess with my code or my terminal?",
