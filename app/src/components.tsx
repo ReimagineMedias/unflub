@@ -104,6 +104,21 @@ export function Switch({ checked, onChange, label, disabled }: {
   );
 }
 
+/** The sidebar's on/off switch for autocorrect: the unflub mark, a label and a knob. */
+export function PowerSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button className="power" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}>
+      <span className="power-label">{checked ? t("status.on") : t("status.paused")}</span>
+      <span className="power-knob">
+        <svg viewBox="0 0 64 64" aria-hidden="true">
+          <path d="M14 18 V36 a10.5 10.5 0 0 0 21 0 V18" fill="none" stroke="currentColor" strokeWidth="7.5" strokeLinecap="round" />
+          <rect className="caret" x="42" y="9" width="4.5" height="46" rx="2.25" />
+        </svg>
+      </span>
+    </button>
+  );
+}
+
 /** `title` on an option is its tooltip: the technical detail behind a plain label. */
 export function Segmented<T extends string>({ value, options, onChange, label }: {
   value: T;

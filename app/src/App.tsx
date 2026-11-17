@@ -4,7 +4,7 @@ import {
   installUpdate, onCrashReport, onOpenPage, onRemoteMessage, onSettingsChanged, onUpdateStatus, remoteMessage,
   resetSettings, setSettings, systemLook, updateStatus,
 } from "./api";
-import { AppIcon, ChipList, ExternalLink, Logo, NavIcon, Row, RuleList, Segmented, Slider, Switch } from "./components";
+import { AppIcon, ChipList, ExternalLink, Logo, NavIcon, PowerSwitch, Row, RuleList, Segmented, Slider, Switch } from "./components";
 import { t, type StringKey } from "./i18n";
 import { LINKS, isExternalUrl } from "./links";
 import { PillPreview } from "./PillPreview";
@@ -202,10 +202,7 @@ export default function App() {
           </button>
         ))}
         <div className="spacer" />
-        <div className={s.enabled ? "status" : "status off"}>
-          <span className="dot" />
-          {s.enabled ? t("status.on") : t("status.paused")}
-        </div>
+        <PowerSwitch checked={s.enabled} onChange={(v) => update({ enabled: v })} />
       </nav>
 
       <main>
