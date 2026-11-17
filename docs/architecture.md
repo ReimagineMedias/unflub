@@ -51,7 +51,9 @@ Its top suggestion was right for 20 of 23 real typos, but it ranks without conte
   adjacency (a slip to a neighbouring key is far more likely than a random letter), transposed
   letters, doubled or dropped letters, and the previous word (bigram frequency).
 - **Confidence:** a correction only fires when the best candidate clearly beats the runner-up,
-  scaled by the user's confidence setting. Ambiguous words are left alone.
+  scaled by the user's confidence setting. Ambiguous words are left alone. The runner-up can
+  also be "leave it": an unknown word may be a name or jargon. That hypothesis is stronger for
+  short words and for capitalised words mid-sentence, and weaker for long words.
 
 Engine modes (user setting): `Both` (default: OS flags it and the bundled ranking is confident),
 `SystemOnly`, `BundledOnly` (identical on every OS), `Aggressive` (phone-like).
@@ -60,9 +62,11 @@ Engine modes (user setting): `Both` (default: OS flags it and the bundled rankin
 
 - Password and other secure fields, and apps on the user's exclude list.
 - Code-looking tokens: camelCase, snake_case, paths, URLs, anything inside backticks, words with
-  digits.
+  digits, and all-caps words (treated as acronyms).
 - The personal dictionary and words the user has undone before.
 - Words shorter than the minimum length.
+- The first word after a reset: the caret may be in the middle of text we never saw.
+- Hyphenated words, words with non-ASCII letters, and words ending in an apostrophe.
 
 ## UI processes
 
