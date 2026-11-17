@@ -42,15 +42,28 @@ enum Msg {
     Shutdown,
 }
 
-/// Writes messages to the app. One frame per call, under a lock.
+/// Writes messages to the app. One frame per call, under a lock (which holds whether the
+/// session already failed).
 #[derive(Clone)]
-struct Outbox(Arc<Pipe>, Arc<Mutex<()>>);
+struct Outbox(Arc<Pipe>, Arc<Mutex<bool>>);
 
 impl Outbox {
     fn send(&self, message: &FromEngine) {
-        let _guard = self.1.lock().unwrap_or_else(|e| e.into_inner());
-        // A broken pipe also ends the reader, which shuts us down.
-        let _ = frame::write(&mut &*self.0, message);
+        let mut failed = self.1.lock().unwrap_or_else(|e| e.into_inner());
+        if *failed {
+            return;
+        }
+        // Every write has a deadline (`pipe::WRITE_TIMEOUT`): an app that stops reading can't
+        // stall this thread, and with it the hook's events and a Shutdown behind them. A failed
+        // or timed-out write may have left half a frame, so the session is over: cancelling the
+        // pipe's I/O ends the reader, which shuts the engine down (unhooking cleanly).
+        if let Err(e) = frame::write(&mut &*self.0, message) {
+            if e.kind() != io::ErrorKind::BrokenPipe {
+                eprintln!("unflub-engine: can't reach the app ({e}); stopping");
+            }
+            *failed = true;
+            self.0.cancel_io();
+        }
     }
 }
 

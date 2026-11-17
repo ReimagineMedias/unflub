@@ -188,6 +188,8 @@ mod host {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     /// How long a shutdown may take before the engine is killed.
     const STOP_TIMEOUT: Duration = Duration::from_secs(3);
+    /// How long the `Shutdown` message may wait for an engine that stopped reading.
+    const SHUTDOWN_WRITE: Duration = Duration::from_millis(500);
 
     type Learned = Arc<Mutex<Box<dyn FnMut(String) + Send>>>;
 
@@ -361,13 +363,34 @@ mod host {
             engine_settings(&self.settings, &self.flags, self.undo_counts.snapshot())
         }
 
-        fn configure(&self) {
-            if let Some(r) = &self.running {
-                let settings = self.engine_settings();
-                if let Err(e) = frame::write(&mut &*r.pipe, &ToEngine::Configure { settings }) {
-                    eprintln!("autocorrect: can't reach the engine: {e}");
-                }
+        fn configure(&mut self) {
+            let Some(r) = &self.running else {
+                return;
+            };
+            let settings = self.engine_settings();
+            // The write has a deadline (`pipe::WRITE_TIMEOUT`). An engine that stopped reading,
+            // or a write cut short, ends this session: kill it and restart with backoff.
+            if let Err(e) = frame::write(&mut &*r.pipe, &ToEngine::Configure { settings }) {
+                eprintln!("autocorrect: can't reach the engine ({e}); restarting it");
+                self.end_session();
             }
+        }
+
+        /// The pipe failed: end the engine without asking (asking needs the pipe) and restart
+        /// it with backoff, like a crash.
+        fn end_session(&mut self) {
+            let Some(mut running) = self.running.take() else {
+                return;
+            };
+            running.pipe.cancel_io();
+            let _ = running.child.kill();
+            let _ = running.child.wait();
+            if let Some(reader) = running.reader.take() {
+                let _ = reader.join();
+            }
+            (self.observer)(Observed::EngineCrashed);
+            self.failures = failures_after(self.failures, running.started.elapsed());
+            self.next_start = Some(Instant::now() + super::backoff(self.failures));
         }
 
         fn spawn(&mut self) -> std::io::Result<Running> {
@@ -411,7 +434,11 @@ mod host {
             self.generation += 1;
             let generation = self.generation;
             let settings = self.engine_settings();
-            frame::write(&mut &*pipe, &ToEngine::Configure { settings })?;
+            if let Err(e) = frame::write(&mut &*pipe, &ToEngine::Configure { settings }) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e);
+            }
             let reader = {
                 let pipe = pipe.clone();
                 let tx = self.tx.clone();
@@ -468,12 +495,16 @@ mod host {
             let Some(mut running) = self.running.take() else {
                 return;
             };
-            let _ = frame::write(&mut &*running.pipe, &ToEngine::Shutdown);
-            if wait_for(&mut running.child, STOP_TIMEOUT).is_none() {
+            // Both steps have deadlines, so a stuck engine is killed within about 3.5 s: the
+            // write gives up after `SHUTDOWN_WRITE`, and a failed write skips the wait.
+            running.pipe.set_write_timeout(Some(SHUTDOWN_WRITE));
+            let asked = frame::write(&mut &*running.pipe, &ToEngine::Shutdown).is_ok();
+            if !asked || wait_for(&mut running.child, STOP_TIMEOUT).is_none() {
                 eprintln!("autocorrect: the engine didn't stop; ending it");
                 let _ = running.child.kill();
                 let _ = running.child.wait();
             }
+            running.pipe.cancel_io();
             if let Some(reader) = running.reader.take() {
                 let _ = reader.join();
             }

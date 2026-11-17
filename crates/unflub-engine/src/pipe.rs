@@ -11,9 +11,15 @@
 //! I/O is overlapped, so one thread can block reading while another writes (synchronous I/O
 //! on one handle is serialised by Windows, which would deadlock a reader and a writer).
 //! `&Pipe` implements [`Read`] and [`Write`]; a broken pipe reads as end of stream.
+//!
+//! Every write has a deadline ([`WRITE_TIMEOUT`] unless [`Pipe::set_write_timeout`] says
+//! otherwise): a peer that is alive but stops reading fills the pipe, and neither side may then
+//! hang in a write. A write that times out is cancelled and may have sent part of a frame, so
+//! the session is over: callers drop the pipe (the app ends the engine, the engine shuts down).
 
 use std::ffi::c_void;
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use windows::core::{HSTRING, PWSTR};
@@ -44,6 +50,9 @@ use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
 const BUFFER: u32 = 64 * 1024;
 
+/// How long one write may wait for the peer to read.
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// A fresh pipe name: `\\.\pipe\unflub-engine-<pid>-<64 random bits>`.
 pub fn unique_name() -> String {
     use std::collections::hash_map::RandomState;
@@ -65,6 +74,8 @@ pub fn unique_name() -> String {
 /// An owned pipe handle, connected (or, inside a [`Listener`], waiting for its client).
 pub struct Pipe {
     handle: HANDLE,
+    /// Milliseconds a write may take; 0 waits forever.
+    write_timeout_ms: AtomicU64,
 }
 
 // SAFETY: a pipe handle may be used from any thread; overlapped I/O keeps reads and writes
@@ -124,7 +135,7 @@ impl Listener {
             return Err(error);
         }
         Ok(Self {
-            pipe: Pipe { handle },
+            pipe: Pipe::new(handle),
         })
     }
 
@@ -164,7 +175,27 @@ impl Pipe {
             )
         }
         .map_err(win)?;
-        Ok(Self { handle })
+        Ok(Self::new(handle))
+    }
+
+    fn new(handle: HANDLE) -> Self {
+        Self {
+            handle,
+            write_timeout_ms: AtomicU64::new(WRITE_TIMEOUT.as_millis() as u64),
+        }
+    }
+
+    /// How long each write may wait for the peer (`None`: forever).
+    pub fn set_write_timeout(&self, timeout: Option<Duration>) {
+        let ms = timeout.map_or(0, |t| t.as_millis().clamp(1, u128::from(u64::MAX)) as u64);
+        self.write_timeout_ms.store(ms, Ordering::Relaxed);
+    }
+
+    /// Cancel every read and write in progress on this pipe from this process: a blocked
+    /// reader returns an error, which ends its session.
+    pub fn cancel_io(&self) {
+        // SAFETY: cancels our own operations on our own handle; each waits for its completion.
+        let _ = unsafe { CancelIoEx(self.handle, None) };
     }
 
     /// Process id of the connected client.
@@ -265,8 +296,12 @@ impl Write for &Pipe {
         let handle = self.handle;
         let len = buf.len().min(u32::MAX as usize);
         let ptr = buf.as_ptr();
+        let timeout = match self.write_timeout_ms.load(Ordering::Relaxed) {
+            0 => None,
+            ms => Some(Duration::from_millis(ms)),
+        };
         // SAFETY: buf outlives the operation, which `overlapped` waits for.
-        self.overlapped(None, |ov| unsafe {
+        self.overlapped(timeout, |ov| unsafe {
             WriteFile(
                 handle,
                 Some(std::slice::from_raw_parts(ptr, len)),
@@ -429,6 +464,32 @@ mod tests {
             .read_timeout(&mut buf, Duration::from_millis(50))
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    /// Review finding 2: a peer that stops reading can't block a writer for good.
+    #[test]
+    fn a_write_to_a_peer_that_stops_reading_times_out() {
+        let (server, client) = pair();
+        server.set_write_timeout(Some(Duration::from_millis(300)));
+        let started = std::time::Instant::now();
+        let big = vec![b'x'; 1024 * 1024];
+        let err = (&server).write_all(&big).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(client);
+    }
+
+    #[test]
+    fn cancelling_ends_a_blocked_read() {
+        let (server, _client) = pair();
+        let server = std::sync::Arc::new(server);
+        let reader = {
+            let server = server.clone();
+            thread::spawn(move || frame::read(&mut &*server))
+        };
+        thread::sleep(Duration::from_millis(100));
+        server.cancel_io();
+        assert!(reader.join().unwrap().is_err());
     }
 
     #[test]
