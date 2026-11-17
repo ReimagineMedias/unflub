@@ -26,8 +26,9 @@ pub enum EngineMode {
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 pub enum UndoMode {
     /// Default. While the pill is up, the first Backspace is held (nothing is deleted) and the
-    /// pill asks "Undo?"; a second Backspace undoes the fix. Anything else, or the pill timing
-    /// out, sends the held Backspace first, so deleting the space to add a comma still works.
+    /// pill asks "Undo?" until answered (no timeout); a second Backspace undoes the fix. Any
+    /// other key sends the held Backspace first, so deleting the space to add a comma still
+    /// works.
     #[default]
     Twice,
     /// The first Backspace right after a fix undoes it (the old behaviour).

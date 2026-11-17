@@ -62,7 +62,7 @@ impl Typist {
         action
     }
 
-    /// What the adapter does before any other key, and when the undo window runs out: send a
+    /// What the adapter does before any other key, and on pause or quit: send a
     /// held Backspace on. Returns whether one was held.
     pub fn release(&mut self) -> bool {
         let held = self.engine.end_undo_window();

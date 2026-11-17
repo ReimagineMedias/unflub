@@ -49,8 +49,8 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardLayout, GetLastInputInfo, ToUnicodeEx, HKL,
-    LASTINPUTINFO, VK_BACK, VK_CAPITAL, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
-    VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB,
+    LASTINPUTINFO, VK_CAPITAL, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU,
+    VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
@@ -513,6 +513,14 @@ fn run(
             session.destroy();
         }
         hooks.uninstall();
+        // Pausing or quitting with a Backspace held: send it, so the keypress isn't lost. Our
+        // hooks are gone, so it goes straight to the app.
+        if let Some(held) = with_state(State::take_held).flatten() {
+            let _ = inject::send(&inject::replay_inputs(
+                &[held, RawEvent { up: true, ..held }],
+                0,
+            ));
+        }
     }
     take_report()
 }
@@ -830,6 +838,14 @@ fn foreground_layout() -> HKL {
     unsafe { GetKeyboardLayout(GetWindowThreadProcessId(hwnd, None)) }
 }
 
+/// Ctrl, Alt, Shift or Win held: a Backspace with one of these isn't a plain second Backspace.
+fn modifier_down() -> bool {
+    // SAFETY: trivial queries.
+    [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN]
+        .iter()
+        .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk.0)) } as u16 & 0x8000 != 0)
+}
+
 /// Is `vk` already down? Async state doesn't include the event being hooked yet, so for a
 /// key-down this is true exactly when it is an auto-repeat of a press that went through.
 fn already_down(vk: u16) -> bool {
@@ -936,12 +952,13 @@ impl State {
         };
         let async_down = !ev.up && already_down(vk);
         // A held first Backspace goes out before any other key-down (the pipeline then holds
-        // this key behind it), so deleting the space to add a comma keeps working. Only a fresh
-        // second Backspace reaches the corrector, which undoes the fix.
+        // this key behind it), so deleting the space to add a comma keeps working. Only a fresh,
+        // plain second Backspace reaches the corrector, which undoes the fix. There is no
+        // timeout: the hold ends with the next key, a click, or the hook stopping.
         if !ev.up
             && origin == Origin::User
             && self.held.is_some()
-            && (vk != VK_BACK.0 || async_down)
+            && crate::policy::releases_held_backspace(vk, async_down, modifier_down())
         {
             self.release_held();
         }
@@ -1133,6 +1150,8 @@ impl State {
         }
         self.pipeline.hold(ev);
         self.held = Some(ev);
+        // Held until answered: no timer may end it (see `check_undo_deadline`).
+        self.undo_deadline = None;
         let _ = self.events.send(HookEvent::UndoPending { replacement });
         true
     }
@@ -1157,17 +1176,20 @@ impl State {
         self.undo_deadline = None;
     }
 
-    /// The undo window ran out: a held Backspace goes out now; otherwise the next Backspace
-    /// is a plain one again.
+    /// The time to start a double-Backspace undo ran out (the fix's pill is gone): the next
+    /// Backspace is a plain one. A Backspace already held is never released by time; it waits
+    /// for the next key, which releases it (so it never holds other input back).
     fn check_undo_deadline(&mut self) {
-        if self.undo_deadline.is_some_and(|d| Instant::now() >= d) {
-            if self.held.is_some() {
-                self.release_held();
-            } else {
-                self.corrector.end_undo_window();
-                self.undo_deadline = None;
-            }
+        if self.held.is_none() && self.undo_deadline.is_some_and(|d| Instant::now() >= d) {
+            self.corrector.end_undo_window();
+            self.undo_deadline = None;
         }
+    }
+
+    /// The hook is stopping (pause, quit, engine stop): a held Backspace is the user's keypress,
+    /// so it is returned for sending after the hooks are gone.
+    fn take_held(&mut self) -> Option<RawEvent> {
+        self.held.take()
     }
 
     /// The stale-batch timer fired.

@@ -172,6 +172,15 @@ pub fn is_terminal_input_class(class: &str) -> bool {
         .any(|c| c == "xterm-helper-textarea")
 }
 
+/// While a first Backspace is held (double-Backspace undo), does this key-down release it (send
+/// it on, ahead of the key)? Every key does except a fresh, plain Backspace, which undoes the
+/// fix: an auto-repeat or a Backspace with Ctrl, Alt, Shift or Win releases it too. There is no
+/// timeout, and nothing else waits on the hold.
+pub fn releases_held_backspace(vk: u16, auto_repeat: bool, modifier: bool) -> bool {
+    const BACK: u16 = 0x08;
+    vk != BACK || auto_repeat || modifier
+}
+
 /// Primary-language ids of layouts that normally come with an IME (Chinese, Japanese, Korean).
 /// Keys there are IME composition input, not the text that ends up in the field.
 pub fn is_ime_language(langid: u16) -> bool {
@@ -246,6 +255,21 @@ mod tests {
             assert!(keep_words(Some(app)), "{app}");
         }
         assert!(!keep_words(None), "unknown app keeps no words");
+    }
+
+    /// Owner live test: only a plain second Backspace keeps the hold for the undo; everything
+    /// else, Ctrl+Backspace included, sends the held Backspace first.
+    #[test]
+    fn what_releases_a_held_backspace() {
+        assert!(
+            !releases_held_backspace(0x08, false, false),
+            "second Backspace undoes"
+        );
+        assert!(releases_held_backspace(0x08, true, false), "auto-repeat");
+        assert!(releases_held_backspace(0x08, false, true), "Ctrl+Backspace");
+        for vk in [0xBC, 0x41, 0x25, 0x10, 0x0D, 0x20] {
+            assert!(releases_held_backspace(vk, false, false), "{vk:#x}");
+        }
     }
 
     #[test]

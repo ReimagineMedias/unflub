@@ -163,13 +163,19 @@ fn single_backspace_then_comma_keeps_the_fix() {
     assert_eq!(t.engine.undo_count("teh", "the"), 0);
 }
 
-/// Twice: one Backspace, then the window runs out: the Backspace is sent then.
+/// Twice: a held Backspace waits as long as it takes (no timeout in the engine), and is sent
+/// when the adapter lets it go (on pause or quit).
 #[test]
-fn single_backspace_then_timeout_deletes() {
+fn a_held_backspace_waits_until_answered() {
     let mut t = mode(UndoMode::Twice, 2);
     t.type_str("teh ");
     assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
-    assert!(t.release(), "the adapter's timer releases it");
+    // Still held, however long nothing happens: the second Backspace still undoes.
+    let mut later = mode(UndoMode::Twice, 2);
+    later.type_str("teh ");
+    later.press(Key::Backspace);
+    assert!(matches!(later.press(Key::Backspace), Action::Undo(_)));
+    assert!(t.release(), "pause or quit sends it on");
     assert_eq!(t.text, "the");
     // Typing goes on normally.
     assert_eq!(t.type_str("re "), "there ");

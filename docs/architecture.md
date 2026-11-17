@@ -51,18 +51,18 @@ app stay the same.
 
    | After a fix, while its pill shows (pill duration) | What happens |
    |---|---|
-   | Backspace | Held: nothing is deleted, the pill turns red and asks "Undo?" (`Action::HoldBackspace`) |
-   | then Backspace again | The fix is undone: your word and the boundary come back, the pill says "Undone" |
-   | then any other key (comma, letter, arrow, Shift, Enter) | The held Backspace is sent first, then that key, in order (`,` after `the ` gives `the,`) |
-   | then nothing until the pill's time is up | The held Backspace is sent then |
-   | then a click or a focus change | The held Backspace is dropped |
+   | Backspace | Held: nothing is deleted, the pill turns red and asks "Undo?" (`Action::HoldBackspace`), and stays up until answered |
+   | then Backspace again | The fix is undone: your word and the boundary come back, the pill says "Undone" and fades as usual |
+   | then any other key (comma, letter, arrow, Shift, Enter, Ctrl+Backspace) | The held Backspace is sent first, then that key, in order (`,` after `the ` gives `the,`); the pill fades out at once |
+   | then a click or a focus change | The held Backspace is dropped; the pill fades out |
+   | then pause, quit or the engine stopping | The held Backspace is sent after the hooks are gone, so the keypress isn't lost |
    | Backspace after the pill's time | A plain Backspace |
 
-   At timeout the held Backspace is applied rather than dropped: the user pressed it and
-   expects a deletion, and the red pill shows it is pending. It is not kept for the next key
-   either, which might come after a click in another field. A click is the exception: it has
-   already moved the caret, so sending the Backspace then would delete wherever the click
-   landed (holding the click back and replaying it would mean re-injecting mouse input).
+   The hold has no timeout (owner testing: a red pill that vanished on its own, deleting a
+   space a second later, felt wrong), but it never holds other input back: the next key-down,
+   whatever it is, releases it first. A click is the exception: it has already moved the
+   caret, so sending the Backspace then would delete wherever the click landed (holding the
+   click back and replaying it would mean re-injecting mouse input).
    With "Backspace once" the first Backspace right after a fix undoes it, as before; with "Off"
    Backspace is always just Backspace.
 

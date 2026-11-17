@@ -67,8 +67,9 @@ pub enum Action {
     /// [`UndoMode::Twice`]: swallow this Backspace and hold it; the fix (`Replacement`) may be
     /// undone by a second Backspace. Before anything else reaches the engine, the adapter
     /// calls [`Corrector::end_undo_window`] and, when it returns true, sends the held
-    /// Backspace on (it then comes back as a plain Backspace). It does the same when the undo
-    /// window ([`Corrector::undo_window`]) runs out. On a click or focus change it drops it.
+    /// Backspace on (it then comes back as a plain Backspace). Nothing ends the hold by time:
+    /// the undo window ([`Corrector::undo_window`]) only bounds when the first Backspace may be
+    /// held. On a click or focus change the adapter drops it; on pause or quit it sends it.
     HoldBackspace(Replacement),
 }
 

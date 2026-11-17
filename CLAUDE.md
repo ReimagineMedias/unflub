@@ -55,7 +55,7 @@ Repo is private until v0.1, then flipped public.
   in `binaries/`.
 - Undo (since 2026-11-17): double Backspace by default (`undoMode` twice/once/off, settings schema v2), the first
   Backspace is held by the hook (`Action::HoldBackspace`, pill "Undo?" in the alert red) and released before any
-  other key-down through the replay pipeline, sent at the pill timeout, dropped on click/focus change. Learning after
+  other key-down through the replay pipeline (no timeout; the pill stays until answered), dropped on click/focus change, sent on pause/quit. Learning after
   `learnAfterUndos` undos (default 2), counts in `undo-counts.json`. Never call `ISpellChecker::Add` (shared Windows
   dictionary); `spell.rs` has a test that scans the workspace for it.
 - Engine panics: the engine's hook writes `engine-crash.json` (Sentry event JSON: `symbolic` debug images use the

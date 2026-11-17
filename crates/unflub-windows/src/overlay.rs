@@ -586,6 +586,18 @@ pub struct Frame {
     pub rise: f32,
 }
 
+/// How long a pill for `correction` stays up. "Undo?" holds until it is answered (a second
+/// Backspace, another key, a click): the hook ends it, never a timer.
+pub fn pill_duration_ms(correction: &Correction, config: &PillConfig) -> u32 {
+    match correction.kind {
+        CorrectionKind::UndoPending => UNTIL_ANSWERED_MS,
+        _ => config.duration_ms,
+    }
+}
+
+/// "Until answered": a day, so the animation code needs no special case.
+pub const UNTIL_ANSWERED_MS: u32 = 24 * 60 * 60 * 1000;
+
 /// The frame `elapsed_ms` after the pill appeared, or `None` once it is gone.
 /// Fade and rise in over [`FADE_IN_MS`] (ease-out), hold, fade out over [`FADE_OUT_MS`].
 pub fn frame_at(elapsed_ms: u32, duration_ms: u32) -> Option<Frame> {
@@ -950,6 +962,8 @@ mod win {
         origin: POINT,
         scale: f32,
         shown: Instant,
+        /// Time on screen including the fades ([`pill_duration_ms`]); shortened to fade out now.
+        duration: u32,
     }
 
     struct Pill {
@@ -971,7 +985,7 @@ mod win {
             while let Ok(command) = self.commands.try_recv() {
                 match command {
                     Command::Show(correction) => self.start_locating(correction),
-                    Command::Hide => self.cancel(),
+                    Command::Hide => self.fade_out(),
                     Command::Config(config) => {
                         self.config = config;
                         if config_is_off(&self.config) {
@@ -1097,7 +1111,8 @@ mod win {
                 None => now,
             };
             let elapsed = elapsed_ms(shown, now);
-            let frame = frame_at(elapsed, self.config.duration_ms).unwrap_or(Frame {
+            let duration = pill_duration_ms(correction, &self.config);
+            let frame = frame_at(elapsed, duration).unwrap_or(Frame {
                 alpha: 0.0,
                 rise: 0.0,
             });
@@ -1139,8 +1154,9 @@ mod win {
                 origin,
                 scale,
                 shown,
+                duration,
             });
-            match next_tick_ms(elapsed, self.config.duration_ms) {
+            match next_tick_ms(elapsed, duration) {
                 Some(ms) => self.set_timer(TIMER_ANIM, ms),
                 None => self.hide(),
             }
@@ -1153,7 +1169,7 @@ mod win {
                 return;
             };
             let elapsed = elapsed_ms(v.shown, Instant::now());
-            let duration = self.config.duration_ms;
+            let duration = v.duration;
             let Some(frame) = frame_at(elapsed, duration) else {
                 self.hide();
                 return;
@@ -1201,6 +1217,22 @@ mod win {
                     let _ = ShowWindow(self.hwnd, SW_HIDE);
                 }
             }
+        }
+
+        /// Start fading out now (the "Undo?" pill was answered by another key or a click).
+        fn fade_out(&mut self) {
+            self.locating = None;
+            self.kill_timer(TIMER_LOCATE);
+            let Some(v) = self.visible.as_mut() else {
+                return;
+            };
+            let elapsed = elapsed_ms(v.shown, Instant::now()).max(FADE_IN_MS);
+            v.duration = (elapsed + FADE_OUT_MS).max(MIN_DURATION_MS);
+            // Keep the timing consistent: a short pill restarts its fade from full opacity.
+            v.shown = Instant::now()
+                .checked_sub(Duration::from_millis(u64::from(v.duration - FADE_OUT_MS)))
+                .unwrap_or_else(Instant::now);
+            self.set_timer(TIMER_ANIM, FRAME_MS);
         }
 
         fn cancel(&mut self) {
@@ -1861,6 +1893,25 @@ mod tests {
             original: original.into(),
             corrected: corrected.into(),
             source: Source::UserRule,
+        }
+    }
+
+    /// Owner live test: "Undo?" never times out; every other pill keeps its duration.
+    #[test]
+    fn undo_pending_pill_holds_until_answered() {
+        let r = replacement(3, "the ", "teh", "the");
+        let config = PillConfig::default();
+        let pending = Correction::undo_pending(&r);
+        assert_eq!(pill_duration_ms(&pending, &config), UNTIL_ANSWERED_MS);
+        // An hour in, it is still fully visible and the next tick is far away.
+        let hour = 60 * 60 * 1000;
+        assert_eq!(
+            frame_at(hour, UNTIL_ANSWERED_MS).map(|f| f.alpha),
+            Some(1.0)
+        );
+        assert!(next_tick_ms(hour, UNTIL_ANSWERED_MS).unwrap() > hour);
+        for c in [Correction::fixed(&r), Correction::undone(&r)] {
+            assert_eq!(pill_duration_ms(&c, &config), config.duration_ms);
         }
     }
 
