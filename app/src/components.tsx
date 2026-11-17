@@ -1,4 +1,7 @@
 import { useId, useState, type ReactNode } from "react";
+import { openExternal } from "./api";
+import { t } from "./i18n";
+import type { ExternalUrl } from "./links";
 
 export function Logo({ className }: { className?: string }) {
   return (
@@ -31,20 +34,61 @@ export function Row({ label, hint, children, stack }: { label: ReactNode; hint?:
   );
 }
 
-export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return <button className="switch" role="switch" aria-checked={checked} aria-label={label} onClick={() => onChange(!checked)} />;
+/**
+ * A link to one of our sites, opened in the browser through the opener plugin. The app window
+ * ignores plain anchors that open a new tab, so this is the only link element (a test enforces it).
+ */
+export function ExternalLink({ href, children, className = "link" }: { href: ExternalUrl; children: ReactNode; className?: string }) {
+  return (
+    <button type="button" className={className} title={href} onClick={() => void openExternal(href)}>
+      {children}
+    </button>
+  );
 }
 
+/** Fixes per day as a small bar chart. `values` is oldest first. */
+export function Sparkline({ values, label }: { values: number[]; label: string }) {
+  const w = 300, h = 64, gap = 2;
+  const max = Math.max(1, ...values);
+  const bar = (w - gap * (values.length - 1)) / values.length;
+  return (
+    <svg className="sparkline" viewBox={`0 0 ${w} ${h}`} role="img" aria-label={label} preserveAspectRatio="none">
+      {values.map((v, i) => {
+        const bh = v === 0 ? 2 : Math.max(3, (v / max) * (h - 4));
+        return (
+          <rect key={i} x={i * (bar + gap)} y={h - bh} width={bar} height={bh} rx={Math.min(2, bar / 2)}
+            className={i === values.length - 1 ? "today" : v === 0 ? "zero" : undefined}>
+            <title>{v}</title>
+          </rect>
+        );
+      })}
+    </svg>
+  );
+}
+
+export function Switch({ checked, onChange, label, disabled }: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button className="switch" role="switch" aria-checked={checked} aria-label={label} disabled={disabled}
+      onClick={() => onChange(!checked)} />
+  );
+}
+
+/** `title` on an option is its tooltip: the technical detail behind a plain label. */
 export function Segmented<T extends string>({ value, options, onChange, label }: {
   value: T;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; title?: string }[];
   onChange: (v: T) => void;
   label: string;
 }) {
   return (
     <div className="seg" role="group" aria-label={label}>
       {options.map((o) => (
-        <button key={o.value} aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
+        <button key={o.value} title={o.title} aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
           {o.label}
         </button>
       ))}
@@ -96,7 +140,7 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
           {items.map((it) => (
             <span className="chip" key={it}>
               {it}
-              <button aria-label={`Remove ${it}`} onClick={() => onChange(items.filter((x) => x !== it))}>
+              <button aria-label={t("common.remove", { item: it })} onClick={() => onChange(items.filter((x) => x !== it))}>
                 <X />
               </button>
             </span>
@@ -107,7 +151,7 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
       )}
       <form className="add" onSubmit={(e) => { e.preventDefault(); add(); }}>
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} spellCheck={false} />
-        <button className="btn" type="submit" disabled={!draft.trim()}>Add</button>
+        <button className="btn" type="submit" disabled={!draft.trim()}>{t("common.add")}</button>
       </form>
     </>
   );
@@ -115,32 +159,32 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
 
 export function RuleList({ rules, onChange }: { rules: [string, string][]; onChange: (r: [string, string][]) => void }) {
   const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [target, setTarget] = useState("");
   const add = () => {
-    const f = from.trim(), t = to.trim();
-    if (!f || !t) return;
-    onChange([...rules.filter(([k]) => k.toLowerCase() !== f.toLowerCase()), [f, t]]);
+    const f = from.trim(), to = target.trim();
+    if (!f || !to) return;
+    onChange([...rules.filter(([k]) => k.toLowerCase() !== f.toLowerCase()), [f, to]]);
     setFrom("");
-    setTo("");
+    setTarget("");
   };
   return (
     <div className="rules">
-      {rules.length === 0 && <div className="empty">No shortcuts yet.</div>}
-      {rules.map(([f, t], i) => (
+      {rules.length === 0 && <div className="empty">{t("dictionary.shortcuts.empty")}</div>}
+      {rules.map(([f, to], i) => (
         <div className="rule" key={f}>
-          <input value={f} aria-label="Typed" spellCheck={false} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
+          <input value={f} aria-label={t("dictionary.shortcuts.typed")} spellCheck={false} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
           <span className="arrow">→</span>
-          <input value={t} aria-label="Becomes" spellCheck={false} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
-          <button className="icon-btn" aria-label={`Remove ${f}`} onClick={() => onChange(rules.filter((_, j) => j !== i))}>
+          <input value={to} aria-label={t("dictionary.shortcuts.becomes")} spellCheck={false} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
+          <button className="icon-btn" aria-label={t("common.remove", { item: f })} onClick={() => onChange(rules.filter((_, j) => j !== i))}>
             <X />
           </button>
         </div>
       ))}
       <form className="rule" onSubmit={(e) => { e.preventDefault(); add(); }}>
-        <input value={from} onChange={(e) => setFrom(e.target.value)} placeholder="brb" aria-label="New shortcut typed" spellCheck={false} />
+        <input value={from} onChange={(e) => setFrom(e.target.value)} placeholder={t("dictionary.shortcuts.fromPlaceholder")} aria-label={t("dictionary.shortcuts.newTyped")} spellCheck={false} />
         <span className="arrow">→</span>
-        <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="be right back" aria-label="New shortcut becomes" spellCheck={false} />
-        <button className="icon-btn" type="submit" aria-label="Add shortcut">+</button>
+        <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder={t("dictionary.shortcuts.toPlaceholder")} aria-label={t("dictionary.shortcuts.newBecomes")} spellCheck={false} />
+        <button className="icon-btn" type="submit" aria-label={t("dictionary.shortcuts.add")}>+</button>
       </form>
     </div>
   );
@@ -152,6 +196,8 @@ const paths: Record<string, string> = {
   appearance: "M8 1.8a6.2 6.2 0 1 0 0 12.4c.9 0 1.3-.6 1.3-1.3 0-.8-.6-1-.6-1.8 0-.7.6-1.3 1.3-1.3h1.5A2.8 2.8 0 0 0 14.2 7 6.2 5.6 0 0 0 8 1.8zM4.8 7.2h.01M6.4 4.6h.01M9.6 4.6h.01",
   apps: "M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z",
   dictionary: "M3 2.5h7.5a2 2 0 0 1 2 2v9H5a2 2 0 0 1-2-2zM3 11.5a2 2 0 0 1 2-2h7.5M6 5.5h4",
+  stats: "M2.5 13.5h11M4 11V8M7 11V4.5M10 11V6.5M13 11V3",
+  privacy: "M8 1.8l5 2v3.6c0 3.2-2.1 5.6-5 6.8-2.9-1.2-5-3.6-5-6.8V3.8zM5.8 8.2l1.6 1.6 3-3.2",
   about: "M8 1.8a6.2 6.2 0 1 0 0 12.4A6.2 6.2 0 0 0 8 1.8zM8 7.3v3.9M8 5h.01",
 };
 

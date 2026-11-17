@@ -3,6 +3,27 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::PathBuf};
 
+/// The settings file's format. Bump it and add a step to `migrations.rs` whenever a change needs
+/// more than serde defaults (a renamed field, a changed meaning, a value to fill in).
+pub const SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Channel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+impl Channel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Channel::Stable => "stable",
+            Channel::Beta => "beta",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum EngineMode {
@@ -10,6 +31,7 @@ pub enum EngineMode {
     Both,
     SystemOnly,
     BundledOnly,
+    Balanced,
     Aggressive,
 }
 
@@ -75,10 +97,22 @@ pub const DEFAULT_EXCLUDED_APPS: &[&str] = &[
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
+    /// See [`SCHEMA_VERSION`]. Files without it are version 0.
+    pub schema_version: u32,
     pub enabled: bool,
     pub start_at_login: bool,
-    /// Check for updates once a day and download them quietly. Installing always waits for the user.
+    /// Download updates in the background once the daily check finds one. Off: the check only
+    /// tells the user. Installing always waits for a restart or quit.
     pub auto_update: bool,
+    pub channel: Channel,
+    /// One anonymous summary a day (`usage.rs`). On by default; counts and settings only.
+    pub share_usage_stats: bool,
+    /// Send scrubbed crash reports without asking each time (`crash.rs`). On by default.
+    pub send_crash_reports: bool,
+    /// The local Stats page keeps which words were fixed, not just how many.
+    pub stats_keep_words: bool,
+    /// The welcome screen was closed with "Done".
+    pub onboarded: bool,
     pub mode: EngineMode,
     pub confidence: f32,
     pub min_word_len: usize,
@@ -95,6 +129,10 @@ pub struct Settings {
     pub appearance: Appearance,
     /// BCP 47 tag for the system spell checker, like `en-US`.
     pub language: String,
+    /// Fields this version doesn't know, from a newer unflub. Kept and written back, so running
+    /// an older version for a while doesn't wipe them.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 const DEFAULT_LANGUAGE: &str = "en-US";
@@ -103,9 +141,15 @@ impl Default for Settings {
     fn default() -> Self {
         let core = unflub_core::Config::default();
         Self {
+            schema_version: SCHEMA_VERSION,
             enabled: core.enabled,
             start_at_login: true,
             auto_update: true,
+            channel: Channel::Stable,
+            share_usage_stats: true,
+            send_crash_reports: true,
+            stats_keep_words: true,
+            onboarded: false,
             mode: EngineMode::Both,
             confidence: core.confidence,
             min_word_len: core.min_word_len,
@@ -124,6 +168,7 @@ impl Default for Settings {
             theme: Theme::Unflub,
             appearance: Appearance::Auto,
             language: core.language,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -151,6 +196,7 @@ impl Settings {
                 EngineMode::Both => unflub_core::EngineMode::Both,
                 EngineMode::SystemOnly => unflub_core::EngineMode::SystemOnly,
                 EngineMode::BundledOnly => unflub_core::EngineMode::BundledOnly,
+                EngineMode::Balanced => unflub_core::EngineMode::Balanced,
                 EngineMode::Aggressive => unflub_core::EngineMode::Aggressive,
             },
             confidence: self.confidence,
@@ -196,17 +242,38 @@ impl Store {
         self.path.exists()
     }
 
-    /// Missing or unreadable files fall back to defaults; a corrupt file is kept as `.bak`.
+    /// Missing or unreadable files fall back to defaults; a corrupt file is kept as `.bak`. An
+    /// older file is migrated (`migrations.rs`) and written back.
     pub fn load(&self) -> Settings {
-        match fs::read_to_string(&self.path) {
-            Ok(text) => match serde_json::from_str::<Settings>(&text) {
-                Ok(s) => s.sanitised(),
-                Err(_) => {
-                    let _ = fs::rename(&self.path, self.path.with_extension("json.bak"));
-                    Settings::default()
+        let Ok(text) = fs::read_to_string(&self.path) else {
+            return Settings::default();
+        };
+        let parsed = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .filter(serde_json::Value::is_object)
+            .map(crate::migrations::migrate)
+            .and_then(|(value, migrated_from)| {
+                let settings = serde_json::from_value::<Settings>(value).ok()?;
+                Some((settings.sanitised(), migrated_from))
+            });
+        match parsed {
+            Some((settings, migrated_from)) => {
+                if let Some(from) = migrated_from {
+                    // Keep the old file beside the new one, in case the migration got it wrong.
+                    let _ = fs::copy(
+                        &self.path,
+                        self.path.with_extension(format!("json.v{from}")),
+                    );
+                    if let Err(e) = self.save(&settings) {
+                        eprintln!("settings: saving the migrated file: {e}");
+                    }
                 }
-            },
-            Err(_) => Settings::default(),
+                settings
+            }
+            None => {
+                let _ = fs::rename(&self.path, self.path.with_extension("json.bak"));
+                Settings::default()
+            }
         }
     }
 
@@ -233,6 +300,8 @@ mod tests {
         assert_eq!(s.pill_style, PillStyle::Capsule);
         assert_eq!(s.theme, Theme::Unflub);
         assert!(s.auto_update, "updates are opt-out");
+        assert!(s.share_usage_stats && s.send_crash_reports && s.stats_keep_words);
+        assert!(!s.onboarded);
         let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(s, back);
     }
@@ -317,6 +386,7 @@ mod tests {
                 EngineMode::BundledOnly,
                 unflub_core::EngineMode::BundledOnly,
             ),
+            (EngineMode::Balanced, unflub_core::EngineMode::Balanced),
         ] {
             let s = Settings {
                 mode,

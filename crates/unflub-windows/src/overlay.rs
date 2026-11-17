@@ -127,6 +127,9 @@ pub struct PillConfig {
     pub keycap: Rgba,
     /// The underline.
     pub accent: Rgba,
+    /// Ask UI Automation for the caret in browser and XAML fields. Off: the pill shows only
+    /// where the system caret is known.
+    pub uia_caret: bool,
 }
 
 pub const MIN_OPACITY: f32 = 0.3;
@@ -150,6 +153,7 @@ impl Default for PillConfig {
             text: Rgba::hex(0xF2E6E3),
             keycap: Rgba::hex(0xE0A595),
             accent: Rgba::hex(0xB06A5C),
+            uia_caret: true,
         }
     }
 }
@@ -940,7 +944,7 @@ mod win {
                 self.found(spot);
                 return;
             }
-            if !loc.uia_asked && caret::focus_needs_uia() {
+            if !loc.uia_asked && self.config.uia_caret && caret::focus_needs_uia() {
                 loc.uia_asked = true;
                 let asked = self.probe.as_ref().is_some_and(|p| {
                     p.request(
