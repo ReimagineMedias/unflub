@@ -1,0 +1,40 @@
+---
+import { SITE } from "../data/site";
+
+interface Props {
+  size?: "small" | "large";
+  /** Short label for tight spots like the header. */
+  short?: boolean;
+  class?: string;
+}
+const { size = "large", short = false, class: className } = Astro.props;
+---
+
+<a
+  class:list={["btn", "dl", size === "small" && "btn-small", className]}
+  href={SITE.download}
+  data-dl={short ? "short" : "full"}
+>
+  {
+    size === "large" && (
+      <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <path d="M10 3v10m0 0-4-4m4 4 4-4M4 16.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    )
+  }
+  <span data-dl-label>{short ? "Download" : "Download for Windows"}</span>
+</a>
+{
+  size === "large" && !short && (
+    <button type="button" class="btn btn-quiet share" data-share hidden>
+      <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <path d="M8 12 12 8M7 9.5 5.5 11a2.5 2.5 0 0 0 3.5 3.5L10.5 13M13 10.5 14.5 9A2.5 2.5 0 0 0 11 5.5L9.5 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+      </svg>
+      <span data-share-label>Copy the link</span>
+    </button>
+  )
+}
+
+<script>
+  import "../scripts/os";
+</script>

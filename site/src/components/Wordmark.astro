@@ -1,0 +1,23 @@
+---
+import Mark from "./Mark.astro";
+---
+
+<span class="wordmark"><Mark class="wordmark-mark" /><span>unflub</span></span>
+
+<style>
+  .wordmark {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 700;
+    font-size: 1.25rem;
+    letter-spacing: -0.045em;
+    line-height: 1;
+  }
+
+  .wordmark :global(.wordmark-mark) {
+    width: 1.35em;
+    height: 1.35em;
+    margin: -0.1em -0.34em -0.1em -0.2em;
+  }
+</style>

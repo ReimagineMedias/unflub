@@ -1,0 +1,269 @@
+---
+/**
+ * One word, up close: a pinned scene. As you scroll, the sentence types itself (each character owns a slice of the
+ * scroll range), the typo turns into the fix, and the fixed word comes forward with its capsule.
+ * Without scroll timelines, or with reduced motion, it shows the finished frame.
+ */
+const pre = "Running late, ";
+const typo = "teh";
+const post = " train is stuck again.";
+const step = 1.5;
+const preChars = [...pre].map((c, k) => ({ c, s: 3 + k * step }));
+const typoChars = [...typo].map((c, k) => ({ c, s: 3 + (pre.length + k) * step }));
+const postChars = [...post].map((c, k) => ({ c, s: 76 + k * 0.9 }));
+---
+
+<section class="close" aria-labelledby="close-title">
+  <div class="frame">
+    <h2 id="close-title" class="title">You flubbed. We unflubbed.</h2>
+    <p class="sentence">
+      <span class="visually-hidden">Running late, the train is stuck again. (Typed as teh, fixed to the.)</span>
+      <span class="dim" aria-hidden="true">{preChars.map((x) => <span class="ch" style={`--s:${x.s}%`}>{x.c}</span>)}</span><span
+        class="word"
+        aria-hidden="true"
+        ><span class="typo">{typoChars.map((x) => <span class="ch" style={`--s:${x.s}%`}>{x.c}</span>)}</span><span class="fixd"
+          >the</span
+        ><span class="studio-pill cap"><s>teh</s><span class="arr">→</span><b>the</b><kbd>⌫ undo</kbd></span></span
+      ><span class="dim" aria-hidden="true">{postChars.map((x) => <span class="ch" style={`--s:${x.s}%`}>{x.c}</span>)}</span>
+    </p>
+    <p class="hint">Fixed the moment you pressed space. Press Backspace right after and <s>teh</s> comes back.</p>
+  </div>
+</section>
+
+<style>
+  .close {
+    padding-block: clamp(80px, 14vh, 160px);
+  }
+
+  .frame {
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: clamp(24px, 5vh, 48px);
+    width: var(--page);
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .title {
+    font-size: clamp(1.25rem, min(2.2vw, 3.6vh), 1.75rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--muted);
+  }
+
+  .sentence {
+    max-width: 13em;
+    font-size: clamp(2.4rem, min(6.4vw, 10.5vh), 6rem);
+    font-weight: 740;
+    line-height: 1.12;
+    letter-spacing: -0.045em;
+    text-wrap: balance;
+  }
+
+  .word {
+    position: relative;
+    display: inline-block;
+    transform-origin: 50% 70%;
+  }
+
+  .typo {
+    visibility: hidden;
+  }
+
+  .fixd {
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
+
+  .fixd::after {
+    content: "";
+    position: absolute;
+    left: 2%;
+    right: 2%;
+    bottom: 0.04em;
+    height: 0.06em;
+    border-radius: 0.03em;
+    background: var(--accent);
+    transform-origin: 0 50%;
+  }
+
+  .cap {
+    position: absolute;
+    bottom: calc(100% + 0.12em);
+    left: 50%;
+    translate: -50% 0;
+    font-size: 0.2em;
+  }
+
+  .hint {
+    max-width: 30em;
+    font-size: clamp(1.0625rem, min(1.5vw, 2.5vh), 1.25rem);
+    color: var(--muted);
+  }
+
+  .hint s {
+    text-decoration-thickness: 1px;
+  }
+
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .close {
+        height: 200vh;
+        padding: 0;
+        view-timeline: --close block;
+      }
+
+      .frame {
+        position: sticky;
+        top: 0;
+        height: 100svh;
+      }
+
+      .typo {
+        visibility: visible;
+      }
+
+      .ch,
+      .typo,
+      .fixd,
+      .fixd::after,
+      .cap,
+      .word,
+      .dim,
+      .title,
+      .hint {
+        animation-timing-function: linear;
+        animation-fill-mode: both;
+        animation-timeline: --close;
+      }
+
+      .ch {
+        animation-name: key;
+        animation-range: contain var(--s) contain calc(var(--s) + 0.2%);
+      }
+
+      .typo {
+        animation-name: out;
+        animation-range: contain 31% contain 32%;
+      }
+
+      .fixd {
+        animation-name: in;
+        animation-range: contain 31% contain 32%;
+      }
+
+      .fixd::after {
+        animation-name: draw;
+        animation-range: contain 31% contain 35%;
+      }
+
+      .cap {
+        animation-name: pop, fade-late;
+        animation-range:
+          contain 32% contain 36%,
+          contain 74% contain 78%;
+        animation-fill-mode: both, forwards;
+      }
+
+      .word {
+        animation-name: up-close;
+        animation-range: contain 38% contain 80%;
+      }
+
+      .dim,
+      .title {
+        animation-name: dim;
+        animation-range: contain 38% contain 80%;
+      }
+
+      .hint {
+        animation-name: hint;
+        animation-range: contain 50% contain 80%;
+      }
+    }
+  }
+
+  @keyframes key {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes out {
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes draw {
+    from {
+      transform: scaleX(0);
+    }
+  }
+
+  @keyframes pop {
+    from {
+      opacity: 0;
+      transform: translateY(0.4em) scale(0.92);
+    }
+  }
+
+  @keyframes fade-late {
+    to {
+      opacity: 0;
+    }
+  }
+
+  /* The fixed word comes forward, holds, then settles back into the sentence. */
+  @keyframes up-close {
+    0% {
+      transform: none;
+    }
+    35%,
+    70% {
+      transform: translateY(0.5em) scale(1.8);
+    }
+    100% {
+      transform: none;
+    }
+  }
+
+  @keyframes dim {
+    0% {
+      opacity: 1;
+    }
+    30%,
+    72% {
+      opacity: 0.08;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes hint {
+    0% {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    25%,
+    80% {
+      opacity: 1;
+      transform: none;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+</style>
