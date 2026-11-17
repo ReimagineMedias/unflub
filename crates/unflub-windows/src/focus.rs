@@ -2,14 +2,13 @@
 //! is a password box. Refreshed on focus changes and on clicks, Tab and Enter; never per key.
 //!
 //! The focused window's class decides how we check for a password field:
-//! - Classic Win32 edits (Edit, RichEdit*, WinForms EDIT): the `ES_PASSWORD` style bit, read on
-//!   the hook thread. Style and class reads don't send messages, so they can't block.
-//! - Browser engines and XAML/WPF hosts (Chrome_*, MozillaWindowClass, HwndWrapper*, CoreWindow,
-//!   XAML islands): UI Automation's `IsPassword`, on a worker thread with short UIA timeouts,
-//!   because UIA calls can block on hung apps. Any accessibility query makes Chromium build its
-//!   accessibility tree, which costs CPU and memory in Chrome and Electron apps; that is why we
-//!   only ask for these classes and only on focus changes.
-//! - Anything else: not treated as a password field.
+//! - Edit controls (any class containing "edit": Edit, RichEdit*, WinForms EDIT, Delphi TEdit):
+//!   the `ES_PASSWORD` style bit, read on the hook thread. Style and class reads don't send
+//!   messages, so they can't block.
+//! - Everything else (browsers, Electron, WPF, UWP, Qt, Java, unknown classes): UI Automation's
+//!   `IsPassword`, on a worker thread with short UIA timeouts, because UIA calls can block on
+//!   hung apps. Any accessibility query makes Chromium build its accessibility tree, which
+//!   costs CPU and memory in Chrome and Electron apps, so we only ask when focus may have moved.
 //!
 //! Each check bumps a generation number; the worker publishes `(generation, answer)` in one
 //! atomic. The answer is three-state, and everything except a definite "not a password" counts
@@ -29,34 +28,31 @@ pub fn exe_name_from_path(path: &str) -> String {
 /// How to tell whether a window holds a password field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {
-    /// Classic Win32 edit control: `ES_PASSWORD` decides.
+    /// Edit control: `ES_PASSWORD` decides.
     Win32Edit,
-    /// Hosts whose fields are invisible to Win32 (browsers, Electron, WPF, UWP, WinUI): ask UIA.
+    /// Anything else, including unknown classes: ask UIA, and stay secure until it says no.
     Probe,
-    /// Everything else: not a password field as far as we can tell.
-    Plain,
 }
 
-/// Classify a window class name.
+/// Classify a window class name. Unknown classes are probed (fail closed).
 pub fn classify_class(class: &str) -> FieldKind {
-    let lower = class.to_ascii_lowercase();
-    if lower == "edit" || lower.contains(".edit.") || lower.starts_with("richedit") {
-        return FieldKind::Win32Edit;
-    }
-    const PROBE_PREFIXES: &[&str] = &[
-        "chrome_",                                     // Chrome, Edge, Electron, CEF
-        "mozillawindowclass",                          // Firefox, Thunderbird
-        "hwndwrapper",                                 // WPF
-        "windows.ui.core.corewindow",                  // UWP
-        "windows.ui.input.inputsite.windowclass",      // XAML islands, WinUI 3 input
-        "microsoft.ui.content.desktopchildsitebridge", // WinUI 3
-        "desktopwindowxamlsource",                     // XAML islands
-    ];
-    if PROBE_PREFIXES.iter().any(|p| lower.starts_with(p)) {
-        FieldKind::Probe
+    if class.to_ascii_lowercase().contains("edit") {
+        FieldKind::Win32Edit
     } else {
-        FieldKind::Plain
+        FieldKind::Probe
     }
+}
+
+/// Should an `EVENT_OBJECT_FOCUS` with this `idObject` count as a focus change? Everything
+/// except objects that are never text fields (Chromium and Firefox don't always use
+/// `OBJID_CLIENT`, so we can't require it).
+pub fn is_focus_change_object(id_object: i32) -> bool {
+    const SYSMENU: i32 = -1;
+    const TITLEBAR: i32 = -2;
+    const MENU: i32 = -3;
+    const SOUND: i32 = -11;
+    // VSCROLL -5, HSCROLL -6, SIZEGRIP -7, CARET -8, CURSOR -9, ALERT -10.
+    !matches!(id_object, SYSMENU | TITLEBAR | MENU | -10..=-5 | SOUND)
 }
 
 const ES_PASSWORD: u32 = 0x20;
@@ -105,7 +101,7 @@ pub struct FocusState {
     pub es_password: bool,
     pub generation: u64,
     pub slot: Arc<PasswordSlot>,
-    /// False when the UIA worker couldn't start or died. `Probe` fields then count as secure.
+    /// False when the UIA worker couldn't start or died. Non-edit fields then count as secure.
     pub uia_available: bool,
 }
 
@@ -114,7 +110,7 @@ impl Default for FocusState {
         Self {
             app: None,
             app_pid: 0,
-            kind: FieldKind::Plain,
+            kind: FieldKind::Probe,
             es_password: false,
             generation: 0,
             slot: Arc::new(PasswordSlot::default()),
@@ -129,7 +125,7 @@ impl FocusState {
             return true;
         }
         match self.kind {
-            FieldKind::Win32Edit | FieldKind::Plain => false,
+            FieldKind::Win32Edit => false,
             FieldKind::Probe => {
                 !self.uia_available || self.slot.answer(self.generation) != Some(Secure::NotSecure)
             }
@@ -238,7 +234,7 @@ mod win {
             let mut class = [0u16; 128];
             let n = GetClassNameW(hwnd, &mut class);
             if n <= 0 {
-                return (FieldKind::Plain, false);
+                return (FieldKind::Probe, false);
             }
             let class = String::from_utf16_lossy(&class[..n as usize]);
             let kind = classify_class(&class);
@@ -399,29 +395,37 @@ mod tests {
             "RICHEDIT50W",
             "RichEditD2DPT",
             "WindowsForms10.EDIT.app.0.141b42a_r6_ad1",
+            "TEdit",
+            "TMaskEdit",
         ] {
             assert_eq!(classify_class(c), FieldKind::Win32Edit, "{c}");
         }
         for c in [
             "Chrome_RenderWidgetHostHWND",
-            "Chrome_WidgetWin_1",
             "MozillaWindowClass",
             "HwndWrapper[DefaultDomain;;b5f6]",
             "Windows.UI.Core.CoreWindow",
-            "Windows.UI.Input.InputSite.WindowClass",
-            "Microsoft.UI.Content.DesktopChildSiteBridge",
             "DesktopWindowXamlSource",
+            // Unknown or custom-drawn: fail closed and ask UIA.
+            "Qt5152QWindowIcon",
+            "SunAwtFrame",
+            "ConsoleWindowClass",
+            "Notepad",
+            "",
         ] {
             assert_eq!(classify_class(c), FieldKind::Probe, "{c}");
         }
-        for c in [
-            "Notepad",
-            "ConsoleWindowClass",
-            "CASCADIA_HOSTING_WINDOW_CLASS",
-            "Button",
-            "",
-        ] {
-            assert_eq!(classify_class(c), FieldKind::Plain, "{c}");
+    }
+
+    #[test]
+    fn focus_events_count_unless_the_object_is_never_text() {
+        // OBJID_WINDOW, OBJID_CLIENT, and Chromium/Firefox child ids.
+        for id in [0, -4, 1, 42, -12, i32::MIN] {
+            assert!(is_focus_change_object(id), "{id}");
+        }
+        // SYSMENU, TITLEBAR, MENU, VSCROLL, HSCROLL, SIZEGRIP, CARET, CURSOR, ALERT, SOUND.
+        for id in [-1, -2, -3, -5, -6, -7, -8, -9, -10, -11] {
+            assert!(!is_focus_change_object(id), "{id}");
         }
     }
 
@@ -433,6 +437,7 @@ mod tests {
             0x20
         ));
         assert!(is_password_edit("RICHEDIT50W", 0x20));
+        assert!(is_password_edit("TEdit", 0x20));
         assert!(!is_password_edit("Edit", 0x50010000));
         // 0x20 on a button is BS_... something else entirely.
         assert!(!is_password_edit("Button", 0x20));
@@ -487,17 +492,34 @@ mod tests {
     }
 
     #[test]
-    fn win32_edits_and_plain_windows_use_es_password_only() {
-        for kind in [FieldKind::Win32Edit, FieldKind::Plain] {
-            let mut f = FocusState {
-                kind,
-                uia_available: true,
-                ..FocusState::default()
-            };
-            assert_eq!(f.next_generation(), None, "no UIA query for {kind:?}");
-            assert!(!f.secure());
-            f.es_password = true;
-            assert!(f.secure());
-        }
+    fn unknown_classes_fail_closed() {
+        let mut f = FocusState {
+            kind: classify_class("Qt5152QWindowIcon"),
+            uia_available: true,
+            ..FocusState::default()
+        };
+        let g = f.next_generation().expect("unknown classes are probed");
+        assert!(f.secure(), "secure until UIA answers");
+        f.slot.publish(g, Secure::NotSecure);
+        assert!(!f.secure());
+        f.uia_available = false;
+        assert!(f.secure(), "no UIA: secure");
+        assert!(
+            FocusState::default().secure(),
+            "before the first refresh: secure"
+        );
+    }
+
+    #[test]
+    fn win32_edits_use_es_password_only() {
+        let mut f = FocusState {
+            kind: FieldKind::Win32Edit,
+            uia_available: true,
+            ..FocusState::default()
+        };
+        assert_eq!(f.next_generation(), None, "no UIA query for edits");
+        assert!(!f.secure());
+        f.es_password = true;
+        assert!(f.secure());
     }
 }

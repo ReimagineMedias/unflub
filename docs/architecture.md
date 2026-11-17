@@ -57,19 +57,17 @@ engine never calls slow APIs on this path.
 - **Secure fields.** While a field is secure, the engine never sees its keys: it gets one
   `Reset` instead, and the rest of a word that was half typed when the field became safe is
   skipped too. The focused window's class decides how we check:
-  - Classic Win32 edits (`Edit`, `RichEdit*`, WinForms): the `ES_PASSWORD` style, read on the
-    hook thread.
-  - Browsers, Electron, WPF, UWP and WinUI hosts (`Chrome_*`, `MozillaWindowClass`,
-    `HwndWrapper*`, `Windows.UI.Core.CoreWindow`, XAML islands): UI Automation's `IsPassword`,
-    asked on focus changes and 50 ms after a click, Tab or Enter. UIA can block on hung apps,
-    so it runs on its own thread with 250 ms / 500 ms connection and transaction timeouts.
-    The field counts as secure until UIA says it isn't: no answer yet, a UIA error, a timeout,
-    or no UIA at all all mean no corrections there.
-  - Other windows are not treated as password fields.
+  - Edit controls (any class containing "edit": `Edit`, `RichEdit*`, WinForms, Delphi
+    `TEdit`): the `ES_PASSWORD` style, read on the hook thread.
+  - Every other class, known or not (browsers, Electron, WPF, UWP, Qt, Java): UI Automation's
+    `IsPassword`, asked on focus changes and 50 ms after a click, Tab or Enter. UIA can block
+    on hung apps, so it runs on its own thread with 250 ms / 500 ms connection and transaction
+    timeouts. The field counts as secure until UIA says it isn't: no answer yet, a UIA error,
+    a timeout, or no UIA at all all mean no corrections there.
 
   Any accessibility query, UIA or MSAA, makes Chromium build its accessibility tree, which
-  costs CPU and memory in Chrome and Electron apps. That is why we only ask for those window
-  classes, and only when focus may have moved.
+  costs CPU and memory in Chrome and Electron apps. That is why we only ask when focus may
+  have moved; a burst of focus events costs one query.
 - **Other skips.** Keyboard layouts for Chinese, Japanese and Korean (IME input) and apps on
   the exclude list are treated like secure fields.
 - **Spell checker.** `Check` runs on the hook thread (it is fast). The OS auto-replace lookup

@@ -37,10 +37,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, GetWindowThreadProcessId, PeekMessageW,
     PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, EVENT_OBJECT_FOCUS,
-    EVENT_SYSTEM_FOREGROUND, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, OBJID_CLIENT,
-    PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
-    WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
-    WM_XBUTTONDOWN,
+    EVENT_SYSTEM_FOREGROUND, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, PM_NOREMOVE,
+    WH_KEYBOARD_LL, WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_KEYDOWN,
+    WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_XBUTTONDOWN,
 };
 
 use crate::focus::{self, FocusState, PasswordProbe};
@@ -258,7 +257,7 @@ fn run(
         }
         Err(e) => {
             let _ = events.send(HookEvent::Warning(format!(
-                "{e}; browser, Electron, WPF and UWP fields count as secure (no corrections there)"
+                "{e}; every field except classic edits counts as secure (no corrections there)"
             )));
             None
         }
@@ -412,8 +411,10 @@ unsafe extern "system" fn win_event_proc(
     _event_thread: u32,
     _event_time: u32,
 ) {
-    // Focus events for menus, scroll bars, carets etc. aren't a text field changing.
-    if event == EVENT_OBJECT_FOCUS && id_object != OBJID_CLIENT.0 {
+    // Focus moving to a menu, scroll bar, caret etc. isn't a text field changing. Anything
+    // else re-checks the field; a burst of events costs one UIA query, since the worker only
+    // answers the latest generation.
+    if event == EVENT_OBJECT_FOCUS && !focus::is_focus_change_object(id_object) {
         return;
     }
     // A focus event names the focused window; a foreground event names the top-level one, so
@@ -689,7 +690,7 @@ impl State {
         self.probe = None;
         self.focus.uia_available = false;
         let _ = self.events.send(HookEvent::Warning(
-            "UI Automation worker stopped; browser, Electron, WPF and UWP fields now count as secure"
+            "UI Automation worker stopped; every field except classic edits now counts as secure"
                 .into(),
         ));
     }
