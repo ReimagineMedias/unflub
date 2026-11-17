@@ -17,6 +17,8 @@ export const SITE = {
   issues: "https://github.com/ReimagineMedias/unflub/issues",
   /** GitHub Sponsors for now; swap here if sponsorship moves. */
   sponsor: "https://github.com/sponsors/ReimagineMedias",
+  /** Said wherever we ask for support. */
+  sponsorPitch: "Sponsors fund unflub's development and get priority on feature requests and bug reports.",
   ogImage: "/og/unflub.png",
   org: {
     name: "RMGN",
