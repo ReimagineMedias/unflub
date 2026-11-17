@@ -140,6 +140,22 @@ pub struct Engine {
     words_checked: Option<Arc<AtomicU64>>,
 }
 
+/// A [`Config`] with its lookups (excluded apps, personal words, rules) already built, for
+/// [`Engine::set_prepared`]. Build it on any thread.
+pub struct PreparedConfig {
+    config: Config,
+    rules: Rules,
+}
+
+impl PreparedConfig {
+    pub fn new(config: Config) -> Self {
+        Self {
+            rules: Rules::new(&config),
+            config,
+        }
+    }
+}
+
 /// Lookups derived from [`Config`], lowercased once when the config is set.
 struct Rules {
     excluded_apps: HashSet<String>,
@@ -258,8 +274,17 @@ impl Engine {
 
     /// Replace the config at runtime (settings changed).
     pub fn set_config(&mut self, config: Config) {
-        self.rules = Rules::new(&config);
-        self.config = config;
+        drop(self.set_prepared(PreparedConfig::new(config)));
+    }
+
+    /// Replace the config with one whose lookups were built elsewhere, and hand back the old
+    /// one, so neither building nor freeing them (milliseconds for a large personal dictionary)
+    /// happens on the caller's thread. See `unflub_windows::LiveEngine`.
+    pub fn set_prepared(&mut self, next: PreparedConfig) -> PreparedConfig {
+        PreparedConfig {
+            config: std::mem::replace(&mut self.config, next.config),
+            rules: std::mem::replace(&mut self.rules, next.rules),
+        }
     }
 
     /// Drain events produced since the last call (for the pill and settings UI).
