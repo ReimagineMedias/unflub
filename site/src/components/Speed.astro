@@ -1,0 +1,139 @@
+---
+import { PERFORMANCE } from "../data/performance";
+---
+
+<section id="speed" class="speed chapter-block" aria-labelledby="speed-title">
+  <div class="wrap">
+    <header class="section-head">
+      <h2 id="speed-title" class="chapter">Fast enough<br /> to disappear.</h2>
+      <p class="lead">
+        unflub is native code. It decides inside the keyboard hook, before your next key lands, then goes quiet until you type
+        again.
+      </p>
+    </header>
+    <ul class="stats">
+      {
+        PERFORMANCE.stats.map((s) => (
+          <li data-reveal>
+            <strong class="num">
+              <span class="num-in">
+                {s.value}
+                <span class="unit">{s.unit}</span>
+              </span>
+            </strong>
+            <span class="label">{s.label}</span>
+          </li>
+        ))
+      }
+    </ul>
+    <p class="small footnote">{PERFORMANCE.measuredOn}</p>
+  </div>
+</section>
+
+<style>
+  .stats {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+
+  /* Dark studio cards: a soft light from above on the night ground. */
+  li {
+    display: grid;
+    gap: 18px;
+    align-content: space-between;
+    min-height: clamp(200px, 34vh, 300px);
+    padding: clamp(24px, 4vh, 36px) clamp(22px, 2.4vw, 32px);
+    border-radius: clamp(22px, 2.6vw, 32px);
+    background:
+      radial-gradient(90% 70% at 50% 0%, rgba(242, 230, 227, 0.09), rgba(242, 230, 227, 0) 70%),
+      var(--surface);
+    box-shadow: inset 0 0 0 1px rgba(242, 230, 227, 0.06);
+  }
+
+  .num {
+    display: block;
+    font-size: clamp(4rem, min(8.4vw, 14vh), 8.5rem);
+    line-height: 0.95;
+    font-weight: 760;
+    letter-spacing: -0.06em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .num-in {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.06em;
+  }
+
+  .unit {
+    font-size: 0.32em;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+  }
+
+  .label {
+    font-size: 1.0625rem;
+    color: var(--muted);
+    max-width: 16em;
+  }
+
+  /* Each number rises into place as its card enters, and is settled by the time the card is 60% in view.
+     Opacity and transform only, never a clip, so stopping mid-scroll never cuts a glyph. */
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .num-in {
+        animation: surface linear both;
+      }
+
+      /* Separate rule so the timeline is not folded into the shorthand. */
+      .stats .num-in {
+        animation-timeline: view();
+        animation-range: entry 0% entry 60%;
+      }
+    }
+  }
+
+  @keyframes surface {
+    from {
+      opacity: 0;
+      transform: translateY(24px);
+    }
+  }
+
+  @supports not (animation-timeline: view()) {
+    [data-reveal] .num-in {
+      opacity: 0;
+      transform: translateY(24px);
+      transition:
+        opacity 0.6s ease,
+        transform 0.9s var(--ease-out);
+    }
+
+    [data-reveal]:global(.in) .num-in {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-reveal] .num-in {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .footnote {
+    margin-top: 28px;
+  }
+
+  @media (max-width: 760px) {
+    .stats {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -1,0 +1,61 @@
+---
+const promise = "Nothing you type leaves your computer.".split(" ");
+---
+
+<section id="privacy" class="privacy chapter-block" aria-labelledby="privacy-title">
+  <div class="wrap">
+    <h2 id="privacy-title" class="chapter promise">{promise.map((w) => <span class="w">{w} </span>)}</h2>
+    <p class="lead">You choose everything unflub does. No hidden settings. The code is public and free for anyone to read.</p>
+    <a class="more" href="/privacy/">See exactly what's shared</a>
+  </div>
+</section>
+
+<style>
+  /* Extra room below, so the page is back to daylight before the next section's dark text arrives. */
+  .privacy {
+    padding-bottom: clamp(160px, 40vh, 360px);
+  }
+
+  .wrap {
+    display: grid;
+    gap: clamp(20px, 3.4vh, 32px);
+    justify-items: start;
+  }
+
+  .promise {
+    max-width: 11em;
+  }
+
+  .lead {
+    max-width: 30em;
+    color: var(--muted);
+  }
+
+  .more {
+    color: var(--ink);
+    font-weight: 650;
+    text-decoration-color: var(--accent);
+    text-underline-offset: 0.25em;
+  }
+
+  /* The words light up one after another as the statement crosses the screen. */
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .w {
+        animation: light linear both;
+      }
+
+      /* Separate rule so the timeline is not folded into the shorthand. */
+      .promise .w {
+        animation-timeline: view();
+        animation-range: entry 80% cover 50%;
+      }
+    }
+  }
+
+  @keyframes light {
+    from {
+      opacity: 0.5;
+    }
+  }
+</style>

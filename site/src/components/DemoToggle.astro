@@ -1,0 +1,45 @@
+---
+/** Pause and play for a looping demo. Hidden until the demo's script runs (no script or reduced motion: no loop). */
+interface Props {
+  /** Names the demo, so several toggles on a page stay distinct. */
+  name: string;
+  class?: string;
+}
+const { name, class: className } = Astro.props;
+---
+
+<button type="button" class:list={["demo-toggle", className]} data-demo-toggle={name} aria-label="Pause animation" hidden></button>
+
+<style>
+  .demo-toggle {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+    color: var(--ink);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .demo-toggle[hidden] {
+    display: none;
+  }
+
+  .demo-toggle:hover {
+    background: color-mix(in srgb, var(--ink) 14%, transparent);
+  }
+
+  .demo-toggle :global(svg) {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+</style>

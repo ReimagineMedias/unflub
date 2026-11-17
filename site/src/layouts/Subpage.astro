@@ -1,0 +1,90 @@
+---
+import Base, { type Crumb } from "./Base.astro";
+import DownloadButton from "../components/DownloadButton.astro";
+import { SITE } from "../data/site";
+
+interface Props {
+  title: string;
+  description: string;
+  /** Name in the breadcrumb trail. */
+  crumb: string;
+  schema?: Record<string, unknown>[];
+  /** Hide the closing download prompt (the download page has its own). */
+  cta?: boolean;
+}
+
+const { title, description, crumb, schema = [], cta = true } = Astro.props;
+const crumbs: Crumb[] = [{ name: crumb, path: Astro.url.pathname }];
+import TurnstileNotice from "../components/TurnstileNotice.astro";
+---
+
+<Base title={title} description={description} crumbs={crumbs} schema={schema}>
+  <article class="prose">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="/">unflub</a></li>
+        <li><span aria-current="page">{crumb}</span></li>
+      </ol>
+    </nav>
+    <slot />
+    {
+      cta && (
+        <aside class="end" aria-label="Get unflub">
+          <p class="end-title">Phone-style autocorrect for every app.</p>
+          <p class="small">Free and open source. No paid tier. Nothing you type leaves your computer.</p>
+          <div class="cta-row">
+            <DownloadButton />
+            <a class="btn btn-quiet" href={SITE.repo}>
+              View on GitHub
+            </a>
+          </div>
+          <TurnstileNotice />
+        </aside>
+      )
+    }
+  </article>
+</Base>
+
+<style>
+  .crumbs ol {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 40px;
+    padding: 0;
+    list-style: none;
+    font-size: 0.875rem;
+    color: var(--muted);
+  }
+
+  .crumbs li + li::before {
+    content: "/";
+    margin-right: 8px;
+    opacity: 0.6;
+  }
+
+  .crumbs a {
+    color: var(--muted);
+  }
+
+  .end {
+    display: grid;
+    gap: 10px;
+    margin-top: 88px;
+    padding: clamp(28px, 5vw, 44px);
+    border-radius: 28px;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  .end-title {
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    font-weight: 740;
+    letter-spacing: -0.04em;
+    line-height: 1.1;
+  }
+
+  .end .cta-row {
+    margin-top: 14px;
+  }
+</style>
