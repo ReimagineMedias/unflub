@@ -1,0 +1,274 @@
+/* App windows the demos play in, and the correction pill.
+   The pill copies crates/unflub-windows/src/overlay.rs: espresso capsule, struck-through original at 55%,
+   semibold fix, keycap tinted with #E0A595 at 16%, 2px rose underline with round ends. */
+
+.win {
+  --win: #ffffff;
+  --win-chrome: #f6f3f2;
+  --win-side: #faf8f7;
+  --win-ink: #1f1c1b;
+  --win-muted: #6b6461;
+  --win-line: rgba(31, 28, 27, 0.09);
+  --win-field: #f4f1f0;
+  --win-me: #2b2725;
+  --win-me-ink: #ffffff;
+  --win-them: #f1eeed;
+  --win-code: #fbfaf9;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--win);
+  color: var(--win-ink);
+  font: 400 15px/1.5 var(--ui);
+  letter-spacing: 0;
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    0 0 0 1px rgba(45, 25, 22, 0.08),
+    0 2px 4px rgba(45, 25, 22, 0.05),
+    0 24px 48px -16px rgba(45, 25, 22, 0.22),
+    0 64px 120px -48px rgba(45, 25, 22, 0.32);
+}
+
+.tone-deep .win,
+.night .win {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 24px 48px -16px rgba(0, 0, 0, 0.45),
+    0 64px 120px -48px rgba(0, 0, 0, 0.55);
+}
+
+.win-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding-left: 14px;
+  flex: none;
+  background: var(--win-chrome);
+  border-bottom: 1px solid var(--win-line);
+  font-size: 12.5px;
+  color: var(--win-muted);
+}
+
+.win-bar .app-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--win-ink) 22%, transparent);
+}
+
+.win-bar .title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.win-controls {
+  display: flex;
+  height: 100%;
+}
+
+.win-controls i {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 100%;
+}
+
+.win-controls svg {
+  width: 10px;
+  height: 10px;
+  stroke: var(--win-muted);
+  stroke-width: 1;
+  fill: none;
+}
+
+.win-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* A text field a demo types into. Overflow stays visible so the pill can rise out of it. */
+.field {
+  position: relative;
+  color: var(--win-ink);
+  overflow-wrap: anywhere;
+}
+
+.field .ink {
+  white-space: pre-wrap;
+}
+
+.field .ph {
+  color: var(--win-muted);
+}
+
+.field .caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.2em;
+  margin-left: 1px;
+  margin-right: -2.5px;
+  vertical-align: -0.24em;
+  background: var(--win-ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .field.focused .caret {
+    animation: blink 1.06s steps(1) infinite;
+  }
+
+  .field.typing .caret {
+    animation: none;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* The fixed word. The underline is drawn under the word like the native one: 2px, round ends. */
+.fx {
+  position: relative;
+}
+
+.fx::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.12em;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--rose);
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.fx.lit::after {
+  opacity: 1;
+  transition-duration: 0.12s;
+}
+
+.pill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.42em;
+  padding: 0.5em 0.84em;
+  border-radius: 999px;
+  background: var(--espresso);
+  color: var(--paper);
+  font: 400 var(--pill-size, 12px) / 1.34 var(--ui);
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.05),
+    0 1px 4px 1px rgba(0, 0, 0, 0.12),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
+  opacity: 0;
+  translate: 0 2px;
+  transition:
+    opacity 0.16s ease,
+    translate 0.16s var(--ease);
+}
+
+.pill.show {
+  opacity: var(--pill-opacity, 1);
+  translate: 0 0;
+  transition-duration: 0.12s;
+}
+
+.pill s,
+.pill .arr {
+  color: rgba(242, 230, 227, 0.68);
+}
+
+.pill s {
+  text-decoration-thickness: 1px;
+}
+
+.pill b {
+  font-weight: 600;
+}
+
+.pill kbd,
+.pill .done {
+  margin-left: 0.25em;
+  color: var(--keycap);
+  font: 500 0.917em/1.36 var(--mono);
+}
+
+.pill kbd {
+  padding: 0.09em 0.45em;
+  border-radius: 4px;
+  background: rgba(224, 165, 149, 0.16);
+}
+
+.pill .done {
+  font-family: var(--ui);
+  font-weight: 600;
+}
+
+/* Static frame (no script, or reduced motion): the pill hangs off the fixed word itself. */
+.pill.static {
+  left: -0.84em;
+  top: auto;
+  bottom: calc(100% + 6px);
+  opacity: 1;
+  translate: none;
+}
+
+.pill.static.below {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
+/* The capsule as a studio object: the same capsule, lit from above, with a soft drop shadow. Size it with font-size. */
+.studio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42em;
+  padding: 0.5em 0.9em;
+  border-radius: 999px;
+  color: var(--paper);
+  font: 400 1em/1.3 var(--ui);
+  letter-spacing: 0;
+  white-space: nowrap;
+  background: linear-gradient(180deg, #4a2c27 0%, #2d1916 46%, #241310 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+    0 1px 2px rgba(45, 25, 22, 0.3),
+    0 14px 24px -10px rgba(45, 25, 22, 0.45);
+}
+
+.studio-pill s,
+.studio-pill .arr {
+  color: rgba(242, 230, 227, 0.68);
+  text-decoration-thickness: 1px;
+}
+
+.studio-pill b {
+  font-weight: 600;
+}
+
+.studio-pill kbd {
+  margin-left: 0.25em;
+  padding: 0.09em 0.45em;
+  border-radius: 0.3em;
+  color: var(--keycap);
+  background: rgba(224, 165, 149, 0.16);
+  font: 500 0.917em/1.36 var(--mono);
+}

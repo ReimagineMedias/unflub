@@ -1,0 +1,34 @@
+---
+/**
+ * The notice Cloudflare requires next to an invisible Turnstile widget. Rendered only when the build has a site key,
+ * since that is when download buttons run the check.
+ */
+const key: string | undefined = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || undefined;
+interface Props {
+  class?: string;
+}
+const { class: className } = Astro.props;
+---
+
+{
+  key && (
+    <p class:list={["ts-notice", className]}>
+      Downloads are protected by Cloudflare Turnstile. Cloudflare's{" "}
+      <a href="https://www.cloudflare.com/turnstile-privacy-policy/">Turnstile Privacy Addendum</a> and{" "}
+      <a href="https://www.cloudflare.com/website-terms/">Terms of Use</a> apply.
+    </p>
+  )
+}
+
+<style>
+  .ts-notice {
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+
+  .ts-notice a {
+    color: inherit;
+    text-decoration-color: var(--accent);
+  }
+</style>
