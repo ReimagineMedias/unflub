@@ -11,9 +11,8 @@
 //! `D:\Code\rmgn-api\scripts\keys.mjs` prints (`MANIFEST_KEYS = { "<id>": "<base64>" }`). The
 //! private key lives only in the API's `MANIFEST_SIGNING_KEY` secret.
 //!
-//! **The entry below is a placeholder** (all zeros, which verifies nothing): until the real key
-//! replaces it, every manifest is rejected, so no update, flag or message is ever accepted. The
-//! release workflow refuses to build while it is here.
+//! Key `76df971d6ca36a1a` was generated on 2026-11-17. To rotate, add the new key here first,
+//! ship a release, then switch the signer, then remove the old key in a later release.
 
 pub struct ManifestKey {
     pub id: &'static str,
@@ -22,8 +21,8 @@ pub struct ManifestKey {
 }
 
 pub const MANIFEST_KEYS: &[ManifestKey] = &[ManifestKey {
-    id: "placeholder",
-    public: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    id: "76df971d6ca36a1a",
+    public: "CBTydKENGmoS71erptqkEiVT+HKfhtW38sj4chBdK3Q=",
 }];
 
 /// The decoded key, or `None` when it isn't 32 bytes of base64.
