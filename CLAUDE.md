@@ -16,6 +16,11 @@ Repo is private until v0.1, then flipped public.
 - Brand: default theme palette `#2D1916` espresso, `#79453A` brown, `#F2E6E3` blush paper, `#B06A5C` rose. Other themes
   (RMGN paper, quiet ink, System accent) are settings, not replacements. Fonts Manrope + IBM Plex Mono.
 - Pill default: brief underline on the fixed word plus a small capsule (~1 s). Capsule, underline-only and off are all settings.
+- Core engine (`crates/unflub-core`): SymSpell (MIT) frequency lists in `data/`, embedded with `include_str!`. Index build
+  ~100 ms release, ~15 MB heap. Boundary decision p99 ~90 us, hard unknown words ~150 us max. Ranking weights live in
+  `src/rank.rs` (`TUNING`) and `src/distance.rs`; after changing them run
+  `cargo test --release -p unflub-core --test corpus -- --nocapture` (owner corpus 22/25, common typos 103/111) and
+  `cargo run --release -p unflub-core --example bench`.
 - Site (`site/`): Astro static, hosted on Vercel through its Git integration (Root Directory `site`); headers, CSP,
   trailing slashes and caching live in `site/vercel.json`, which `scripts/serve.mjs` and the tests also read. CI only
   checks, builds and tests. Performance figures live in `site/src/data/performance.ts`; keep them in step with

@@ -20,7 +20,8 @@ app stay the same.
    (`Char`, `Boundary`, `Backspace`, `Reset`).
 2. It calls `Engine::on_key` synchronously, inside the hook. The engine tracks the word being
    typed. Caret moves, clicks, focus changes and shortcuts reset it, so we never guess at text
-   we didn't see.
+   we didn't see. After a reset the first word is never corrected, because the caret may be in
+   the middle of a word we never saw; correction resumes after the next boundary key.
 3. On a boundary key (space, punctuation, Enter) the engine decides whether the word is wrong
    and what it should be. If it is confident, it returns `Action::Replace`.
 4. The adapter swallows the boundary key and injects backspaces plus the fixed word and the
@@ -51,22 +52,34 @@ Its top suggestion was right for 20 of 23 real typos, but it ranks without conte
   adjacency (a slip to a neighbouring key is far more likely than a random letter), transposed
   letters, doubled or dropped letters, and the previous word (bigram frequency).
 - **Confidence:** a correction only fires when the best candidate clearly beats the runner-up,
-  scaled by the user's confidence setting. Ambiguous words are left alone.
+  scaled by the user's confidence setting. Ambiguous words are left alone. The runner-up can
+  also be "leave it": an unknown word may be a name or jargon. That hypothesis is stronger for
+  short words and for capitalised words mid-sentence, and weaker for long words.
 
 Engine modes (user setting): `Both` (default: OS flags it and the bundled ranking is confident),
 `SystemOnly`, `BundledOnly` (identical on every OS), `Aggressive` (phone-like).
+
+`Config::language` (default `en-US`) tells the adapter which language to open the OS checker
+in. The bundled dictionary is English only for now and ignores it.
+
+The bundled dictionary includes about 1,000 programming terms (`data/tech_words.txt`):
+keywords, standard types, tools and jargon. People write prose about code all day, so these
+count as known words and are never corrected.
 
 ## Never corrected
 
 - Password and other secure fields, and apps on the user's exclude list.
 - Code-looking tokens: camelCase, snake_case, paths, URLs, anything inside backticks, words with
-  digits.
+  digits, and all-caps words (treated as acronyms).
 - The personal dictionary and words the user has undone before.
 - Words shorter than the minimum length.
+- The first word after a reset: the caret may be in the middle of text we never saw.
+- Hyphenated words, words with non-ASCII letters, and words ending in an apostrophe.
 
 ## UI processes
 
-- **Core process** (hook, engine, tray): always running, target under 15 MB RAM idle.
+- **Core process** (hook, engine, tray): always running, target about 30 MB RAM idle. The
+  bundled dictionary index alone takes about 15 MB.
 - **Pill**: drawn natively in a click-through, no-activate window, shown briefly after a fix.
   No web view stays resident.
 - **Settings**: a Tauri window created on demand and destroyed when closed.
