@@ -96,7 +96,7 @@ const beacon = beaconToken ? JSON.stringify({ token: beaconToken }) : undefined;
     {graph.map((g) => <script type="application/ld+json" set:html={JSON.stringify(g)} />)}
     {beacon && <script is:inline defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon={beacon}></script>}
   </head>
-  <body data-turnstile={turnstileKey} data-download-api={SITE.downloadApi} data-download-refs={SITE.refs.join(" ")} data-releases={SITE.releases}>
+  <body data-turnstile={turnstileKey} data-download-api={SITE.downloadApi} data-download-refs={SITE.refs.join(" ")} data-releases={SITE.releasesLatest}>
     <a class="skip" href="#main">Skip to content</a>
     <Header />
     <main id="main" tabindex="-1">
@@ -104,9 +104,15 @@ const beacon = beaconToken ? JSON.stringify({ token: beaconToken }) : undefined;
     </main>
     <Footer />
     <!-- Shown only if Turnstile needs the visitor to interact before a download. -->
-    <div class="human-check" data-human-check hidden>
-      <p>One quick check, then your download starts.</p>
+    <section class="human-check" data-human-check aria-labelledby="human-title" hidden>
+      <p id="human-title" class="human-title" tabindex="-1" data-human-title>One quick check, then your download starts.</p>
       <div data-human-widget></div>
-    </div>
+      <div class="human-actions">
+        <button type="button" class="human-cancel" data-human-cancel>Cancel</button>
+        <a href={SITE.releases}>Get it from GitHub instead</a>
+      </div>
+    </section>
+    <!-- Download progress and fallback messages. -->
+    <p class="dl-status" role="status" data-dl-status></p>
   </body>
 </html>

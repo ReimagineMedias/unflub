@@ -15,6 +15,7 @@ interface Props {
 
 const { title, description, crumb, schema = [], cta = true } = Astro.props;
 const crumbs: Crumb[] = [{ name: crumb, path: Astro.url.pathname }];
+import TurnstileNotice from "../components/TurnstileNotice.astro";
 ---
 
 <Base title={title} description={description} crumbs={crumbs} schema={schema}>
@@ -37,6 +38,7 @@ const crumbs: Crumb[] = [{ name: crumb, path: Astro.url.pathname }];
               View on GitHub
             </a>
           </div>
+          <TurnstileNotice />
         </aside>
       )
     }

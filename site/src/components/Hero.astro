@@ -12,6 +12,7 @@ const chats = [
   { name: "Running club", line: "Sunday, 8 am, same spot", initials: "RC" },
   { name: "Sam Okafor", line: "Sounds good!", initials: "SO" },
 ];
+import TurnstileNotice from "./TurnstileNotice.astro";
 ---
 
 <section class="hero" aria-labelledby="hero-title">
@@ -29,6 +30,7 @@ const chats = [
       <a class="btn btn-quiet" href={SITE.repo}>View on GitHub</a>
     </div>
     <p class="small fine">Free and open source, with no paid tier. Mac and Linux next.</p>
+    <TurnstileNotice class="hero-notice" />
   </div>
 
   <div class="wrap">
@@ -158,6 +160,11 @@ const chats = [
     justify-content: center;
   }
 
+  .copy :global(.hero-notice) {
+    margin-top: -8px;
+    max-width: 40em;
+  }
+
   .fine {
     margin-top: -4px;
   }
@@ -216,7 +223,7 @@ const chats = [
 
   .studio-chat :global(.chat) {
     /* Whatever the first screen has left after the copy, so the message box shows; roomier on tall screens. */
-    height: clamp(270px, 56svh - 142px, 720px);
+    height: clamp(270px, 56svh - 182px, 720px);
     border-bottom-left-radius: 0;
     border-bottom-right-radius: 0;
     box-shadow:

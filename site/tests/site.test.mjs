@@ -1,5 +1,7 @@
-// Checks the built site in dist/: every page answers 200, internal links resolve, metadata and
-// JSON-LD are in place, and the production headers keep the CSP honest. Run `npm run build` first.
+// Local checks on the built site in dist/: every page answers 200, internal links resolve, metadata and
+// JSON-LD are in place, and the headers from vercel.json keep the CSP honest. They run against scripts/serve.mjs,
+// an approximation of the host, so confirm redirects and headers on a real preview deployment too.
+// Run `npm run build` first.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -142,6 +144,37 @@ test("the night nav copy never hides the real nav's focus ring", () => {
   assert.match(css, /:focus-within \.night[^{]*\{visibility:hidden\}/, "night nav steps aside on focus");
 });
 
+test("addresses redirect to one clean URL, with the headers on the redirect too (local approximation)", async () => {
+  for (const [from, to] of [
+    ["/download", "/download/"],
+    ["/download/index.html", "/download/"],
+    ["/privacy.html", "/privacy/"],
+  ]) {
+    const res = await fetch(base + from, { redirect: "manual" });
+    assert.equal(res.status, 308, from);
+    assert.equal(res.headers.get("location"), to, from);
+    assert.ok(res.headers.get("content-security-policy"), `${from} redirect carries the CSP`);
+  }
+  assert.equal((await fetch(`${base}/download/`)).status, 200);
+  const html = await fetch(`${base}/privacy/`);
+  assert.match(html.headers.get("cache-control") ?? "", /max-age=0, must-revalidate/, "pages are revalidated");
+  assert.equal((await fetch(`${base}/not-a-page/`)).status, 404);
+});
+
+test("the Turnstile notice sits by the download buttons and in the footer when a site key is set", () => {
+  const keyed = pages.get("/").querySelector("body")?.getAttribute("data-turnstile");
+  for (const [path, doc] of pages) {
+    const notices = doc.querySelectorAll(".ts-notice");
+    if (!keyed) {
+      assert.equal(notices.length, 0, `${path} shows the notice without a key`);
+      continue;
+    }
+    assert.ok(notices.length >= 1, `${path} is missing the Turnstile notice`);
+    for (const n of notices) assert.ok(n.querySelector('a[href="https://www.cloudflare.com/turnstile-privacy-policy/"]'));
+  }
+  assert.ok(pages.get("/privacy/").querySelector('a[href="https://www.cloudflare.com/turnstile-privacy-policy/"]'));
+});
+
 test("no page or header turns indexing off", async () => {
   for (const [path, doc] of pages) {
     assert.equal(doc.querySelector('meta[name="robots"]'), null, `${path} has a robots meta tag`);
@@ -163,7 +196,7 @@ test("security headers are set and no page needs an inline script", async () => 
   // Nothing else.
   assert.match(csp, /script-src 'self' https:\/\/static\.cloudflareinsights\.com https:\/\/challenges\.cloudflare\.com;/);
   assert.match(csp, /frame-src https:\/\/challenges\.cloudflare\.com;/);
-  assert.match(csp, /connect-src 'self' https:\/\/cloudflareinsights\.com https:\/\/api\.rmgn\.net;/);
+  assert.match(csp, /connect-src 'self' https:\/\/api\.rmgn\.net https:\/\/challenges\.cloudflare\.com https:\/\/cloudflareinsights\.com;/);
   assert.ok(res.headers.get("strict-transport-security"));
   assert.equal(res.headers.get("x-content-type-options"), "nosniff");
   assert.ok(res.headers.get("referrer-policy"));
