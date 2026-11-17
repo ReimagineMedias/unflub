@@ -159,9 +159,11 @@ test("robots.txt points at the sitemap", async () => {
 test("security headers are set and no page needs an inline script", async () => {
   const res = await fetch(`${base}/`);
   const csp = res.headers.get("content-security-policy") ?? "";
-  // Our own files, plus Cloudflare's cookieless Web Analytics beacon and the endpoint it reports to. Nothing else.
-  assert.match(csp, /script-src 'self' https:\/\/static\.cloudflareinsights\.com;/);
-  assert.match(csp, /connect-src 'self' https:\/\/cloudflareinsights\.com;/);
+  // Our own files, plus Cloudflare's cookieless Web Analytics beacon and the Turnstile check on download buttons.
+  // Nothing else.
+  assert.match(csp, /script-src 'self' https:\/\/static\.cloudflareinsights\.com https:\/\/challenges\.cloudflare\.com;/);
+  assert.match(csp, /frame-src https:\/\/challenges\.cloudflare\.com;/);
+  assert.match(csp, /connect-src 'self' https:\/\/cloudflareinsights\.com https:\/\/api\.rmgn\.net;/);
   assert.ok(res.headers.get("strict-transport-security"));
   assert.equal(res.headers.get("x-content-type-options"), "nosniff");
   assert.ok(res.headers.get("referrer-policy"));

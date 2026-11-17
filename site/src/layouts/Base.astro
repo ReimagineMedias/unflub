@@ -53,6 +53,9 @@ const breadcrumb = crumbs && {
 
 const graph = [organization, ...(breadcrumb ? [breadcrumb] : []), ...schema];
 
+/** Cloudflare Turnstile site key for the download buttons. Set at build time; unset, they link straight to the API. */
+const turnstileKey: string | undefined = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || undefined;
+
 /** Cloudflare Web Analytics (cookieless). Set at build time; no token, no beacon. */
 const beaconToken: string | undefined = import.meta.env.PUBLIC_CF_BEACON_TOKEN;
 const beacon = beaconToken ? JSON.stringify({ token: beaconToken }) : undefined;
@@ -93,12 +96,17 @@ const beacon = beaconToken ? JSON.stringify({ token: beaconToken }) : undefined;
     {graph.map((g) => <script type="application/ld+json" set:html={JSON.stringify(g)} />)}
     {beacon && <script is:inline defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon={beacon}></script>}
   </head>
-  <body>
+  <body data-turnstile={turnstileKey} data-download-api={SITE.downloadApi} data-download-refs={SITE.refs.join(" ")} data-releases={SITE.releases}>
     <a class="skip" href="#main">Skip to content</a>
     <Header />
     <main id="main" tabindex="-1">
       <slot />
     </main>
     <Footer />
+    <!-- Shown only if Turnstile needs the visitor to interact before a download. -->
+    <div class="human-check" data-human-check hidden>
+      <p>One quick check, then your download starts.</p>
+      <div data-human-widget></div>
+    </div>
   </body>
 </html>

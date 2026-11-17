@@ -6,8 +6,12 @@ export const SITE = {
   tagline: "Phone-style autocorrect for every text box on your computer.",
   repo: "https://github.com/ReimagineMedias/unflub",
   releases: "https://github.com/ReimagineMedias/unflub/releases",
-  /** The Windows download: rmgn-api redirects to the current setup and counts the download by `ref`. */
+  /** The Windows download: rmgn-api redirects to the current setup and counts the download by `ref`.
+   *  scripts/download.ts adds the visitor's `ref` and a Turnstile token (`t`) when a site key is set. */
+  downloadApi: "https://api.rmgn.net/unflub/v1/download/windows",
   download: "https://api.rmgn.net/unflub/v1/download/windows?ref=site",
+  /** `ref` values rmgn-api counts separately; anything else is sent as "site". Keep in step with rmgn-api. */
+  refs: ["site", "github", "readme", "hn", "ph", "reddit", "x", "linkedin", "alternativeto", "winget"],
   license: "https://github.com/ReimagineMedias/unflub/blob/main/LICENSE",
   trademarks: "https://github.com/ReimagineMedias/unflub/blob/main/TRADEMARKS.md",
   issues: "https://github.com/ReimagineMedias/unflub/issues",

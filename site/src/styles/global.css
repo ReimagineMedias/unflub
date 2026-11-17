@@ -482,3 +482,27 @@ html.is-night .dusk {
     opacity: 0;
   }
 }
+
+/* Turnstile's check, shown only when Cloudflare needs the visitor to interact before a download. */
+.human-check {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 70;
+  translate: -50% 0;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  padding: 18px 20px;
+  border-radius: 22px;
+  background: #ffffff;
+  color: var(--espresso);
+  box-shadow:
+    0 0 0 1px rgba(45, 25, 22, 0.08),
+    0 20px 50px -16px rgba(45, 25, 22, 0.4);
+  font-size: 0.9375rem;
+}
+
+.human-check[hidden] {
+  display: none;
+}
