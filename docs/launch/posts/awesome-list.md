@@ -35,8 +35,8 @@ Read 2026-11-17: https://github.com/rust-unofficial/awesome-rust/blob/main/CONTR
 ```markdown
 Adds unflub under Applications > Productivity.
 
-unflub is a Windows app, written in Rust, that fixes typos as you type in any text field. The engine
-(`unflub-core`) is platform-free Rust with no `unsafe`; the Windows adapter calls it from a low-level
+unflub is a Windows app, written in Rust, that fixes typos as you type in any text field. The engine,
+`unflub-core`, is platform-free Rust with no `unsafe`. The Windows adapter calls it from a low-level
 keyboard hook within a 1 ms budget per key. MIT licensed.
 
 Popularity: <N> stars on GitHub.

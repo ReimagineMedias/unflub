@@ -39,12 +39,14 @@ These findings shaped the plan more than the general advice did. Sources are at 
 6. **The site's download button still points at GitHub Releases** (`SITE.download` in
    `site/src/data/site.ts`). `docs/releasing.md` on the release branches says it should be
    `https://api.rmgn.ca/unflub/download/windows?ref=site`.
-7. **Two claims in the brief need checking before they go in a post.** "The part that sees keys runs as a
+7. **Three claims need checking before they go in a post.** "The part that sees keys runs as a
    separate process with no network code, and CI enforces it" does not match the newest architecture doc I
    found (`feat/engine-process`), which says the app runs the adapter in-process and the update check runs on
    a thread of the core process. And the `README.md` on `main` still says "No accounts, no telemetry, no
-   cloud", which is wrong now that usage counts and crash reports are on by default. Each draft lists these
-   under its prerequisites.
+   cloud", which is wrong now that usage counts and crash reports are on by default. And the site says the
+   numbers were "measured on a typical laptop", while `docs/performance.md` says the development laptop has
+   32 logical cores. "Measured on our development laptop and in a simulated slow PC" is accurate and still
+   reads well. Each draft lists the claims it depends on under its prerequisites.
 
 ## Phase 1: pre-launch, L-21 to L-1
 
@@ -56,6 +58,7 @@ These findings shaped the plan more than the general advice did. Sources are at 
 | Site | Merge `feat/site`, let `site.yml` deploy, confirm `https://unflub.rmgn.ca/` loads | Matias | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` secrets | All five pages return 200; `sitemap-index.xml` lists them |
 | Site | Point `SITE.download` at `https://api.rmgn.ca/unflub/download/windows?ref=site` | agent | API deployed | Download button redirects to the setup |
 | API | Add `hn`, `ph`, `reddit`, `x`, `linkedin`, `alternativeto`, `winget` to the unflub `refs` allowlist in `rmgn-api` | agent, Matias merges | Owner agrees, see decisions | Dashboard shows downloads per channel |
+| Site | Change "Measured on a typical laptop" in `site/src/data/performance.ts` to name the real setup | agent | Owner agrees to the wording | Site and `docs/performance.md` say the same thing |
 | Site | Allow the Web Analytics beacon in the CSP, update the CSP test, add one line about site analytics to /privacy | agent | Owner agrees to site analytics | `npm test` passes; beacon loads on the live site |
 | Site | Cloudflare Web Analytics, steps below | Matias | Site deployed, CSP change merged | Page views show in the dashboard within a day |
 | Search | Google Search Console, steps below | Matias | Site deployed | Domain property verified; sitemap status "Success" with 5 URLs |
