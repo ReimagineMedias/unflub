@@ -36,6 +36,27 @@ pub const TAB: Stroke = Stroke::Vk {
     scan: 0x0F,
 };
 
+/// A correction's keystrokes: `delete` characters before the caret become `insert`, which ends
+/// with the boundary key the user pressed.
+///
+/// The boundary is typed **first**, then deleted along with the word, then the fixed word and
+/// the boundary are typed. Fields with inline autocomplete (Excel, the browser address bar,
+/// some combo boxes) have the suggested tail selected after the word; a first Backspace would
+/// only remove that selection, leaving one letter behind (`teh` + Space became `tthe `).
+/// Typing replaces the selection and closes the suggestion. Two more events, the same text
+/// everywhere else. Enter and Tab can't go first (they would send or commit what is there), so
+/// those keep the plain order ([`plan`]).
+pub fn plan_correction(delete: usize, insert: &str) -> Vec<Stroke> {
+    match insert.chars().last() {
+        Some(b) if unflub_core::undoable_boundary(b) => {
+            let mut out = plan(0, b.encode_utf8(&mut [0; 4]));
+            out.extend(plan(delete + 1, insert));
+            out
+        }
+        _ => plan(delete, insert),
+    }
+}
+
 /// `delete` backspaces, then `insert`. `\n` (or a lone `\r`, or `\r\n`) is sent as Enter and
 /// `\t` as Tab, since many apps ignore those characters when they arrive as Unicode packets.
 pub fn plan(delete: usize, insert: &str) -> Vec<Stroke> {
@@ -606,6 +627,65 @@ mod tests {
                 Stroke::Unit(' ' as u16),
             ]
         );
+    }
+
+    /// Review S2: inline autocomplete selects a suggested tail after the word. Typing the
+    /// boundary first replaces it; then the word and that boundary go.
+    #[test]
+    fn corrections_type_the_boundary_first() {
+        let u = |c: char| Stroke::Unit(c as u16);
+        assert_eq!(
+            plan_correction(3, "the "),
+            vec![
+                u(' '),
+                BACKSPACE,
+                BACKSPACE,
+                BACKSPACE,
+                BACKSPACE,
+                u('t'),
+                u('h'),
+                u('e'),
+                u(' '),
+            ]
+        );
+        assert_eq!(plan_correction(3, "the.")[0], u('.'));
+        // Simulate both kinds of field: plain, and one with "ran" selected after "teh".
+        for selected in ["", "ran"] {
+            let mut text = String::from("ok teh");
+            let mut selection = selected.len();
+            text.push_str(selected);
+            for s in plan_correction(3, "the ") {
+                match s {
+                    BACKSPACE if selection > 0 => {
+                        text.truncate(text.len() - selection);
+                        selection = 0;
+                    }
+                    BACKSPACE => {
+                        text.pop();
+                    }
+                    Stroke::Unit(c) => {
+                        text.truncate(text.len() - selection);
+                        selection = 0;
+                        text.push(char::from_u32(u32::from(c)).unwrap());
+                    }
+                    other => panic!("{other:?}"),
+                }
+            }
+            assert_eq!(text, "ok the ", "selected tail {selected:?}");
+        }
+    }
+
+    /// Enter and Tab would send or commit, so they still come last, once.
+    #[test]
+    fn enter_and_tab_corrections_keep_the_plain_order() {
+        assert_eq!(plan_correction(3, "the\n"), plan(3, "the\n"));
+        assert_eq!(plan_correction(3, "the\t"), plan(3, "the\t"));
+        let enters = plan_correction(3, "the\n")
+            .iter()
+            .filter(|s| **s == ENTER)
+            .count();
+        assert_eq!(enters, 1);
+        assert!(plan_correction(0, "").is_empty());
     }
 
     #[test]

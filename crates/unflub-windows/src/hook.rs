@@ -1003,7 +1003,11 @@ impl State {
             return self.skip(replacement, reason);
         }
         // Swallow the key and hand the batch over; SendInput runs on the injector thread.
-        let strokes = inject::plan(replacement.delete, &replacement.insert);
+        let strokes = if undo {
+            inject::plan(replacement.delete, &replacement.insert)
+        } else {
+            inject::plan_correction(replacement.delete, &replacement.insert)
+        };
         let batch = self.pipeline.begin(ev, strokes.len() * 2);
         let job = Job {
             kind: JobKind::Inject,

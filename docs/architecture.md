@@ -64,7 +64,10 @@ COM multithreaded apartment:
   in the foreground window's layout without changing the kernel's dead-key state, so accents
   keep working in the user's app. We can't see what a dead key composes with, so the key after
   a dead key resets the word instead of guessing.
-- **Injection.** One `SendInput` per action, on the injector thread: backspaces, then the text
+- **Injection.** One `SendInput` per action, on the injector thread: for a fix, the boundary
+  key first (it replaces a suggestion that inline autocomplete selected after the word, as in
+  Excel or the address bar), then backspaces over the word and that boundary, then the text;
+  after Enter or Tab, which would send or commit, just the backspaces and the text. Text goes
   as Unicode packets (`\n` and `\t` as real Enter and Tab), tagged with a batch number so our
   hook can tell when the whole batch has landed. Until then the user's keys (downs and ups,
   modifiers too) are held in a queue of up to 64 events, then replayed with a replay tag and
