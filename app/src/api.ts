@@ -136,7 +136,7 @@ export async function onInputInterference(cb: (active: boolean) => void): Promis
   return listen<boolean>("input-interference", (e) => cb(e.payload));
 }
 
-/** A note from unflub's server (remote config), if there is one to show. */
+/** A note from the signed update manifest, if there is one to show. */
 export async function remoteMessage(): Promise<RemoteMessage | null> {
   return inTauri ? invoke<RemoteMessage | null>("remote_message") : null;
 }

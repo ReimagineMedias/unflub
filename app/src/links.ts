@@ -2,15 +2,15 @@
 export const LINKS = {
   sponsor: "https://github.com/sponsors/ReimagineMedias",
   repo: "https://github.com/ReimagineMedias/unflub",
-  site: "https://unflub.rmgn.ca/",
+  site: "https://unflub.rmgn.net/",
 } as const;
 
 /**
  * A link the opener plugin may open: the scope in capabilities/default.json allows these two
  * sites only. Use `<ExternalLink>`; raw `<a>` links do nothing in the app window.
  */
-export type ExternalUrl = `https://github.com/${string}` | `https://unflub.rmgn.ca/${string}`;
+export type ExternalUrl = `https://github.com/${string}` | `https://unflub.rmgn.net/${string}`;
 
 export function isExternalUrl(url: string): url is ExternalUrl {
-  return (url.startsWith("https://github.com/") || url.startsWith("https://unflub.rmgn.ca/")) && !/\s/.test(url);
+  return (url.startsWith("https://github.com/") || url.startsWith("https://unflub.rmgn.net/")) && !/\s/.test(url);
 }

@@ -4,11 +4,11 @@ PackageIdentifier: RMGN.unflub
 PackageVersion: 0.1.0
 PackageLocale: en-US
 Publisher: Reimagine Media (RMGN)
-PublisherUrl: https://rmgn.ca
+PublisherUrl: https://rmgn.net
 PublisherSupportUrl: https://github.com/ReimagineMedias/unflub/issues
 Author: RMGN
 PackageName: unflub
-PackageUrl: https://unflub.rmgn.ca
+PackageUrl: https://unflub.rmgn.net
 License: MIT
 LicenseUrl: https://github.com/ReimagineMedias/unflub/blob/main/LICENSE
 Copyright: © 2026 Matias Suxo

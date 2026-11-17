@@ -19,7 +19,7 @@
     "active": true,
     "targets": ["nsis", "msi"],
     "publisher": "Reimagine Media (RMGN)",
-    "homepage": "https://unflub.rmgn.ca",
+    "homepage": "https://unflub.rmgn.net",
     "category": "Utility",
     "shortDescription": "Phone-style autocorrect for every text field",
     "copyright": "© 2026 Matias Suxo",
@@ -44,8 +44,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA3QjVDODgzRTgzMjk3RjEKUldUeGx6TG9nOGkxQitMUkR1ZWdFeFFLd0lhRUVVYUpEN2hLMVN4N3pTY1hzb0dsQlhYb3V1NUQK",
-      "endpoints": ["https://api.rmgn.ca/unflub/v1/update/{{target}}/{{arch}}/{{current_version}}?channel=stable"]
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA3QjVDODgzRTgzMjk3RjEKUldUeGx6TG9nOGkxQitMUkR1ZWdFeFFLd0lhRUVVYUpEN2hLMVN4N3pTY1hzb0dsQlhYb3V1NUQK"
     }
   }
 }

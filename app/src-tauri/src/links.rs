@@ -6,12 +6,39 @@ pub const SPONSOR_URL: &str = "https://github.com/sponsors/ReimagineMedias";
 /// The source repository, for "Star on GitHub".
 pub const REPO_URL: &str = "https://github.com/ReimagineMedias/unflub";
 
-/// Product-scoped API (`D:\Code\rmgn-api\docs\unflub-contract.md`).
-pub const API_BASE: &str = "https://api.rmgn.ca/unflub/v1";
+/// Product-scoped API, for usage stats only (`D:\Code\rmgn-api\docs\unflub-contract.md`).
+pub const API_BASE: &str = "https://api.rmgn.net/unflub/v1";
+
+/// Static files on the CDN: the signed manifest (`manifest.rs`), each release's Tauri file and
+/// the installers.
+pub const DL_BASE: &str = "https://dl.rmgn.net/unflub";
 
 /// Prefixes the app may open in the browser. Mirrors the `opener:allow-open-url` scope in
-/// `capabilities/default.json`, so a link from remote config can't open anything else.
-pub const OPENABLE: &[&str] = &["https://github.com/", "https://unflub.rmgn.ca/"];
+/// `capabilities/default.json`, so a link from the manifest's message can't open anything else.
+pub const OPENABLE: &[&str] = &["https://github.com/", "https://unflub.rmgn.net/"];
+
+/// Where installers are published: the GitHub Release assets.
+pub const RELEASE_DOWNLOADS: &str = "https://github.com/ReimagineMedias/unflub/releases/download/";
+
+/// An installer URL the signed manifest may name: a GitHub Release asset, or a dl.rmgn.net
+/// address that redirects to one.
+pub fn installer_url_allowed(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && (url.as_str().starts_with(RELEASE_DOWNLOADS)
+            || (url.host_str() == Some("dl.rmgn.net") && url.path().starts_with("/unflub/")))
+}
+
+/// Where an installer download may be redirected: the GitHub Release asset and the GitHub
+/// hosts that serve its bytes. The installer's signature is what proves the bytes; this keeps
+/// the download from wandering anywhere else.
+pub fn redirect_allowed(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && (url.as_str().starts_with(RELEASE_DOWNLOADS)
+            || matches!(
+                url.host_str(),
+                Some("objects.githubusercontent.com" | "release-assets.githubusercontent.com")
+            ))
+}
 
 /// True when `url` may be opened in the browser.
 pub fn openable(url: &str) -> bool {
@@ -31,15 +58,60 @@ mod tests {
     fn only_our_sites_open() {
         assert!(openable(SPONSOR_URL));
         assert!(openable(REPO_URL));
-        assert!(openable("https://unflub.rmgn.ca/privacy"));
+        assert!(openable("https://unflub.rmgn.net/privacy"));
         for bad in [
             "http://github.com/x",
             "https://github.com.evil.example/",
-            "https://unflub.rmgn.ca.evil/",
+            "https://unflub.rmgn.net.evil/",
+            "https://unflub.rmgn.ca/",
             "file:///C:/Windows",
             "https://github.com/x y",
         ] {
             assert!(!openable(bad), "{bad}");
+        }
+    }
+
+    /// Everything unflub calls is https on rmgn.net, plus GitHub for the installers.
+    #[test]
+    fn network_bases() {
+        assert_eq!(API_BASE, "https://api.rmgn.net/unflub/v1");
+        assert_eq!(DL_BASE, "https://dl.rmgn.net/unflub");
+    }
+
+    #[test]
+    fn installers_come_only_from_github_releases_or_dl() {
+        let u = |s: &str| reqwest::Url::parse(s).unwrap();
+        for ok in [
+            "https://github.com/ReimagineMedias/unflub/releases/download/v0.2.0/unflub_0.2.0_x64-setup.exe",
+            "https://dl.rmgn.net/unflub/0.2.0/unflub_0.2.0_x64-setup.exe",
+        ] {
+            assert!(installer_url_allowed(&u(ok)), "{ok}");
+        }
+        for bad in [
+            "http://github.com/ReimagineMedias/unflub/releases/download/v0.2.0/x.exe",
+            "https://github.com/someone/unflub/releases/download/v0.2.0/x.exe",
+            "https://github.com/ReimagineMedias/unflub/archive/x.zip",
+            "https://dl.rmgn.net/other/x.exe",
+            "https://dl.rmgn.net.evil/unflub/x.exe",
+            "https://objects.githubusercontent.com/x",
+        ] {
+            assert!(!installer_url_allowed(&u(bad)), "{bad}");
+        }
+        for ok in [
+            "https://github.com/ReimagineMedias/unflub/releases/download/v0.2.0/x.exe",
+            "https://objects.githubusercontent.com/github-production-release-asset/1/2",
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1/2",
+        ] {
+            assert!(redirect_allowed(&u(ok)), "{ok}");
+        }
+        for bad in [
+            "http://objects.githubusercontent.com/x",
+            "https://evil.example/x.exe",
+            "https://github.com/someone/else/releases/download/v1/x.exe",
+            "https://raw.githubusercontent.com/ReimagineMedias/unflub/main/x",
+            "https://dl.rmgn.net/unflub/0.2.0/x.exe",
+        ] {
+            assert!(!redirect_allowed(&u(bad)), "{bad}");
         }
     }
 

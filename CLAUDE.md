@@ -1,6 +1,6 @@
 # unflub
 
-System-wide, phone-style autocorrect. RMGN product, site at unflub.rmgn.ca (Cloudflare, like rmgn.ca).
+System-wide, phone-style autocorrect. RMGN product, site at unflub.rmgn.net (Cloudflare). All app/CI domains are rmgn.net since 2026-11-17 (bundle id stays `ca.rmgn.unflub`).
 Keep `AGENTS.md` identical in substance.
 
 Git workflow: PRs. Branch `type/topic`, open a PR on ReimagineMedias/unflub, merge only when the owner says so (squash).
@@ -80,28 +80,36 @@ Repo is private until v0.1, then flipped public.
 - Windows PowerShell 5.1: `$PSScriptRoot` can be empty in `param()` defaults, and a native command's stderr throws
   under `$ErrorActionPreference = 'Stop'`. The perf scripts handle both.
 - Releases: see `docs/releasing.md`. A `v*.*.*` tag runs `.github/workflows/release.yml`: build, sign, VirusTotal,
-  attest, upload installers + `.sig` to R2 `rmgn-releases/unflub/<version>/` (wrangler pinned in app/package-lock.json),
-  register with `POST api.rmgn.ca/unflub/v1/admin/releases` (lands PAUSED at 0%; CI's token can only register), and a
-  draft GitHub Release as mirror. Rollout (5% > 25% > 100%, pause, block, min_version) is done by a person in
-  `https://api.rmgn.ca/dashboard/?product=unflub` (Cloudflare Access), never from CI. API contract:
+  attest, attach installers + `.sig` to a draft GitHub Release (installers live there; no R2), then register with
+  `POST api.rmgn.net/unflub/v1/admin/releases` (`scripts/register-release.mjs`: file, signature, sha256, size; lands
+  PAUSED at 0%; CI's token can only register). rmgn-api's publish step builds dl.rmgn.net (signed manifests,
+  `tauri-*.json`, redirects to the GitHub assets). The owner publishes the draft
+  (draft assets aren't downloadable), then rolls out (5% > 25% > 100%, pause, block, min_version) in
+  `https://api.rmgn.net/dashboard/?product=unflub` (Cloudflare Access), never from CI. API contract:
   `D:\Code\rmgn-api\docs\unflub-contract.md`. `latest.json` is still generated (`scripts/updater-manifest.mjs`) but unused. `node scripts/bump-version.mjs <v>` keeps
   the five version locations in sync (CI runs `--check`). macOS/Linux matrix rows exist with `"enabled": false`.
 - Updater signing keypair: `D:\Code\unflub\.local\updater\unflub-updater.key` and `.password` (git-ignored; never print
   or commit). Only the public key is in `tauri.conf.json`. Updater artifacts are on only with
   `--config src-tauri/tauri.release.conf.json`, so a plain `npm run tauri build` needs no key.
-- Updates run in Rust (`updates.rs`) against api.rmgn.ca: check ~2 min after launch then daily (min interval from
-  remote config), headers `X-Rollout-Bucket` (random per installed version, `net.rs`) and `X-First` (UTC
-  day/week/month), no install id anywhere. `version_comparator` accepts any version != current (server-driven
-  rollbacks). `autoUpdate` downloads + verifies in the background to `%LOCALAPPDATA%\ca.rmgn.unflub\updates`
+- Updates are static (`updates.rs`, `manifest.rs`, `remote.rs`): check ~2 min after launch then daily (min interval
+  from the manifest's flags). Fetch `dl.rmgn.net/unflub/manifest/{channel}.json` + `.sig` (Ed25519 over the exact
+  bytes, keys in `keys.rs`, ETag cached in `<data>/manifest/`); reject unsigned/invalid/>256 KB/older-`generated_at`
+  and keep the last good one. Eligibility (kill switch, blocked/below-min critical, bucket < rollout) runs in the app
+  with the local bucket (`net.rs`, never sent); only then the updater gets
+  `dl.rmgn.net/unflub/{version}/tauri-{target}-{arch}.json`, accepts exactly that version (rollbacks work), and its
+  URL/signature must equal the manifest's; installer bytes must match the manifest's sha256/size. Installer URLs:
+  GitHub Release assets or dl.rmgn.net (302 to them); redirects only to that GitHub path and GitHub's asset hosts
+  (`links.rs`). Requests carry only `User-Agent`; no install id, no `X-First`. `keys.rs` still holds a PLACEHOLDER
+  key (verifies nothing); release CI fails until the real one from rmgn-api is in. `autoUpdate` downloads + verifies in the background to `%LOCALAPPDATA%\ca.rmgn.unflub\updates`
   (SHA-256 re-checked before install); install only on Restart now or tray Quit. Only `install-source` = installer or
   winget self-updates (`install.rs`). Release builds only.
 - Privacy/network map is in `docs/architecture.md#network-and-privacy`. Usage stats (`usage.rs`) and crash reports
   (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON with a first-run choice; tests pin the
-  payload keys to the contract allowlist. Remote config (`remote.rs`) may only switch things off (tested). Machine
+  payload keys to the contract allowlist. Manifest flags (`remote.rs`) may only switch things off (tested). Machine
   policy `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`). Typo-fix pair sharing was cut from v0.1.
 - Settings have `schemaVersion` (`migrations.rs`, step by step, keeps `settings.json.v<N>`), and unknown fields survive
   in `Settings::extra`. All window strings are in `app/src/i18n/en.ts` (`t()`), tray strings in `strings.rs`. External
-  links only via `<ExternalLink>` / tauri-plugin-opener (scoped to github.com and unflub.rmgn.ca); a cargo test fails
+  links only via `<ExternalLink>` / tauri-plugin-opener (scoped to github.com and unflub.rmgn.net); a cargo test fails
   on raw `<a>` in `app/src`.
 - The hook ignores unflub's own exe (HookOptions.excluded_apps), so Settings is never autocorrected; the first-run
   tour's practice box uses a separate engine over IPC (`tour.rs`). The adapter's hook watchdog (GetLastInputInfo vs

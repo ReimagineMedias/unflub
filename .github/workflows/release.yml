@@ -1,11 +1,11 @@
 name: Release
 
-# A version tag builds every installer, signs them for the updater, scans them, uploads them to
-# R2 (rmgn-releases/unflub/<version>/) and registers the release with api.rmgn.ca, where it lands
-# PAUSED at 0%. Nobody gets it until the owner activates it in the dashboard
-# (https://api.rmgn.ca/dashboard/?product=unflub) and raises the rollout. A draft GitHub Release
-# with the same files, latest.json and SHA256SUMS.txt is kept as a mirror. Run it by hand with
-# "dry run" to build and check everything without uploading or registering anything.
+# A version tag builds every installer, signs them for the updater, scans them, attaches them to a
+# draft GitHub Release (where installers live; the owner publishes it) and registers the release
+# with api.rmgn.net, where it lands PAUSED at 0%. Nobody gets it until the owner publishes the
+# draft, activates it in the dashboard (https://api.rmgn.net/dashboard/?product=unflub) and raises
+# the rollout; dl.rmgn.net then lists it in the signed manifest. Run it by hand with "dry run" to
+# build and check everything without publishing or registering anything.
 # How to cut a release: docs/releasing.md.
 
 on:
@@ -66,6 +66,20 @@ jobs:
             echo "tag=$tag"
             echo "dry_run=$dry_run"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Manifest signing key present
+        env:
+          DRY_RUN: ${{ steps.version.outputs.dry_run }}
+        run: |
+          # A release that trusts only the placeholder key could never accept another update.
+          if grep -q 'id: "placeholder"' app/src-tauri/src/keys.rs; then
+            if [ "$DRY_RUN" = true ]; then
+              echo "::warning file=app/src-tauri/src/keys.rs::The manifest public key is still the placeholder. A real release refuses to run."
+            else
+              echo "::error file=app/src-tauri/src/keys.rs::Put the manifest public key from rmgn-api in keys.rs before releasing."
+              exit 1
+            fi
+          fi
 
       - name: Release notes
         env:
@@ -351,7 +365,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   release:
-    name: Upload, register and draft
+    name: Draft and register
     needs: [prepare, build]
     runs-on: ubuntu-latest
     # Holds the release secrets; add required reviewers to it to approve each release.
@@ -369,11 +383,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-      - name: Tools (wrangler, pinned in app/package-lock.json)
-        working-directory: app
-        run: npm ci
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: bundle-*
@@ -389,10 +398,13 @@ jobs:
           merge-multiple: true
           path: binaries
 
-      - name: latest.json and SHA256SUMS.txt
+      - name: latest.json, SHA256SUMS.txt and the registration body
         run: |
           set -euo pipefail
           node scripts/updater-manifest.mjs --dir assets --version "$VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" > latest.json
+          # The API body: per platform the setup on this GitHub Release, its signature, SHA-256 and
+          # size. The API's publish step writes the signed manifest and tauri-*.json on dl.rmgn.net.
+          node scripts/register-release.mjs --dir assets --version "$VERSION" --notes-file release-notes.md > register.json
           mv latest.json assets/
           (cd assets && sha256sum -- * > ../SHA256SUMS.txt)
           mv SHA256SUMS.txt assets/
@@ -426,57 +438,6 @@ jobs:
             assets/*-setup.exe
             assets/*.msi
 
-      - name: Upload to R2
-        if: env.DRY_RUN != 'true'
-        working-directory: app
-        env:
-          # An API token scoped to R2 object writes on rmgn-releases only.
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_R2_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::error::Add the CLOUDFLARE_R2_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets (docs/releasing.md)."
-            exit 1
-          fi
-          # Installers and their .sig only; latest.json and SHA256SUMS.txt stay on GitHub.
-          node ../scripts/register-release.mjs --dir ../assets --version "$VERSION" --list > ../r2-files.txt
-          while read -r f; do
-            npx --no-install wrangler r2 object put "rmgn-releases/unflub/$VERSION/$f" \
-              --file "../assets/$f" --content-type application/octet-stream --remote
-          done < ../r2-files.txt
-
-      - name: Register with api.rmgn.ca (paused, 0%)
-        if: env.DRY_RUN != 'true'
-        env:
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-        run: |
-          set -euo pipefail
-          if [ -z "$ADMIN_TOKEN" ] || [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
-            echo "::error::Add the ADMIN_TOKEN, CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET secrets (docs/releasing.md)."
-            exit 1
-          fi
-          node scripts/register-release.mjs --dir assets --version "$VERSION" --notes-file release-notes.md > register.json
-          # Headers go through a private file, not the command line, so other processes can't read them.
-          umask 077
-          headers="$RUNNER_TEMP/api-headers"
-          {
-            echo "Authorization: Bearer $ADMIN_TOKEN"
-            echo "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID"
-            echo "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET"
-            echo "Content-Type: application/json"
-          } > "$headers"
-          status=$(curl -sS -o response.json -w '%{http_code}' -X POST -H @"$headers" \
-            --data @register.json https://api.rmgn.ca/unflub/v1/admin/releases)
-          rm -f "$headers"
-          case "$status" in
-            200|201) echo "Registered $VERSION, paused at 0%." ;;
-            409) echo "::notice::$VERSION was already registered (a re-run). Nothing changed." ;;
-            *) echo "::error::Registering failed with HTTP $status: $(head -c 500 response.json)"; exit 1 ;;
-          esac
-
       - name: Create or update the draft release
         if: env.DRY_RUN != 'true'
         env:
@@ -497,6 +458,36 @@ jobs:
           gh release upload "$TAG" assets/* --clobber
           echo "RELEASE_URL=$(gh release view "$TAG" --json url --jq .url)" >> "$GITHUB_ENV"
 
+      - name: Register with api.rmgn.net (paused, 0%)
+        if: env.DRY_RUN != 'true'
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ADMIN_TOKEN" ] || [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "::error::Add the ADMIN_TOKEN, CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET secrets (docs/releasing.md)."
+            exit 1
+          fi
+          # Headers go through a private file, not the command line, so other processes can't read them.
+          umask 077
+          headers="$RUNNER_TEMP/api-headers"
+          {
+            echo "Authorization: Bearer $ADMIN_TOKEN"
+            echo "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID"
+            echo "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET"
+            echo "Content-Type: application/json"
+          } > "$headers"
+          status=$(curl -sS -o response.json -w '%{http_code}' -X POST -H @"$headers" \
+            --data @register.json https://api.rmgn.net/unflub/v1/admin/releases)
+          rm -f "$headers"
+          case "$status" in
+            200|201) echo "Registered $VERSION, paused at 0%." ;;
+            409) echo "::notice::$VERSION was already registered (a re-run). Nothing changed." ;;
+            *) echo "::error::Registering failed with HTTP $status: $(head -c 500 response.json)"; exit 1 ;;
+          esac
+
       - name: Summary
         if: always()
         run: |
@@ -507,9 +498,10 @@ jobs:
               echo "Dry run: nothing was uploaded or registered. The files are in the \`release-assets\` artifact."
             elif [ -n "${RELEASE_URL:-}" ]; then
               echo "> [!IMPORTANT]"
-              echo "> $TAG is registered **paused at 0%**. To ship it, open https://api.rmgn.ca/dashboard/?product=unflub,"
-              echo "> set it active at 5%, watch for a day, then 25% and 100%. The GitHub draft ($RELEASE_URL) is the"
-              echo "> mirror: publish it when the rollout reaches 100% (docs/releasing.md)."
+              echo "> $TAG is registered **paused at 0%**; its installers are on the draft $RELEASE_URL."
+              echo "> Publish the draft first (its download URLs only work once it is published), then open"
+              echo "> https://api.rmgn.net/dashboard/?product=unflub, set it active at 5%, watch for a day, then 25% and 100%."
+              echo "> See docs/releasing.md."
             fi
             echo
             echo "| Asset | Size | SHA-256 |"

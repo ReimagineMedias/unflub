@@ -5,7 +5,7 @@
 //!   DisableUpdates       DWORD 1: no update checks, downloads or installs
 //!   DisableUsageStats    DWORD 1: no usage stats counted or sent
 //!   DisableCrashReports  DWORD 1: no crash reports kept or sent
-//!   DisableRemoteConfig  DWORD 1: no remote config fetched; built-in defaults only
+//!   DisableRemoteConfig  DWORD 1: the update manifest's flags and message are ignored; built-in defaults only
 //! ```
 //!
 //! A policy wins over the user's switch, which the settings window shows as "Managed by your

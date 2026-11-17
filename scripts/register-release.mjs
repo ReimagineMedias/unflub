@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 // Writes the body of `POST /unflub/v1/admin/releases` from the signed bundles in one folder.
 //
-//   node scripts/register-release.mjs --dir <assets> --version 0.2.0 [--notes-file release-notes.md] [--list]
+//   node scripts/register-release.mjs --dir <assets> --version 0.2.0 [--notes-file release-notes.md]
 //
-// One platform per architecture, keyed like the updater (`windows-x86_64`): `file` is the NSIS
-// setup the updater runs, `signature` its .sig, `installer` what the website serves (the same
-// setup). Pre-release versions (0.3.0-beta.1) go to the beta channel. The API registers every
-// release paused at 0% (docs/releasing.md).
-//
-// --list prints the files to upload to R2 instead, one per line: installers and their .sig only.
+// One platform per architecture, keyed like the manifest (`windows-x86_64`): `file` is the NSIS
+// setup the updater runs (a GitHub Release asset), `signature` its .sig, `sha256` and `size` its
+// bytes, `installer` what the website serves (the same setup). Pre-release versions (0.3.0-beta.1)
+// go to the beta channel. The API registers every release paused at 0% (docs/releasing.md); its
+// publish step then writes the signed manifest, `tauri-{target}-{arch}.json` and the redirects
+// from dl.rmgn.net/unflub/{version}/{file} to the GitHub Release asset.
 
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -28,25 +29,18 @@ const version = arg("version");
 const notesFile = arg("notes-file", "");
 const files = readdirSync(dir).sort();
 
-/** Installers and updater signatures: the only files that go to R2. */
-const UPLOADABLE = /(-setup\.exe|\.msi|\.dmg|\.app\.tar\.gz|\.AppImage|\.deb|\.rpm)(\.sig)?$/;
-
-if (process.argv.includes("--list")) {
-  const list = files.filter((f) => UPLOADABLE.test(f));
-  if (list.length === 0) throw new Error(`no installers in ${dir}`);
-  process.stdout.write(list.join("\n") + "\n");
-  process.exit(0);
-}
-
 const ARCH = { x64: "x86_64", arm64: "aarch64" };
 const platforms = {};
 for (const file of files) {
   const m = /_(x64|arm64)-setup\.exe$/.exec(file);
   if (!m) continue;
   if (!files.includes(`${file}.sig`)) throw new Error(`${file} has no .sig beside it`);
+  const bytes = readFileSync(join(dir, file));
   platforms[`windows-${ARCH[m[1]]}`] = {
     file,
     signature: readFileSync(join(dir, `${file}.sig`), "utf8").trim(),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    size: bytes.length,
     installer: file,
   };
 }

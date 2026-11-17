@@ -7,7 +7,7 @@
     "core:default",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://github.com/*" }, { "url": "https://unflub.rmgn.ca/*" }]
+      "allow": [{ "url": "https://github.com/*" }, { "url": "https://unflub.rmgn.net/*" }]
     }
   ]
 }

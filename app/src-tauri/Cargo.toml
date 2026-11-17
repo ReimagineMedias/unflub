@@ -37,11 +37,15 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
-# Local dates for the Stats page.
-time = { version = "0.3", features = ["local-offset"] }
+# Local dates for the Stats page; `generated_at` of the update manifest.
+time = { version = "0.3", features = ["local-offset", "parsing"] }
 sha2 = "0.10"
 semver = "1"
-# Remote config and opt-in usage stats. Same reqwest and rustls (ring) as the updater, so nothing new
+# Ed25519 check of the signed update manifest (manifest.rs, keys.rs). The same ring that rustls
+# already links, so nothing new is built.
+ring = "0.17"
+base64 = "0.23"
+# The update manifest and usage stats. Same reqwest and rustls (ring) as the updater, so nothing new
 # is linked for TLS.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }

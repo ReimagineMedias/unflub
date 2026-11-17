@@ -1,8 +1,10 @@
 mod crash;
 mod engine;
 mod install;
+mod keys;
 mod links;
 mod managed;
+mod manifest;
 mod migrations;
 mod net;
 mod remote;
@@ -97,7 +99,7 @@ struct SystemLook {
 struct SendPreview {
     /// The daily usage stats, or `None` while that switch is off.
     stats: Option<String>,
-    /// The update check's headers, as they would go out now.
+    /// The headers on update requests (manifest and release files), as they would go out now.
     headers: Vec<(String, String)>,
     /// Crash reports can be sent from this build.
     crash_reports_available: bool,
@@ -193,7 +195,7 @@ fn send_preview(app: AppHandle) -> SendPreview {
     let stats = settings
         .share_usage_stats
         .then(|| pretty(&app.state::<Usage>().payload(&settings, &version)));
-    let headers = updates::api_headers(&app)
+    let headers = updates::request_headers(&app)
         .into_iter()
         .map(|(k, v)| {
             (
@@ -209,12 +211,9 @@ fn send_preview(app: AppHandle) -> SendPreview {
     }
 }
 
-/// `x-os-version` as `X-OS-Version`, for reading.
+/// `user-agent` as `User-Agent`, for reading.
 fn canonical_header(name: &str) -> String {
     match name {
-        "x-os-version" => net::OS_VERSION_HEADER.into(),
-        "x-rollout-bucket" => net::ROLLOUT_BUCKET_HEADER.into(),
-        "x-first" => net::FIRST_HEADER.into(),
         "user-agent" => "User-Agent".into(),
         other => other.into(),
     }
@@ -298,6 +297,7 @@ fn remote_message(app: AppHandle) -> Option<RemoteMessage> {
 fn dismiss_message(app: AppHandle, id: String) {
     app.state::<Remote>().dismiss(&id);
     let _ = app.emit(remote::MESSAGE_EVENT, Option::<RemoteMessage>::None);
+    refresh_tray_menu(&app);
 }
 
 fn current_settings(app: &AppHandle) -> Settings {
@@ -345,13 +345,14 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
     Ok(next)
 }
 
-/// The remote config changed: pass its flags on and show its message.
+/// The manifest's flags or message changed: pass the flags on and show the message.
 fn apply_remote(app: &AppHandle) {
     let remote = app.state::<Remote>();
     if let Some(engine) = app.state::<AppState>().engine.lock().unwrap().as_ref() {
         engine.set_flags(remote.flags());
     }
     let _ = app.emit(remote::MESSAGE_EVENT, remote.message());
+    refresh_tray_menu(app);
 }
 
 /// Undoing a fix taught the engine `word`: keep it in the personal dictionary for next time.
@@ -624,6 +625,9 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     if app.state::<Crashes>().pending() {
         menu = menu.text("crash", strings::MENU_CRASH);
     }
+    if let Some(message) = app.state::<Remote>().message() {
+        menu = menu.text("message", strings::menu_message(&message.text));
+    }
     let menu = menu
         .text("settings", strings::MENU_SETTINGS)
         .text("tour", strings::MENU_TOUR)
@@ -684,7 +688,7 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
                 }
                 _ => open_settings(app, Some("about")),
             },
-            "crash" => open_settings(app, Some("about")),
+            "crash" | "message" => open_settings(app, Some("about")),
             "tour" => open_settings(app, Some("tour")),
             "support" => open_url(app, links::SPONSOR_URL),
             "star" => open_url(app, links::REPO_URL),
@@ -755,14 +759,17 @@ pub fn run() {
                 crash::install(&data_dir, &version, info.managed.disable_crash_reports);
             app.manage(crashes);
             app.manage(Updates::new(config_dir.clone(), local_dir));
-            app.manage(Remote::new(
-                data_dir.clone(),
-                info.managed.disable_remote_config,
-            ));
             app.manage(net::Rollout::new(config_dir.clone()));
             let store = Store::new(config_dir);
             let first_run = !store.exists();
             let settings = store.load();
+            app.manage(Remote::new(
+                data_dir.clone(),
+                info.managed.disable_remote_config,
+                settings.channel.as_str(),
+                app.package_info().version.clone(),
+                app.state::<net::Rollout>().bucket(&version),
+            ));
             let usage = Usage::new(
                 data_dir.clone(),
                 info.managed.effective(settings.clone()).share_usage_stats,
@@ -818,7 +825,9 @@ pub fn run() {
             if !cfg!(debug_assertions) {
                 let remote_app = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    updates::refresh_remote(&remote_app).await;
+                    if let Err(e) = updates::refresh_remote(&remote_app).await {
+                        eprintln!("manifest: {e}");
+                    }
                 });
             }
             updates::spawn_background(handle.clone());

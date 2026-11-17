@@ -300,13 +300,18 @@ struct Answer {
     accepted: bool,
 }
 
+/// `POST https://api.rmgn.net/unflub/v1/events`.
+fn events_url() -> String {
+    format!("{}/events", crate::links::API_BASE)
+}
+
 /// Post one payload. True when the server accepted it.
 async fn send(client: &reqwest::Client, payload: &Payload) -> bool {
     let body = match serde_json::to_vec(payload) {
         Ok(b) if b.len() <= MAX_BODY => b,
         _ => return false,
     };
-    let url = format!("{}/events", crate::links::API_BASE);
+    let url = events_url();
     match client
         .post(url)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -524,6 +529,11 @@ mod tests {
         again.set_on(false);
         assert!(!dir.join("usage.json").exists());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn events_go_to_the_api() {
+        assert_eq!(events_url(), "https://api.rmgn.net/unflub/v1/events");
     }
 
     #[test]

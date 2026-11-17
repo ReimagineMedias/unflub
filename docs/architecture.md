@@ -15,7 +15,7 @@ crates/unflub-windows   Windows adapter: keyboard hook, text injection, Windows 
 crates/unflub-engine    unflub-engine.exe (hook, engine, pill) and the pipe protocol. No network code.
 app/                    Tauri 2 app, unflub.exe: tray, settings, tour, updates, stats, crash reports.
                         Starts and supervises unflub-engine.exe.
-site/                   unflub.rmgn.ca (coming)
+site/                   unflub.rmgn.net (coming)
 ```
 
 macOS and Linux get their own adapter crates (`unflub-macos`, `unflub-linux`). The core and the
@@ -188,7 +188,7 @@ The part of unflub that sees your keys has no network code. CI enforces it.
 | Process | Holds | Network |
 |---|---|---|
 | `unflub-engine.exe` (`crates/unflub-engine`) | keyboard and mouse hooks, the engine, the Windows spell checker, the pill | none: no HTTP, TLS, Sentry or Tauri crate, no `Win32_Networking` feature |
-| `unflub.exe` (`app/src-tauri`) | tray, settings window, tour, updater, remote config, usage stats, crash reports, the local Stats page | api.rmgn.ca only, see [Network and privacy](#network-and-privacy) |
+| `unflub.exe` (`app/src-tauri`) | tray, settings window, tour, updater, remote config, usage stats, crash reports, the local Stats page | dl.rmgn.net (signed manifest, release files), GitHub Releases (installers), api.rmgn.net (usage stats), Sentry (crash reports, builds with a DSN), see [Network and privacy](#network-and-privacy) |
 
 **The guard.** `crates/unflub-engine/tests/no_network.rs` runs `cargo tree -p unflub-engine
 -e normal --target all` and fails on any crate in the reqwest, hyper, h2, ureq, isahc, curl,
@@ -319,8 +319,8 @@ count as known words and are never corrected.
   `unflub-overlay` thread, shown briefly after a fix. No web view.
 - **Tray app** (`unflub.exe`): always running, also while paused.
 - **Settings**: a Tauri window created on demand and destroyed when closed.
-- **Updates**: an `unflub-update` thread that checks api.rmgn.ca about two minutes after launch and
-  then daily. With automatic updates on it downloads and verifies a new version in the
+- **Updates**: an `unflub-update` thread that reads the signed manifest on dl.rmgn.net about two
+  minutes after launch and then daily. With automatic updates on it downloads and verifies a new version in the
   background; it installs only on Restart now or quit. See
   [releasing.md](releasing.md#how-the-app-updates).
 - **Stats**: an `unflub-stats` thread that saves the local Stats page and usage counts every ten
@@ -331,21 +331,28 @@ count as known words and are never corrected.
 The part of unflub that sees your keys has no network code. CI enforces it. Keys and words are handled in `unflub-engine.exe`, which
 has no network code (see [Two processes](#two-processes)). Nothing typed ever leaves the
 computer: words reach only the engine, the pill and, over the local pipe, the app's Stats page,
-`stats.json` in the app data folder. Everything unflub sends goes to api.rmgn.ca
-(contract: `D:\Code\rmgn-api\docs\unflub-contract.md`) and carries no identifier.
+`stats.json` in the app data folder. Updates are static downloads from dl.rmgn.net and GitHub
+Releases; the only thing unflub posts is usage stats to api.rmgn.net (contract:
+`D:\Code\rmgn-api\docs\unflub-contract.md`). Nothing carries an identifier.
 
 | What | When | Carries | Off switch |
 |---|---|---|---|
-| Update check | ~2 min after launch, then daily | app and OS version, `X-Rollout-Bucket` (random 0 to 99, redrawn per version), `X-First` (first check of the UTC day/week/month) | Machine policy `DisableUpdates` |
-| Remote config | at launch and with each check | the same headers | Policy `DisableRemoteConfig` |
-| Update download | when an update is found (auto) or on Restart now | nothing extra | Automatic updates, policy |
+| Signed manifest (`dl.rmgn.net/unflub/manifest/{channel}.json` + `.sig`) | at launch, then with each update check (~2 min after launch, then daily) | `User-Agent: unflub/<version>`, `If-None-Match`. The rollout bucket (random 0 to 99, redrawn per version) stays on the computer | Policy `DisableUpdates` and `DisableRemoteConfig` together; `DisableRemoteConfig` alone ignores its flags and message |
+| Release file (`dl.rmgn.net/unflub/{version}/tauri-{target}-{arch}.json`) | only when the manifest offers this copy a release | `User-Agent` | Policy `DisableUpdates` |
+| Update download (GitHub Release asset, possibly through a dl.rmgn.net redirect) | when an update is found (auto) or on Restart now | nothing extra | Automatic updates, policy |
 | Usage stats | once a day | counts, settings snapshot, p99 latencies, health counters; no headers (`usage.rs`, allowlist test) | Privacy > Anonymous usage stats (on by default), policy `DisableUsageStats` |
 | Crash report | next start after a crash, or after an engine crash | scrubbed Sentry event: location, stack, modules, OS and app version (`crash.rs`); for the engine, from the marker it wrote | Privacy > Crash reports (on by default), policy `DisableCrashReports`; builds without `SENTRY_DSN` |
 
-- **Remote config only takes away.** Its flags (`pill_enabled`, `uia_caret`, `stats_enabled`,
-  `min_check_interval_h`) can switch a feature off or make a limit stricter, never turn on what
-  the user or a policy turned off. Each consumer ANDs the flag with its own setting
-  (`remote.rs` tests every combination).
+- **The manifest is signed.** Ed25519 over the exact bytes, keys in `keys.rs`; unsigned,
+  badly signed, oversized (> 256 KB) or older (`generated_at`) manifests are rejected and the
+  last good one stays (`manifest.rs`, `remote.rs`). Eligibility (kill switch, blocked,
+  `min_version`, rollout) runs in the app; the release's Tauri file must name the installer URL
+  and signature in the manifest, and the installer must match its SHA-256 and size.
+- **Remote flags only take away.** The manifest's flags (`pill_enabled`, `uia_caret`,
+  `stats_enabled`, `min_check_interval_h`) can switch a feature off or make a limit stricter,
+  never turn on what the user or a policy turned off. Each consumer ANDs the flag with its own
+  setting (`remote.rs` tests every combination). Its optional message shows as a row in About
+  and in the tray.
 - **Machine policy** in `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`) overrides the user's
   switch; the window shows "Managed by your organization".
 - **Who updates** depends on `install-source` beside `unflub.exe` (`install.rs`): the setup and
