@@ -192,7 +192,7 @@
 
 .pill s,
 .pill .arr {
-  color: rgba(242, 230, 227, 0.55);
+  color: rgba(242, 230, 227, 0.68);
 }
 
 .pill s {
@@ -256,7 +256,7 @@
 
 .studio-pill s,
 .studio-pill .arr {
-  color: rgba(242, 230, 227, 0.55);
+  color: rgba(242, 230, 227, 0.68);
   text-decoration-thickness: 1px;
 }
 
