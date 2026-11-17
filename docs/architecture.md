@@ -24,14 +24,72 @@ app stay the same.
    the middle of a word we never saw; correction resumes after the next boundary key.
 3. On a boundary key (space, punctuation, Enter) the engine decides whether the word is wrong
    and what it should be. If it is confident, it returns `Action::Replace`.
-4. The adapter swallows the boundary key and injects backspaces plus the fixed word and the
-   boundary. Because this happens inside the hook, the injected text lands before any key the
-   user presses next, so fast typing can't interleave with a correction.
+4. The adapter swallows the boundary key and hands backspaces plus the fixed word and the
+   boundary to its injector thread, which sends them with `SendInput`. The hook never sends
+   input itself: injected events pass through every low-level hook on the system, ours
+   included, so sending from inside the hook stalled typing for tens of milliseconds. Keys the
+   user presses before the correction has landed are held back and replayed right after it,
+   in order, so fast typing can't interleave with a correction. Mouse clicks aren't held back:
+   a click in the few milliseconds before a correction lands moves the caret first.
 5. If the very next key is Backspace, the engine returns `Action::Undo`: the original word comes
    back and, by default, that word is never corrected again.
 
 The hook budget is **1 ms per key, worst case**. Anything slower would add input lag, so the
 engine never calls slow APIs on this path.
+
+## The Windows adapter
+
+`crates/unflub-windows` runs these threads (all but the injector in the COM multithreaded
+apartment):
+
+| Thread | Does |
+|---|---|
+| `unflub-hook` | `WH_KEYBOARD_LL` and `WH_MOUSE_LL` hooks, focus WinEvents, calls the engine, holds and replays keys |
+| `unflub-inject` | `SendInput` for corrections and replayed keys, in hand-over order |
+| `unflub-uia` | Asks UI Automation whether the focused field is a password field |
+| `unflub-spell` | Slow `ComprehensiveCheck` lookups for the OS auto-replace cache, and adding learned words |
+
+- **Key translation.** `ToUnicodeEx` with flag `0x4` (Windows 10 1607+) reads what a key types
+  in the foreground window's layout without changing the kernel's dead-key state, so accents
+  keep working in the user's app. We can't see what a dead key composes with, so the key after
+  a dead key resets the word instead of guessing.
+- **Injection.** One `SendInput` per action, on the injector thread: backspaces, then the text
+  as Unicode packets (`\n` and `\t` as real Enter and Tab), tagged with a batch number so our
+  hook can tell when the whole batch has landed. Until then the user's keys (downs and ups,
+  modifiers too) are held in a queue of up to 64 events, then replayed with a replay tag and
+  handled as normal keys. A full queue, a 500 ms timeout or a failed send replays what is
+  held; a send that typed nothing gives the triggering key back. Input injected by
+  other programs (dictation tools, macro tools) resets the word. We don't inject, and let the
+  key through instead, when Ctrl, Alt or Win is held (Ctrl+Backspace would delete a word), when
+  the key is an auto-repeat (swallowing it would leave a key stuck down), or on Shift+Enter (a
+  soft line break we'd re-send as a plain Enter). If `SendInput` takes fewer events than we
+  sent, the key goes through, the word resets, and any key left down is released.
+- **Secure fields.** While a field is secure, the engine never sees its keys: it gets one
+  `Reset` instead, and the rest of a word that was half typed when the field became safe is
+  skipped too. The focused window's class decides how we check:
+  - Standard edit controls (exactly `Edit`, `RichEdit20A/W`, `RICHEDIT50W`, `RichEditD2D`,
+    `RichEditD2DPT`): the `ES_PASSWORD` style alone, read on the hook thread. Other classes
+    containing "edit" (WinForms, Delphi `TEdit`) are secure at once with `ES_PASSWORD`, and
+    otherwise checked like every other class below.
+  - Every other class, known or not (browsers, Electron, WPF, UWP, Qt, Java): UI Automation's
+    `IsPassword`, asked on focus changes and 50 ms after a click, Tab or Enter. UIA can block
+    on hung apps, so it runs on its own thread with 250 ms / 500 ms connection and transaction
+    timeouts. The field counts as secure until UIA says it isn't: no answer yet, a UIA error,
+    a timeout, or no UIA at all all mean no corrections there.
+
+  Any accessibility query, UIA or MSAA, makes Chromium build its accessibility tree, which
+  costs CPU and memory in Chrome and Electron apps. That is why we only ask when focus may
+  have moved; a burst of focus events costs one query.
+- **Other skips.** Keyboard layouts for Chinese, Japanese and Korean (IME input) and apps on
+  the exclude list are treated like secure fields.
+- **Spell checker.** `Check` runs on the hook thread (it is fast). The OS auto-replace lookup
+  only reads a cache; misses are looked up in the background and used next time. Learning a
+  word writes the user's dictionary, so it also happens in the background.
+- **Elevated windows.** A normal process can't see keys typed into administrator windows or
+  inject into them, so unflub does nothing there.
+
+Try the hook before the engine lands: `cargo run --release --bin unflub -- --demo` fixes
+`teh`, `adn` and `recieve`, and prints each fix and the hook latency on exit.
 
 ## Deciding what's wrong and what's right
 

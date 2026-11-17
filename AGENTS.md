@@ -21,6 +21,15 @@ Repo is private until v0.1, then flipped public.
   `src/rank.rs` (`TUNING`) and `src/distance.rs`; after changing them run
   `cargo test --release -p unflub-core --test corpus -- --nocapture` (owner corpus 22/25, common typos 103/111) and
   `cargo run --release -p unflub-core --example bench`.
+- Windows `ComprehensiveCheck` measured 2026-11-16 (Windows 11 26300, en-US): ~3 ms per typo, and its auto-replace list
+  has `recieve`->`receive`, `becuase`->`because` but nothing for `teh`. `CORRECTIVE_ACTION_REPLACE` is rare; don't rely on it.
+- `unflub-windows` tests call the real `ISpellChecker` but never install hooks or inject input. Try the hook live with
+  `cargo run --release --bin unflub -- --demo` (rules teh/adn/recieve). Never run it in automation on a machine someone
+  is typing on.
+- Windows `ISpellChecker::Check` reports any word of 64+ UTF-16 units as correct.
+- UI Automation (and MSAA) queries switch on Chromium's accessibility tree, costing CPU and memory in Chrome and Electron.
+  The adapter asks UIA only on focus changes, clicks, Tab and Enter, for every class except the standard edits (Edit, RichEdit*: ES_PASSWORD alone);
+  unknown classes fail closed (secure until UIA says otherwise). Tests only create the UIA client and never query an app.
 - Site (`site/`): Astro static, hosted on Vercel through its Git integration (Root Directory `site`); headers, CSP,
   trailing slashes and caching live in `site/vercel.json`, which `scripts/serve.mjs` and the tests also read. CI only
   checks, builds and tests. Performance figures live in `site/src/data/performance.ts`; keep them in step with
