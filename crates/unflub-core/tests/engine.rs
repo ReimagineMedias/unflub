@@ -261,7 +261,37 @@ fn learning_needs_repeated_undos() {
         t.type_str("x ");
     }
     assert!(learned(&mut t).is_empty());
-    assert_eq!(t.engine.undo_count("teh", "the"), 6);
+    assert_eq!(
+        t.engine.undo_count("teh", "the"),
+        0,
+        "nothing is counted while learning is off"
+    );
+}
+
+/// Clearing history (a new epoch from the app) empties the engine's counts.
+#[test]
+fn a_new_undo_epoch_forgets_the_counts() {
+    let mut t = Typist::new(Config {
+        undo_mode: UndoMode::Once,
+        learn_after_undos: 5,
+        ..config()
+    });
+    t.type_str("teh ");
+    t.press(Key::Backspace);
+    assert_eq!(t.engine.undo_count("teh", "the"), 1);
+    t.engine.set_config(Config {
+        undo_mode: UndoMode::Once,
+        learn_after_undos: 5,
+        ..config()
+    });
+    assert_eq!(t.engine.undo_count("teh", "the"), 1, "same epoch: kept");
+    t.engine.set_config(Config {
+        undo_mode: UndoMode::Once,
+        learn_after_undos: 5,
+        undo_counts_epoch: 1,
+        ..config()
+    });
+    assert_eq!(t.engine.undo_count("teh", "the"), 0);
 }
 
 /// Counts come back from the app between runs, and an older snapshot never lowers them.

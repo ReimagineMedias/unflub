@@ -289,7 +289,10 @@ impl State {
                     inject_us: timing.inject.as_micros() as u64,
                     pill,
                 }),
-                HookEvent::Undone { replacement, .. } => self.out.send(&FromEngine::Undone {
+                HookEvent::Undone {
+                    replacement, app, ..
+                } => self.out.send(&FromEngine::Undone {
+                    keep_word: unflub_windows::policy::keep_words(app.as_deref()),
                     user_rule: replacement.source == Source::UserRule,
                     original: replacement.original,
                     corrected: replacement.corrected,

@@ -62,6 +62,9 @@ pub struct Config {
     /// Undos counted so far, `(typo, fix, times)` lowercased, kept by the app between runs. The
     /// engine counts on from the highest of these and its own.
     pub undo_counts: Vec<(String, String, u32)>,
+    /// Bumped by the app when the user clears their history: the engine then forgets the undo
+    /// counts it holds before taking `undo_counts` (which otherwise only ever raise its own).
+    pub undo_counts_epoch: u64,
     /// How long after a fix the double-Backspace undo stays open (the pill's time on screen).
     pub undo_window_ms: u32,
     /// BCP 47 tag for the system spell checker (e.g. `"en-US"`). The bundled dictionary is
@@ -87,6 +90,7 @@ impl Default for Config {
             undo_mode: UndoMode::Twice,
             learn_after_undos: 2,
             undo_counts: Vec::new(),
+            undo_counts_epoch: 0,
             undo_window_ms: 1100,
             language: "en-US".to_string(),
             english_for_other_languages: false,

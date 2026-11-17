@@ -68,6 +68,10 @@ pub enum FromEngine {
         original: String,
         corrected: String,
         user_rule: bool,
+        /// The app may keep this pair (for learning by undo). False in terminals and unknown
+        /// apps, as for `Corrected`, and when missing.
+        #[serde(default)]
+        keep_word: bool,
     },
     /// Words the engine checked since the last report.
     WordsChecked {
@@ -204,6 +208,7 @@ mod tests {
                 original: "teh".into(),
                 corrected: "the".into(),
                 user_rule: false,
+                keep_word: true,
             },
             FromEngine::WordsChecked { count: 12 },
             FromEngine::Learned {

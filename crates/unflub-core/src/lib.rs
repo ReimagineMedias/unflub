@@ -371,6 +371,10 @@ impl Engine {
             config: std::mem::replace(&mut self.config, next.config),
             rules: std::mem::replace(&mut self.rules, next.rules),
         };
+        if self.config.undo_counts_epoch != old.config.undo_counts_epoch {
+            // The user cleared their history.
+            self.undo_counts.clear();
+        }
         self.seed_undo_counts();
         old
     }
@@ -447,16 +451,19 @@ impl Engine {
         };
         self.session.pop_n(undo.delete);
         self.session.push_str(&undo.insert);
-        let count = self
-            .undo_counts
-            .entry(undo_key(&undo.original, &undo.corrected))
-            .or_insert(0);
-        *count += 1;
         let threshold = u32::from(self.config.learn_after_undos.min(5));
-        // A user's own shortcut is never unlearned this way; they edit it in Settings.
-        if threshold > 0 && *count >= threshold && undo.source != Source::UserRule {
-            self.learned.insert(normalize(&undo.original));
-            self.push_event(Event::Learned(undo.original.clone()));
+        // Only counted while learning is on, and never for a user's own shortcut (they edit it
+        // in Settings): a count nothing will use is a typed word kept for nothing.
+        if threshold > 0 && undo.source != Source::UserRule {
+            let count = self
+                .undo_counts
+                .entry(undo_key(&undo.original, &undo.corrected))
+                .or_insert(0);
+            *count += 1;
+            if *count >= threshold {
+                self.learned.insert(normalize(&undo.original));
+                self.push_event(Event::Learned(undo.original.clone()));
+            }
         }
         self.push_event(Event::Undone(undo.clone()));
         Action::Undo(undo)

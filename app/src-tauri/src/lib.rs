@@ -249,6 +249,12 @@ fn stats_view(app: AppHandle) -> StatsView {
 fn clear_stats(app: AppHandle) -> StatsView {
     let stats = app.state::<Stats>();
     stats.clear();
+    // The undo counts are typed words too: gone from disk here, and from the running engine
+    // with the next settings it gets (a new epoch).
+    app.state::<Arc<undo_counts::UndoCounts>>().clear();
+    if let Some(engine) = app.state::<AppState>().engine.lock().unwrap().as_ref() {
+        engine.apply(&current_settings(&app));
+    }
     stats.view()
 }
 
@@ -338,6 +344,14 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
     if prev.stats_keep_words && !next.stats_keep_words {
         app.state::<Stats>().forget_words();
     }
+    let counts = app.state::<Arc<undo_counts::UndoCounts>>();
+    if prev.stats_keep_words != next.stats_keep_words {
+        counts.set_persist(next.stats_keep_words);
+    }
+    if prev.learn_after_undos > 0 && next.learn_after_undos == 0 {
+        // Learning off: the counts have no use left (the engine forgets its own below).
+        counts.clear();
+    }
     if let Some(engine) = state.engine.lock().unwrap().as_ref() {
         engine.apply(&next);
     }
@@ -401,10 +415,15 @@ fn observe(app: &AppHandle, event: Observed) {
             original,
             corrected,
             user_rule,
+            keep_word,
         } => {
             usage.undo();
             app.state::<Stats>().undo(&original, &corrected);
-            if !user_rule {
+            if records_undo(
+                current_settings(app).learn_after_undos,
+                user_rule,
+                keep_word,
+            ) {
                 app.state::<Arc<undo_counts::UndoCounts>>()
                     .record(&original, &corrected);
             }
@@ -424,6 +443,12 @@ fn observe(app: &AppHandle, event: Observed) {
             crash::take_engine_report(app);
         }
     }
+}
+
+/// Is an undone pair counted toward learning? Only while learning is on, never for the user's
+/// own shortcuts, and never where the engine says the word may be a password (terminals).
+fn records_undo(learn_after_undos: u8, user_rule: bool, engine_allows: bool) -> bool {
+    learn_after_undos > 0 && !user_rule && engine_allows
 }
 
 /// Does the Stats page keep a fix's typo and word? Only with "Keep a list" on, never for the
@@ -778,7 +803,10 @@ pub fn run() {
                 usage.crash();
             }
             app.manage(usage);
-            let counts = Arc::new(undo_counts::UndoCounts::new(&data_dir));
+            let counts = Arc::new(undo_counts::UndoCounts::new(
+                &data_dir,
+                settings.stats_keep_words,
+            ));
             app.manage(counts.clone());
             app.manage(Stats::new(data_dir));
             app.manage(tour::Tour::default());
@@ -892,6 +920,15 @@ mod tests {
         assert!(!keep_word_in_stats(true, false, false), "terminal");
         assert!(!keep_word_in_stats(true, true, true), "shortcut");
         assert!(!keep_word_in_stats(false, false, true), "setting off");
+    }
+
+    /// Review finding 5: undone pairs are only counted when learning will use them.
+    #[test]
+    fn undo_pairs_are_recorded_only_for_learning() {
+        assert!(records_undo(2, false, true));
+        assert!(!records_undo(0, false, true), "learning off");
+        assert!(!records_undo(2, true, true), "shortcut");
+        assert!(!records_undo(2, false, false), "terminal or unknown app");
     }
 
     #[test]

@@ -69,7 +69,9 @@ app stay the same.
    Backspace is always just Backspace.
 
    A word stops being fixed only after its fix was undone `learnAfterUndos` times (default 2,
-   1 to 5, 0 never), counted per typo and fix in `undo-counts.json` beside the settings; then it
+   1 to 5, 0 never), counted per typo and fix (only while learning is on, and not in terminals);
+   the counts are written to `undo-counts.json` beside the settings only while the Stats page's
+   "Keep a list" is on, and Clear history clears them (in the engine too); then it
    goes to the personal dictionary. unflub never writes to the Windows dictionary
    (`ISpellChecker::Add`): that list is shared by every app, so a typo undone once would stop
    being underlined everywhere (a test fails if any source calls it).

@@ -233,6 +233,7 @@ impl Settings {
             learn_after_undos: self.learn_after_undos,
             // Filled in from the app's own counts (`undo_counts.rs`) on the way to the engine.
             undo_counts: Vec::new(),
+            undo_counts_epoch: 0,
             // The pill's time on screen is the double-Backspace window.
             undo_window_ms: self.pill_duration_ms,
             language: self.language.clone(),
@@ -402,6 +403,7 @@ mod tests {
                 undo_mode: unflub_core::UndoMode::Once,
                 learn_after_undos: 3,
                 undo_counts: Vec::new(),
+                undo_counts_epoch: 0,
                 undo_window_ms: 2000,
                 language: "en-GB".into(),
                 english_for_other_languages: true,

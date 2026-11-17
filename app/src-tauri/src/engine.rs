@@ -57,6 +57,8 @@ pub enum Observed {
         original: String,
         corrected: String,
         user_rule: bool,
+        /// The pair may be kept (not in terminals or unknown apps).
+        keep_word: bool,
     },
     CorrectorPanicked,
     /// The engine's watchdog installed the hooks again (Windows dropped them, or the computer
@@ -360,7 +362,9 @@ mod host {
         }
 
         fn engine_settings(&self) -> unflub_engine::protocol::EngineSettings {
-            engine_settings(&self.settings, &self.flags, self.undo_counts.snapshot())
+            let mut s = engine_settings(&self.settings, &self.flags, self.undo_counts.snapshot());
+            s.core.undo_counts_epoch = self.undo_counts.epoch();
+            s
         }
 
         fn configure(&mut self) {
@@ -561,10 +565,12 @@ mod host {
                     original,
                     corrected,
                     user_rule,
+                    keep_word,
                 } => observer(Observed::Undone {
                     original,
                     corrected,
                     user_rule,
+                    keep_word,
                 }),
                 FromEngine::WordsChecked { count } => {
                     words.fetch_add(count, Ordering::Relaxed);
@@ -776,7 +782,7 @@ mod tests {
         };
         let host = EngineHost::start(
             Some(launch),
-            Arc::new(crate::undo_counts::UndoCounts::new(&dir)),
+            Arc::new(crate::undo_counts::UndoCounts::new(&dir, true)),
             Settings::default(),
             RemoteFlags::default(),
             Arc::default(),
