@@ -506,3 +506,59 @@ html.is-night .dusk {
 .human-check[hidden] {
   display: none;
 }
+
+.human-title {
+  font-weight: 650;
+}
+
+.human-title:focus {
+  outline: none;
+}
+
+.human-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  font-size: 0.875rem;
+}
+
+.human-actions a {
+  color: var(--espresso);
+  text-decoration-color: var(--rose);
+}
+
+.human-cancel {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(45, 25, 22, 0.08);
+  color: var(--espresso);
+  font: 600 0.875rem/1.2 var(--font);
+  cursor: pointer;
+}
+
+.dl-status {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 69;
+  translate: -50% 0;
+  max-width: min(520px, 100% - 32px);
+  padding: 12px 18px;
+  border-radius: 18px;
+  background: var(--espresso);
+  color: var(--paper);
+  font-size: 0.9375rem;
+  text-align: center;
+  box-shadow: 0 16px 40px -12px rgba(45, 25, 22, 0.5);
+}
+
+.dl-status:empty {
+  display: none;
+}
+
+.dl-status a {
+  color: var(--paper);
+  text-decoration-color: var(--rose-on-dark);
+  white-space: nowrap;
+}

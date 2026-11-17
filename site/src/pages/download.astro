@@ -3,6 +3,7 @@ import Subpage from "../layouts/Subpage.astro";
 import DownloadButton from "../components/DownloadButton.astro";
 import { SITE } from "../data/site";
 import { softwareApplication } from "../data/schema";
+import TurnstileNotice from "../components/TurnstileNotice.astro";
 ---
 
 <Subpage
@@ -24,6 +25,7 @@ import { softwareApplication } from "../data/schema";
       <div class="get">
         <DownloadButton />
         <a class="more" href={SITE.releases}>All versions</a>
+        <TurnstileNotice class="get-notice" />
       </div>
     </section>
     <section id="mac" class="os" aria-labelledby="os-mac">
@@ -117,6 +119,11 @@ import { softwareApplication } from "../data/schema";
     display: grid;
     justify-items: center;
     gap: 10px;
+  }
+
+  .get :global(.get-notice) {
+    max-width: 26em;
+    text-align: center;
   }
 
   .os.ready :global(.btn) {

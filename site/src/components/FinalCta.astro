@@ -1,6 +1,7 @@
 ---
 import DownloadButton from "./DownloadButton.astro";
 import { SITE } from "../data/site";
+import TurnstileNotice from "./TurnstileNotice.astro";
 ---
 
 <section class="final" aria-labelledby="final-title">
@@ -16,6 +17,7 @@ import { SITE } from "../data/site";
       <DownloadButton />
       <a class="btn btn-quiet" href={SITE.repo}>Star on GitHub</a>
     </div>
+    <TurnstileNotice />
   </div>
 </section>
 

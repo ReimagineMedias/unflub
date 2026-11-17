@@ -30,6 +30,7 @@ const groups = [
     ],
   },
 ];
+import TurnstileNotice from "./TurnstileNotice.astro";
 ---
 
 <footer class="site-footer">
@@ -67,6 +68,7 @@ const groups = [
         An <a href={SITE.org.url}>RMGN</a> product.
       </p>
     </div>
+    <TurnstileNotice class="footer-notice" />
   </div>
 </footer>
 
@@ -155,6 +157,10 @@ const groups = [
     gap: 12px;
     color: var(--muted);
     font-size: 0.8125rem;
+  }
+
+  .site-footer :global(.footer-notice) {
+    margin-top: 12px;
   }
 
   .legal a {

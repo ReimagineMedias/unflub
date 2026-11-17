@@ -1,5 +1,7 @@
-// Serves dist/ the way the production host does: trailing-slash redirects, 404.html for misses, and
-// the headers from vercel.json. Used by the tests and for Lighthouse runs.
+// A local stand-in for the production host, used by the tests and for Lighthouse runs. It approximates
+// vercel.json (trailingSlash, cleanUrls, headers): 308 redirects to the slash form, `.html` and `/index.html`
+// redirected to the clean URL, 404.html for misses, and the configured headers on every response. It is not
+// Vercel's route compiler; check a real preview deployment for exact behaviour.
 // Usage: node scripts/serve.mjs [port]   (0 picks a free port)
 import { createServer } from "node:http";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -44,13 +46,20 @@ export function startServer(port = 0) {
       res.writeHead(status, { "Content-Type": TYPES[extname(file)] ?? "application/octet-stream", ...headers });
       res.end(req.method === "HEAD" ? undefined : readFileSync(file));
     };
+    const redirect = (to) => {
+      res.writeHead(308, { Location: `${to}${url.search}`, ...headers });
+      res.end();
+    };
     const target = normalize(join(dist, path));
     if (!target.startsWith(normalize(dist))) return send(404, join(dist, "404.html"));
-    if (path.endsWith("/") && existsSync(join(target, "index.html"))) return send(200, join(target, "index.html"));
-    if (!path.endsWith("/") && existsSync(join(target, "index.html"))) {
-      res.writeHead(307, { Location: `${path}/${url.search}` });
-      return res.end();
+    // cleanUrls: /page/index.html and /page.html both have the clean address /page/.
+    if (path.endsWith("/index.html")) return redirect(path.slice(0, -"index.html".length));
+    if (path.endsWith(".html") && path !== "/404.html") {
+      const clean = path.slice(0, -".html".length);
+      if (existsSync(join(dist, clean, "index.html"))) return redirect(`${clean}/`);
     }
+    if (path.endsWith("/") && existsSync(join(target, "index.html"))) return send(200, join(target, "index.html"));
+    if (!path.endsWith("/") && existsSync(join(target, "index.html"))) return redirect(`${path}/`);
     if (existsSync(target) && statSync(target).isFile()) return send(200, target);
     return send(404, join(dist, "404.html"));
   });
