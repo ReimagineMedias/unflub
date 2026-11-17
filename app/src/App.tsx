@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getSettings, inTauri, onSettingsChanged, resetSettings, setSettings, systemLook } from "./api";
+import {
+  appVersion, checkForUpdates, getSettings, inTauri, installUpdate, onSettingsChanged, onUpdateStatus, resetSettings,
+  setSettings, systemLook, updateStatus,
+} from "./api";
 import { AppIcon, ChipList, Logo, NavIcon, Row, RuleList, Segmented, Slider, Switch } from "./components";
 import { PillPreview } from "./PillPreview";
-import type { Settings, SystemLook, Theme } from "./types";
+import type { Settings, SystemLook, Theme, UpdateStatus } from "./types";
 
 type Page = "general" | "correction" | "appearance" | "apps" | "dictionary" | "about";
 const PAGES: { id: Page; label: string }[] = [
@@ -20,6 +23,15 @@ const THEMES: { id: Theme; name: string; note: string; swatch: string[]; bg: str
   { id: "ink", name: "Quiet ink", note: "dark", swatch: ["#ededef", "#8a8f98", "#c69c72"], bg: "#121214" },
   { id: "system", name: "System", note: "os accent", swatch: [], bg: "linear-gradient(135deg,#dfe7f2,#ece6f0)" },
 ];
+
+function updateHint(u: UpdateStatus, auto: boolean): string {
+  switch (u.state) {
+    case "checking": return "Checking…";
+    case "up-to-date": return "You have the latest version.";
+    case "error": return `Couldn't check: ${u.message}`;
+    default: return auto ? "unflub checks once a day." : "Automatic checks are off.";
+  }
+}
 
 const initialPage = (): Page => {
   const p = new URLSearchParams(window.location.search).get("page");
@@ -44,6 +56,8 @@ export default function App() {
   const [settings, setLocal] = useState<Settings | null>(null);
   const [look, setLook] = useState<SystemLook>({ accent: null, platform: "windows" });
   const [page, setPage] = useState<Page>(initialPage);
+  const [version, setVersion] = useState("");
+  const [updateState, setUpdateState] = useState<UpdateStatus>({ state: "idle" });
   const saveTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -55,9 +69,16 @@ export default function App() {
       setLocal({ ...s, ...(theme && { theme }), ...(appearance && { appearance }) });
     });
     systemLook().then(setLook);
+    appVersion().then(setVersion);
+    updateStatus().then(setUpdateState);
     let off: (() => void) | undefined;
+    let offUpdate: (() => void) | undefined;
     onSettingsChanged(setLocal).then((u) => (off = u));
-    return () => off?.();
+    onUpdateStatus(setUpdateState).then((u) => (offUpdate = u));
+    return () => {
+      off?.();
+      offUpdate?.();
+    };
   }, []);
 
   const mode = useResolvedMode(settings?.appearance);
@@ -243,10 +264,28 @@ export default function App() {
           <>
             <h1>About</h1>
             <div className="card">
-              <Row label={<span className="about"><AppIcon className="logo" /><span>unflub 0.1.0<br /><small className="muted">Phone-style autocorrect for every text field.</small></span></span>}>
+              <Row label={<span className="about"><AppIcon className="logo" /><span>unflub {version}<br /><small className="muted">Phone-style autocorrect for every text field.</small></span></span>}>
                 <span />
               </Row>
-              <Row label="Private by design" hint="Runs offline. Nothing you type is stored or sent anywhere.">
+              {(updateState.state === "available" || updateState.state === "installing") && (
+                <Row label="Update available — restart to install" hint={`unflub ${updateState.version} is ready. unflub closes for a moment and opens again.`}>
+                  <button className="btn" disabled={updateState.state === "installing"}
+                    onClick={() => void installUpdate().catch((e) => setUpdateState({ state: "error", message: String(e) }))}>
+                    {updateState.state === "installing" ? "Installing…" : "Restart"}
+                  </button>
+                </Row>
+              )}
+              <Row label="Automatic updates" hint="Checks for a new version once a day. Nothing installs until you restart.">
+                <Switch label="Automatic updates" checked={s.autoUpdate} onChange={(v) => update({ autoUpdate: v })} />
+              </Row>
+              {updateState.state !== "available" && updateState.state !== "installing" && (
+                <Row label="Check for updates" hint={updateHint(updateState, s.autoUpdate)}>
+                  <button className="btn ghost" disabled={updateState.state === "checking"} onClick={() => void checkForUpdates().then(setUpdateState)}>
+                    Check now
+                  </button>
+                </Row>
+              )}
+              <Row label="Private by design" hint="Nothing you type is stored or sent anywhere. The only connection unflub makes is the update check.">
                 <span />
               </Row>
               <Row label="Open source" hint="MIT licensed. An RMGN product.">

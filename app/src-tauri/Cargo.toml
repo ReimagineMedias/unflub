@@ -21,6 +21,8 @@ unflub-windows.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+# Rust-only: checks, downloads and installs run here; the settings UI only sees `update-status`.
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

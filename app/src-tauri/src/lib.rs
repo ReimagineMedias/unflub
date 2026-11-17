@@ -1,6 +1,7 @@
 mod engine;
 mod settings;
 mod system;
+mod updates;
 
 use engine::EngineHost;
 use settings::{Settings, Store};
@@ -12,6 +13,7 @@ use tauri::{
     AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use updates::{UpdateStatus, Updates};
 
 const SETTINGS_WINDOW: &str = "settings";
 const TRAY_ID: &str = "main";
@@ -77,11 +79,30 @@ fn merge_learned(words: &mut Vec<String>, learned: &[String]) {
 }
 
 #[tauri::command]
+fn update_status(app: AppHandle) -> UpdateStatus {
+    app.state::<Updates>().status()
+}
+
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) -> UpdateStatus {
+    updates::check(&app).await
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    updates::install(&app).await
+}
+
+#[tauri::command]
 fn system_look() -> SystemLook {
     SystemLook {
         accent: system::accent_color(),
         platform: std::env::consts::OS,
     }
+}
+
+fn current_settings(app: &AppHandle) -> Settings {
+    app.state::<AppState>().settings.lock().unwrap().clone()
 }
 
 /// Persist, sync side effects (login item, tray), then tell every window.
@@ -261,8 +282,11 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec![BACKGROUND_ARG]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let store = Store::new(app.path().app_config_dir()?);
+            let config_dir = app.path().app_config_dir()?;
+            app.manage(Updates::new(config_dir.clone()));
+            let store = Store::new(config_dir);
             let first_run = !store.exists();
             let settings = store.load();
             let enabled = settings.enabled;
@@ -284,6 +308,7 @@ pub fn run() {
                 let _ = app.state::<AppState>().store.save(&settings);
                 sync_autostart(handle, start_at_login);
             }
+            updates::spawn_daily(handle.clone());
             let background = std::env::args().any(|a| a == BACKGROUND_ARG);
             if first_run || !background {
                 open_settings(handle);
@@ -294,7 +319,10 @@ pub fn run() {
             get_settings,
             set_settings,
             reset_settings,
-            system_look
+            system_look,
+            update_status,
+            check_for_updates,
+            install_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building unflub");

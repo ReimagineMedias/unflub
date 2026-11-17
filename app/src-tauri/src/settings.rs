@@ -77,6 +77,8 @@ pub const DEFAULT_EXCLUDED_APPS: &[&str] = &[
 pub struct Settings {
     pub enabled: bool,
     pub start_at_login: bool,
+    /// Check for updates once a day and download them quietly. Installing always waits for the user.
+    pub auto_update: bool,
     pub mode: EngineMode,
     pub confidence: f32,
     pub min_word_len: usize,
@@ -103,6 +105,7 @@ impl Default for Settings {
         Self {
             enabled: core.enabled,
             start_at_login: true,
+            auto_update: true,
             mode: EngineMode::Both,
             confidence: core.confidence,
             min_word_len: core.min_word_len,
@@ -229,6 +232,7 @@ mod tests {
         assert!(!s.enabled);
         assert_eq!(s.pill_style, PillStyle::Capsule);
         assert_eq!(s.theme, Theme::Unflub);
+        assert!(s.auto_update, "updates are opt-out");
         let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(s, back);
     }
