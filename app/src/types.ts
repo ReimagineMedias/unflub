@@ -22,6 +22,8 @@ export interface Settings {
   pillPosition: PillPosition;
   theme: Theme;
   appearance: Appearance;
+  /** BCP 47 tag for the system spell checker, like "en-US". */
+  language: string;
 }
 
 export interface SystemLook {
@@ -37,7 +39,7 @@ export const defaultSettings: Settings = {
   minWordLen: 2,
   skipCode: true,
   undoLearns: true,
-  // Mirrors DEFAULT_EXCLUDED_APPS in src-tauri/src/settings.rs.
+  // Keep identical to DEFAULT_EXCLUDED_APPS in src-tauri/src/settings.rs (its test pins the list).
   excludedApps: [
     "windowsterminal.exe", "openconsole.exe", "conhost.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "wsl.exe",
     "mintty.exe", "wezterm-gui.exe", "alacritty.exe", "keepass.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe",
@@ -50,4 +52,5 @@ export const defaultSettings: Settings = {
   pillPosition: "above",
   theme: "unflub",
   appearance: "auto",
+  language: "en-US",
 };

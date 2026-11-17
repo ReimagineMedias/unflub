@@ -7,7 +7,7 @@ unflub fixes typos as you type, in any text field on the desktop. This page expl
 ```
 crates/unflub-core      Platform-free engine. No OS calls, no unsafe. Tested on every OS in CI.
 crates/unflub-windows   Windows adapter: keyboard hook, text injection, Windows spell checker.
-app/                    Tauri 2 shell: tray, settings window, pill overlay, updater, start at login. (coming)
+app/                    Tauri 2 app: tray, settings window, start at login. Runs the adapter in-process.
 site/                   unflub.rmgn.ca (coming)
 ```
 
@@ -111,6 +111,30 @@ After a fix or an undo the adapter shows a small overlay at the caret for about 
   window and change its alpha. Hidden, it holds no timer, bitmap or Direct2D object.
 - **Placement.** Above the line by default, flipped below when there is no room, clamped to the
   monitor's work area, and scaled by that monitor's DPI.
+
+### In the app
+
+The tray app (`app/src-tauri`) is the product; the `unflub` CLI stays as a developer tool. On
+launch, `EngineHost` (`engine.rs`) starts an `unflub-engine` thread that joins the COM MTA
+(the Tauri main thread is an STA, where the spell checker can't be created), builds the spell
+checker and engine, installs the hook, and reads `HookEvent`s through a small `unflub-events`
+forwarder. Every settings change applies without a restart:
+
+- **Engine settings** reach the hook thread through `LiveEngine` (`live.rs`): the app queues a
+  new `Config` on a channel, and the hook thread applies the newest one at the start of the next
+  key. Checking an empty channel is one atomic read, so the hook never waits or takes a lock.
+  Excluded apps travel in that `Config` (the engine drops keys from those apps); the hook's own
+  exclude list stays empty, so there is one list to keep current.
+- **Pause** removes the keyboard and mouse hooks and closes the pill; resume installs them
+  again. While paused unflub sees no keys at all.
+- **Language** changes restart the hook with a spell checker for the new language. If Windows
+  has no dictionary for it, the user's UI language is used.
+- **Pill** options and theme colours go to `OverlayHandle::set_config`. The OS dark mode
+  (`AppsUseLightTheme`) and accent colour are read again before each pill, so "match system"
+  follows the OS.
+- **Undo teaches**: the engine's `Learned` word is sent from the hook thread over a channel;
+  the engine thread adds it to the Windows dictionary (on `unflub-spell`) and to the personal
+  words in settings, which are saved and sent to the open settings window.
 
 Try the hook before the engine lands: `cargo run --release --bin unflub -- --demo` fixes
 `teh`, `adn` and `recieve`, shows the pill (`--pill <style>` to change it), and prints each fix

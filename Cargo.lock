@@ -4279,6 +4279,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-single-instance",
  "unflub-core",
+ "unflub-windows",
  "windows 0.58.0",
 ]
 

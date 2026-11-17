@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 unflub-core.workspace = true
+# Builds on every OS (only its pure helpers outside Windows), so the pill mapping is tested in CI.
+unflub-windows.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"

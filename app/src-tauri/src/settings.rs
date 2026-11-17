@@ -53,6 +53,8 @@ pub enum Appearance {
 
 /// Off by default: terminals can't report password prompts (sudo, ssh), and password managers
 /// hold secrets. A correction there would silently change what the user typed.
+///
+/// Keep `defaultSettings.excludedApps` in `app/src/types.ts` identical (same names, same order).
 pub const DEFAULT_EXCLUDED_APPS: &[&str] = &[
     "windowsterminal.exe",
     "openconsole.exe",
@@ -89,7 +91,11 @@ pub struct Settings {
     pub pill_position: PillPosition,
     pub theme: Theme,
     pub appearance: Appearance,
+    /// BCP 47 tag for the system spell checker, like `en-US`.
+    pub language: String,
 }
+
+const DEFAULT_LANGUAGE: &str = "en-US";
 
 impl Default for Settings {
     fn default() -> Self {
@@ -114,6 +120,7 @@ impl Default for Settings {
             pill_position: PillPosition::Above,
             theme: Theme::Unflub,
             appearance: Appearance::Auto,
+            language: core.language,
         }
     }
 }
@@ -130,13 +137,10 @@ impl Settings {
         }
         self.excluded_apps.retain(|a| !a.is_empty());
         self.excluded_apps.dedup();
+        self.language = sanitised_language(&self.language);
         self
     }
 
-    #[expect(
-        dead_code,
-        reason = "wired to the engine once the Windows adapter lands"
-    )]
     pub fn to_core(&self) -> unflub_core::Config {
         unflub_core::Config {
             enabled: self.enabled,
@@ -153,7 +157,24 @@ impl Settings {
             personal_words: self.personal_words.clone(),
             user_rules: self.user_rules.clone(),
             undo_learns: self.undo_learns,
+            language: self.language.clone(),
         }
+    }
+}
+
+/// A plausible BCP 47 tag (`en`, `en-US`, `sr-Latn-RS`), or the default. The tag goes to the
+/// OS spell checker, which rejects languages it has no dictionary for; the engine then falls
+/// back to the user's UI language.
+fn sanitised_language(tag: &str) -> String {
+    let tag = tag.trim();
+    let plausible = (2..=35).contains(&tag.len())
+        && tag
+            .split('-')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric()));
+    if plausible {
+        tag.to_string()
+    } else {
+        DEFAULT_LANGUAGE.to_string()
     }
 }
 
@@ -224,6 +245,107 @@ mod tests {
         assert_eq!(s.confidence, 1.0);
         assert_eq!(s.pill_opacity, 0.3);
         assert_eq!(s.excluded_apps, vec!["code.exe"]);
+    }
+
+    #[test]
+    fn sanitises_language() {
+        let lang = |l: &str| {
+            Settings {
+                language: l.into(),
+                ..Settings::default()
+            }
+            .sanitised()
+            .language
+        };
+        assert_eq!(Settings::default().language, "en-US");
+        assert_eq!(lang(" fr-CA "), "fr-CA");
+        assert_eq!(lang("sr-Latn-RS"), "sr-Latn-RS");
+        for bad in ["", "e", "en_US", "en--US", "-en", "en-", "../../x", "en US"] {
+            assert_eq!(lang(bad), "en-US", "{bad:?}");
+        }
+        let missing: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(missing.language, "en-US");
+    }
+
+    #[test]
+    fn maps_to_core_config() {
+        let s = Settings {
+            enabled: false,
+            mode: EngineMode::Aggressive,
+            confidence: 0.25,
+            min_word_len: 4,
+            skip_code: false,
+            undo_learns: false,
+            excluded_apps: vec!["code.exe".into()],
+            personal_words: vec!["rmgn".into()],
+            user_rules: vec![("omw".into(), "on my way".into())],
+            language: "en-GB".into(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            s.to_core(),
+            unflub_core::Config {
+                enabled: false,
+                mode: unflub_core::EngineMode::Aggressive,
+                confidence: 0.25,
+                min_word_len: 4,
+                skip_code: false,
+                excluded_apps: vec!["code.exe".into()],
+                personal_words: vec!["rmgn".into()],
+                user_rules: vec![("omw".into(), "on my way".into())],
+                undo_learns: false,
+                language: "en-GB".into(),
+            }
+        );
+        // Defaults agree with the engine's, apart from the apps the app excludes.
+        let core = Settings::default().to_core();
+        assert_eq!(
+            core,
+            unflub_core::Config {
+                excluded_apps: core.excluded_apps.clone(),
+                ..unflub_core::Config::default()
+            }
+        );
+        for (mode, want) in [
+            (EngineMode::Both, unflub_core::EngineMode::Both),
+            (EngineMode::SystemOnly, unflub_core::EngineMode::SystemOnly),
+            (
+                EngineMode::BundledOnly,
+                unflub_core::EngineMode::BundledOnly,
+            ),
+        ] {
+            let s = Settings {
+                mode,
+                ..Settings::default()
+            };
+            assert_eq!(s.to_core().mode, want);
+        }
+    }
+
+    /// `defaultSettings.excludedApps` in app/src/types.ts must list exactly these, in order.
+    #[test]
+    fn default_excluded_apps() {
+        assert_eq!(
+            DEFAULT_EXCLUDED_APPS,
+            &[
+                "windowsterminal.exe",
+                "openconsole.exe",
+                "conhost.exe",
+                "cmd.exe",
+                "powershell.exe",
+                "pwsh.exe",
+                "wsl.exe",
+                "mintty.exe",
+                "wezterm-gui.exe",
+                "alacritty.exe",
+                "keepass.exe",
+                "keepassxc.exe",
+                "1password.exe",
+                "bitwarden.exe",
+            ]
+        );
+        let s = Settings::default();
+        assert_eq!(s.clone().sanitised().excluded_apps, s.excluded_apps);
     }
 
     #[test]

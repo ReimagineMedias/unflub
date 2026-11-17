@@ -1,6 +1,8 @@
+mod engine;
 mod settings;
 mod system;
 
+use engine::EngineHost;
 use settings::{Settings, Store};
 use std::sync::Mutex;
 use tauri::{
@@ -20,6 +22,8 @@ struct AppState {
     store: Store,
     settings: Mutex<Settings>,
     toggle: Mutex<Option<CheckMenuItem<tauri::Wry>>>,
+    /// Hook, engine and pill. Taken out on quit.
+    engine: Mutex<Option<EngineHost>>,
 }
 
 #[derive(serde::Serialize)]
@@ -66,9 +70,36 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
     if prev.enabled != next.enabled {
         refresh_tray(app, next.enabled);
     }
-    // The engine picks up `next.to_core()` here once the platform adapter is wired in.
+    if let Some(engine) = state.engine.lock().unwrap().as_ref() {
+        engine.apply(&next);
+    }
     let _ = app.emit("settings-changed", &next);
     Ok(next)
+}
+
+/// Undoing a fix taught the engine `word`: keep it in the personal dictionary for next time.
+fn learn_word(app: &AppHandle, word: String) {
+    let mut next = app.state::<AppState>().settings.lock().unwrap().clone();
+    let key = word.to_lowercase();
+    if next.personal_words.iter().any(|w| w.to_lowercase() == key) {
+        return;
+    }
+    next.personal_words.push(word);
+    if let Err(e) = apply_settings(app, next) {
+        eprintln!("saving a learned word: {e}");
+    }
+}
+
+/// Unhook and stop the engine. Safe to call more than once.
+fn stop_engine(app: &AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    // Take it out first: the engine thread may call apply_settings while it winds down.
+    let engine = state.engine.lock().unwrap().take();
+    if let Some(engine) = engine {
+        engine.shutdown();
+    }
 }
 
 fn sync_autostart(app: &AppHandle, on: bool) {
@@ -167,7 +198,10 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
                 let _ = apply_settings(app, next);
             }
             "settings" => open_settings(app),
-            "quit" => app.exit(0),
+            "quit" => {
+                stop_engine(app);
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -204,8 +238,13 @@ pub fn run() {
                 store,
                 settings: Mutex::new(settings.clone()),
                 toggle: Mutex::new(None),
+                engine: Mutex::new(None),
             });
             let handle = app.handle();
+            let learner = handle.clone();
+            let engine =
+                EngineHost::start(settings.clone(), move |word| learn_word(&learner, word));
+            *app.state::<AppState>().engine.lock().unwrap() = Some(engine);
             build_tray(handle, enabled)?;
             if first_run {
                 let _ = app.state::<AppState>().store.save(&settings);
@@ -227,12 +266,11 @@ pub fn run() {
         .expect("error while building unflub");
 
     // Closing the settings window keeps unflub running in the tray.
-    app.run(|_app, event| {
-        if let RunEvent::ExitRequested {
+    app.run(|app, event| match event {
+        RunEvent::ExitRequested {
             api, code: None, ..
-        } = event
-        {
-            api.prevent_exit();
-        }
+        } => api.prevent_exit(),
+        RunEvent::Exit => stop_engine(app),
+        _ => {}
     });
 }
