@@ -1,0 +1,50 @@
+name: Publish packages
+
+# Opens a winget-pkgs pull request for each published (not draft, not pre-release) release.
+# Off until the repository variable PUBLISH_PACKAGES is 'true' (Settings > Secrets and variables >
+# Actions > Variables). Needs the WINGET_TOKEN secret and a fork of microsoft/winget-pkgs, and
+# RMGN.unflub must already be in winget (the first version is submitted by hand). Scoop updates
+# itself from its bucket's checkver; Chocolatey is pushed by hand. See docs/releasing.md.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish again, like v0.2.0
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  winget:
+    name: winget (RMGN.unflub)
+    if: >-
+      vars.PUBLISH_PACKAGES == 'true' &&
+      (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open the winget-pkgs pull request
+        id: winget
+        uses: vedantmgoyal9/winget-releaser@b7370d4d152efdce803a26cc6ca9eee58cb2ad54 # v2
+        with:
+          identifier: RMGN.unflub
+          # The per-user setup.exe for each architecture. The MSI is for managed deployment.
+          installers-regex: '_(x64|arm64)-setup\.exe$'
+          release-tag: ${{ inputs.tag || github.event.release.tag_name }}
+          fork-user: ${{ vars.WINGET_FORK_USER || github.repository_owner }}
+          token: ${{ secrets.WINGET_TOKEN }}
+
+      - name: Summary
+        if: always()
+        env:
+          PR_URL: ${{ steps.winget.outputs.pr-url }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          {
+            echo "| Package | Release | Result |"
+            echo "|---|---|---|"
+            echo "| winget \`RMGN.unflub\` | \`$TAG\` | ${PR_URL:-❌ no pull request} |"
+          } >> "$GITHUB_STEP_SUMMARY"
