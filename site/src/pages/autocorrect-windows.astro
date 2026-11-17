@@ -16,6 +16,19 @@ import "../styles/scenes.css";
     Windows offers, where it stops, and how to get autocorrect in every app.
   </p>
 
+  <h2 id="does-windows-have-autocorrect">Does Windows have autocorrect?</h2>
+  <p>
+    Partly. Windows 10 and 11 have an <strong>Autocorrect misspelled words</strong> switch, but it only works in apps that use
+    Windows' own text services. Most chat apps, browsers and code editors don't, so in those it does nothing.
+  </p>
+
+  <h2 id="how-to-get-autocorrect-on-pc">How do I get autocorrect on my PC?</h2>
+  <p>
+    Turn on the Windows switch first (steps below), since it is free and built in. For autocorrect in every app, install a
+    system-wide tool such as <a href="/download/">unflub</a>, which fixes a typo the moment you finish the word, anywhere you
+    type. If the Windows switch seems to do nothing, <a href="/autocorrect-not-working/">here is why</a>.
+  </p>
+
   <figure class="demo" aria-label="Example: unflub fixes teh to the as soon as the word ends.">
     <p class="line loose" aria-hidden="true">See you at <span class="fx lit">the<Pill from="teh" to="the" /></span> station</p>
   </figure>
@@ -29,8 +42,8 @@ import "../styles/scenes.css";
   </ol>
   <p>
     These switches were designed with the touch keyboard in mind. With a physical keyboard they only reach apps that use
-    Windows' own text services, so many browsers, chat apps and code editors are left out. They also cannot be tuned: there is
-    no list of your own words, no way to skip an app, and no shortcut expansion.
+    Windows' own text services, so many browsers, chat apps and code editors are left out. There is little to tune: Windows
+    keeps a dictionary of words you add, but you can't skip an app, set how eager it is, or expand shortcuts.
   </p>
 
   <h2>Autocorrect inside a single app</h2>
@@ -50,13 +63,17 @@ import "../styles/scenes.css";
   <h2>Autocorrect in every app, with unflub</h2>
   <p>
     unflub is a small, free app that brings phone-style autocorrect to every text field on Windows. It fixes a typo the moment
-    you finish the word, in any app, and works fully offline.
+    you finish the word, in any app. Corrections work fully offline.
   </p>
   <ol>
     <li><a href="/download/">Download unflub</a> and run the installer.</li>
     <li>It starts in the system tray. Type anywhere: chat, email, the browser, a prompt box.</li>
     <li>When a word is fixed, a small capsule shows what changed. Press Backspace right away to undo it, and unflub remembers that word.</li>
   </ol>
+  <p>
+    That includes the apps people most often ask about: Discord, Microsoft Teams, Slack, and AI chat boxes such as ChatGPT and
+    Claude in the browser or their desktop apps.
+  </p>
   <p>A few things make it behave like a phone keyboard rather than a blunt find-and-replace:</p>
   <ul>
     <li>It leaves code alone: camelCase, snake_case, file paths, links and anything in backticks are never touched.</li>
