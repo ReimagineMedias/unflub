@@ -687,3 +687,57 @@ fn aggressive_mode_takes_low_margin_fixes() {
     let mut aggressive = with_backend(EngineMode::Aggressive, None);
     assert_ne!(aggressive.type_str("Trevix "), "Trevix ");
 }
+
+/// Quality lab: possessives with a known or capitalised base are never "fixed" into plurals or
+/// bare names; a typo in a lowercase base is fixed on the base, keeping the apostrophe typed.
+#[test]
+fn possessives_keep_their_base() {
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("my sister's and brother's friend's book "),
+        "my sister's and brother's friend's book "
+    );
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("ask Collins's cousin "), "ask Collins's cousin ");
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("my sister\u{2019}s book "),
+        "my sister\u{2019}s book "
+    );
+    // Typoed bases still get fixed, with the possessive kept as typed.
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("my sistr's book "), "my sister's book ");
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("my sistr\u{2019}s book "),
+        "my sister\u{2019}s book "
+    );
+}
+
+/// Quality lab: a capitalised word mid-sentence is a name; at a sentence start it is fixed.
+#[test]
+fn title_case_mid_sentence_is_a_name() {
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("we went to Longbourn and Meryton "),
+        "we went to Longbourn and Meryton "
+    );
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("ok. Teh end "), "ok. The end ");
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("Teh cat "),
+        "The cat ",
+        "first word of the field"
+    );
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("I said Teh "), "I said Teh ", "mid-sentence");
+}
+
+/// Quality lab: technical words the engine used to "fix".
+#[test]
+fn technical_words_found_by_the_quality_corpus() {
+    let mut t = Typist::bundled();
+    let text = "a truthy or falsy value, crypto keys, implementors ";
+    assert_eq!(t.type_str(text), text);
+}

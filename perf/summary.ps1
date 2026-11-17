@@ -38,6 +38,8 @@ function Format-Value([string]$Metric, $Value) {
         '_ms$' { return $v.ToString('0', $inv) + ' ms' }
         '_us$' { return $v.ToString('0.0', $inv) + " ${micro}s" }
         '_seconds$' { return $v.ToString('0.000', $inv) + ' s' }
+        '_pct$' { return $v.ToString('0.00', $inv) + ' %' }
+        '_per_10k$' { return $v.ToString('0.00', $inv) }
         default { return $v.ToString('0', $inv) }
     }
 }
@@ -97,7 +99,7 @@ foreach ($file in $Path) {
                 $result = if ($null -eq $c.pass) { 'n/a' } elseif ($c.pass) { $ok } else { $bad }
                 if ($c.pass -eq $false) {
                     $line = Find-LimitLine $r.section $p.Name
-                    Write-Output ("::error file={6},line={0},title=perf {1}::{2} is {3}, over the [{4}] limit of {5}" -f `
+                    Write-Output ("::error file={6},line={0},title=perf {1}::{2} is {3}, outside the [{4}] limit of {5}" -f `
                             $line, $r.name, $p.Name, $value, $r.section, $limit, $limitsFile)
                 }
             } else {

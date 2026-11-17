@@ -86,7 +86,7 @@ jobs:
       - name: Build release
         id: build
         run: |
-          cargo build --release -p unflub-core --example bench
+          cargo build --release -p unflub-core --example bench --example quality
           if ($IsWindows) {
             # The app embeds the settings UI, so build that first. Plain cargo leaves the Tauri
             # sidecar out (app/src-tauri/build.rs); the engine lands beside unflub.exe anyway.
@@ -99,6 +99,11 @@ jobs:
         if: steps.build.outcome == 'success'
         run: |
           ./target/release/examples/bench --json --check perf/limits.toml | Tee-Object .local/perf/bench.json
+          exit $LASTEXITCODE
+      - name: Autocorrect quality (false fixes on clean text, typo recovery)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          ./target/release/examples/quality --json --check perf/limits.toml | Tee-Object .local/perf/quality.json
           exit $LASTEXITCODE
       - name: Idle footprint, app and engine (dry-run hook, no input sent)
         if: ${{ !cancelled() && steps.build.outcome == 'success' && runner.os == 'Windows' }}
@@ -113,6 +118,6 @@ jobs:
       - name: Summary
         if: ${{ !cancelled() }}
         run: |
-          $files = @('.local/perf/bench.json')
+          $files = @('.local/perf/bench.json', '.local/perf/quality.json')
           if ($IsWindows) { $files += '.local/perf/idle.json', '.local/perf/lowend.json' }
           ./perf/summary.ps1 -Path $files -Title 'Perf (${{ matrix.os }})'

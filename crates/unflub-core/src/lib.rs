@@ -238,8 +238,6 @@ impl Rules {
 const MAX_EVENTS: usize = 256;
 /// Required score margin (nats) at confidence 1.0.
 const MARGIN_AT_FULL_CONFIDENCE: f32 = 2.1;
-/// How much likelier (nats) a capitalised word mid-sentence is to be a deliberate name.
-const NAME_BONUS: f32 = 3.0;
 
 /// Can a fix that ended with `boundary` be undone? Not after Enter or Tab: the undo would type
 /// them again, which sends a chat message twice or commits a spreadsheet cell.
@@ -518,9 +516,29 @@ impl Engine {
         {
             return None;
         }
+        // Possessives (`sister's`, `Collins's`): a known or capitalised base is a real word, and
+        // ranking the whole form only finds plurals and bare names (`sisters`, `Collins`).
+        // A typo in the base (`sistr's`) is fixed on the base, keeping the `'s` as typed.
+        if let Some(base_len) = self.lower.strip_suffix("'s").map(str::len) {
+            let base_known = self.dict.id(&self.lower.as_bytes()[..base_len]).is_some();
+            if base_len == 0 || base_known || case != Case::Lower {
+                return None;
+            }
+            let cut = word.char_indices().rev().nth(1).map_or(0, |(i, _)| i);
+            let suffix = word[cut..].to_string();
+            let (source, fixed) = self.rank_possessive_base(&cur, base_len)?;
+            let mut fixed = self.cased(source, fixed, case);
+            fixed.push_str(&suffix);
+            return self.replacement(fixed, boundary, source);
+        }
         let (source, fixed) = self.detect_and_rank(&cur)?;
-        let fixed = match source {
-            // The OS returns the replacement already cased.
+        let fixed = self.cased(source, fixed, case);
+        self.replacement(fixed, boundary, source)
+    }
+
+    /// A ranked fix in the case the user typed (the OS returns its fixes already cased).
+    fn cased(&self, source: Source, fixed: String, case: Case) -> String {
+        match source {
             Source::System => fixed,
             _ => {
                 let fixed = if fixed == "i" || fixed.starts_with("i'") {
@@ -530,16 +548,39 @@ impl Engine {
                 };
                 case::apply(case, &fixed)
             }
-        };
-        self.replacement(fixed, boundary, source)
+        }
+    }
+
+    /// Detect and rank the base of a possessive (the word minus its last two characters,
+    /// `'s` or `’s`; `base_len` bytes of `self.lower`).
+    fn rank_possessive_base(
+        &mut self,
+        cur: &session::Current,
+        base_len: usize,
+    ) -> Option<(Source, String)> {
+        let word = std::mem::take(&mut self.word);
+        let lower = std::mem::take(&mut self.lower);
+        let cut = word.char_indices().rev().nth(1).map_or(0, |(i, _)| i);
+        self.word.push_str(&word[..cut]);
+        self.lower.push_str(&lower[..base_len]);
+        let ranked = self.detect_and_rank(cur);
+        self.word = word;
+        self.lower = lower;
+        ranked
     }
 
     /// Runs detection and candidate ranking for the current word per the engine mode.
     fn detect_and_rank(&mut self, cur: &session::Current) -> Option<(Source, String)> {
         let lower = self.lower.as_bytes();
         let known = self.dict.id(lower).is_some();
+        // A capitalised word mid-sentence is most likely a name (`Longbourn`, `Meryton`): no
+        // fix. At a sentence start, or right after a reset where nothing was seen before it,
+        // capitals say nothing (`Teh` is still fixed).
         let name_like = !cur.sentence_start && case::pattern(&self.word) == Case::Title;
-        let keep = Some(if name_like { NAME_BONUS } else { 0.0 });
+        if name_like {
+            return None;
+        }
+        let keep = Some(0.0);
         let flagged_by_system = |backend: &Option<Box<dyn SpellBackend>>, word: &str| {
             backend.as_ref().map(|b| !b.is_correct(word))
         };

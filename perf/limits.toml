@@ -20,6 +20,15 @@ hard_max_us = 2_000           # measured 145-454 us: slowest of the hardest unkn
 heap_bytes = 25_165_824       # 24 MiB; measured 15_581_387 (14.9 MiB), deterministic
 peak_rss_bytes = 83_886_080   # 80 MiB; measured 43.6-45.7 MiB (index build peak)
 
+# cargo run --release -p unflub-core --example quality -- --check perf/limits.toml
+# Deterministic (no timing, no OS checker), so the headroom is small. typo_exact_pct is a minimum
+# (higher is better); the others are maximums. Measured 2026-11-17 before / after the quality
+# lab's changes (possessive and name guards, four tech words, insertion cost 0.5).
+[quality]
+false_fixes_per_10k = 10      # measured 48.2 before, 7.9 after (79 in 100,000 clean words)
+typo_exact_pct = 84           # measured 82.26 before, 85.86 after (5,000 single typos)
+typo_wrong_pct = 2.5          # measured 2.92 before, 1.72 after
+
 # pwsh perf/idle.ps1: unflub.exe --perf-idle (tray app, no network, no window) and the
 # unflub-engine.exe it starts with --dry-run, 3 s warm-up, 20 s of samples. Per process, then
 # both together (the peak of the per-sample sums).

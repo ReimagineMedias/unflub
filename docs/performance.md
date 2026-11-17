@@ -20,6 +20,26 @@ unknown words we know of.
 | `heap_bytes` | Memory the dictionary index holds. |
 | `peak_rss_bytes` | The most memory the bench process ever had resident (where the OS reports it). |
 
+**Autocorrect quality** (`crates/unflub-core/examples/quality.rs`, every OS). Not speed but
+how often the engine is wrong: about 100,000 words of clean text (*Pride and Prejudice*, the
+Node.js stream docs, chapters of the Rust book; `data/quality/ATTRIBUTION.md`) typed through the
+engine, where every replacement counts as a false fix, and 5,000 realistic single-letter typos in
+their original context (adjacent key, transposed, dropped and doubled letters, 1,250 each).
+Default config, no OS spell checker, so the numbers are the same on every OS.
+
+| Metric | What it means | Before / after 2026-11-17 | Limit |
+|---|---|---:|---:|
+| `false_fixes_per_10k` | Replacements per 10,000 clean words (lower is better) | 48.2 / 7.9 | at most 10 |
+| `typo_exact_pct` | Typos turned back into the right word | 82.26 / 85.86 | at least 84 |
+| `typo_wrong_pct` | Typos turned into a different word | 2.92 / 1.72 | at most 2.5 |
+
+The 2026-11-17 changes came from an independent quality lab: possessives with a known or
+capitalised base are left alone (`sister's` was "fixed" to `sisters`), a capitalised word
+mid-sentence is a name and gets no fix (`Longbourn` to `Longhorn`), four technical words were
+added, and a missing letter costs less when ranking. A gentler length penalty for unknown words
+cut false fixes too but lost exact fixes, so it was not adopted. `--dump <dir>` writes every
+false fix and typo outcome as TSV.
+
 **The idle footprint** (`perf/idle.ps1`, Windows). unflub is two processes (see
 [architecture.md](architecture.md#two-processes)), and this measures both. It starts
 `unflub.exe --perf-idle <temp dir>`: the tray app with its settings and data in a temporary
@@ -132,6 +152,7 @@ cd app; npm ci; npm run build; cd ..               # the app embeds the settings
 cargo build --release -p unflub-app -p unflub-engine
 
 ./target/release/examples/bench --check perf/limits.toml   # human-readable; --json for JSON
+cargo run --release -p unflub-core --example quality -- --check perf/limits.toml
 pwsh perf/idle.ps1                                          # ~25 s
 pwsh perf/lowend.ps1                                        # ~25 s
 pwsh -c "./perf/summary.ps1 -Path out1.json, out2.json"     # markdown table from saved JSON
