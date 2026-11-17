@@ -5,6 +5,7 @@ export type PillPosition = "above" | "below";
 export type Theme = "unflub" | "paper" | "ink" | "system";
 export type Appearance = "auto" | "light" | "dark";
 export type Channel = "stable" | "beta";
+export type UndoMode = "twice" | "once" | "off";
 
 /**
  * Mirrors `Settings` in src-tauri/src/settings.rs (camelCase). Fields this version doesn't know
@@ -29,7 +30,10 @@ export interface Settings {
   confidence: number;
   minWordLen: number;
   skipCode: boolean;
-  undoLearns: boolean;
+  /** What Backspace right after a fix does. */
+  undoMode: UndoMode;
+  /** Stop fixing a typo after this many undos of the same fix; 0 never. */
+  learnAfterUndos: number;
   excludedApps: string[];
   personalWords: string[];
   userRules: [string, string][];
@@ -119,7 +123,8 @@ export const defaultSettings: Settings = {
   confidence: 0.6,
   minWordLen: 2,
   skipCode: true,
-  undoLearns: true,
+  undoMode: "twice",
+  learnAfterUndos: 2,
   // Keep identical to DEFAULT_EXCLUDED_APPS in src-tauri/src/settings.rs (its test pins the list).
   excludedApps: [
     "windowsterminal.exe", "openconsole.exe", "conhost.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "wsl.exe",

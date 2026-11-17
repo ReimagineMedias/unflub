@@ -5,6 +5,7 @@ mod common;
 use common::Typist;
 use unflub_core::{
     Action, Config, Context, Corrector, Engine, EngineMode, Event, Key, Source, SpellBackend,
+    UndoMode,
 };
 
 fn config() -> Config {
@@ -103,36 +104,190 @@ fn previous_word_context() {
     assert_eq!(t.type_str("if tou can "), "if you can ");
 }
 
-#[test]
-fn undo_restores_and_learns() {
-    let mut t = Typist::bundled();
-    assert_eq!(t.type_str("teh "), "the ");
-    t.engine.drain_events();
-    let action = t.key(Key::Backspace);
-    let Action::Undo(r) = action else {
-        panic!("expected undo, got {action:?}")
-    };
-    assert_eq!(r.delete, 4);
-    assert_eq!(r.insert, "teh ");
-    assert_eq!(t.text, "teh ");
-    let events = t.engine.drain_events();
-    assert!(events.contains(&Event::Learned("teh".into())));
-    assert!(events.iter().any(|e| matches!(e, Event::Undone(_))));
-    // Learned: not corrected again, in any case.
-    assert_eq!(t.type_str("teh Teh "), "teh teh Teh ");
+fn mode(undo_mode: UndoMode, learn_after_undos: u8) -> Typist {
+    Typist::new(Config {
+        undo_mode,
+        learn_after_undos,
+        ..config()
+    })
 }
 
+fn learned(t: &mut Typist) -> Vec<String> {
+    t.engine
+        .drain_events()
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Learned(w) => Some(w),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Twice: the first Backspace is held, the second undoes.
 #[test]
-fn undo_without_learning() {
+fn double_backspace_undoes() {
+    let mut t = mode(UndoMode::Twice, 2);
+    assert_eq!(t.type_str("teh "), "the ");
+    let Action::HoldBackspace(fix) = t.press(Key::Backspace) else {
+        panic!("first Backspace is held")
+    };
+    assert_eq!(
+        (fix.original.as_str(), fix.corrected.as_str()),
+        ("teh", "the")
+    );
+    assert_eq!(t.text, "the ", "nothing deleted yet");
+    let action = t.press(Key::Backspace);
+    let Action::Undo(r) = action else {
+        panic!("second Backspace undoes, got {action:?}")
+    };
+    assert_eq!((r.delete, r.insert.as_str()), (4, "teh "));
+    assert_eq!(t.text, "teh ");
+    assert!(
+        learned(&mut t).is_empty(),
+        "one undo doesn't teach (threshold 2)"
+    );
+    // The window is spent: the next Backspace deletes.
+    assert_eq!(t.press(Key::Backspace), Action::Pass);
+    assert_eq!(t.text, "teh");
+}
+
+/// Twice: one Backspace then a comma deletes the space first (the reason for the redesign).
+#[test]
+fn single_backspace_then_comma_keeps_the_fix() {
+    let mut t = mode(UndoMode::Twice, 2);
+    t.type_str("ok teh ");
+    assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
+    assert_eq!(t.press(Key::Boundary(',')), Action::Pass);
+    assert_eq!(t.text, "ok the,");
+    assert!(learned(&mut t).is_empty());
+    assert_eq!(t.engine.undo_count("teh", "the"), 0);
+}
+
+/// Twice: one Backspace, then the window runs out: the Backspace is sent then.
+#[test]
+fn single_backspace_then_timeout_deletes() {
+    let mut t = mode(UndoMode::Twice, 2);
+    t.type_str("teh ");
+    assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
+    assert!(t.release(), "the adapter's timer releases it");
+    assert_eq!(t.text, "the");
+    // Typing goes on normally.
+    assert_eq!(t.type_str("re "), "there ");
+}
+
+/// Twice: navigation (Reset) releases the held Backspace before it acts.
+#[test]
+fn single_backspace_then_arrow_deletes_first() {
+    let mut t = mode(UndoMode::Twice, 2);
+    t.type_str("teh ");
+    assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
+    assert_eq!(t.press(Key::Reset), Action::Pass);
+    assert_eq!(t.text, "the");
+    // A click instead drops it: the adapter closes the window and doesn't send it.
+    let mut t = mode(UndoMode::Twice, 2);
+    t.type_str("teh ");
+    assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
+    assert!(t.engine.end_undo_window());
+    assert_eq!(t.key(Key::Reset), Action::Pass);
+    assert_eq!(t.text, "the ");
+}
+
+/// Twice: no window after it closed (pill gone); a Backspace is plain again.
+#[test]
+fn backspace_after_the_window_is_plain() {
+    let mut t = mode(UndoMode::Twice, 2);
+    t.type_str("teh ");
+    assert!(!t.engine.end_undo_window(), "nothing held");
+    assert_eq!(t.press(Key::Backspace), Action::Pass);
+    assert_eq!(t.text, "the");
+    // Once and Off don't hold anything, so the timer never closes them.
+    assert!(!mode(UndoMode::Once, 2).engine.end_undo_window());
+}
+
+/// Once: the old single-Backspace undo, without instant learning.
+#[test]
+fn once_mode_undoes_on_the_first_backspace() {
+    let mut t = mode(UndoMode::Once, 2);
+    t.type_str("teh ");
+    assert!(matches!(t.press(Key::Backspace), Action::Undo(_)));
+    assert_eq!(t.text, "teh ");
+    assert!(learned(&mut t).is_empty());
+    assert_eq!(t.type_str("teh "), "teh the ", "still fixed after one undo");
+}
+
+/// Off: Backspace is always Backspace.
+#[test]
+fn off_mode_never_undoes() {
+    let mut t = mode(UndoMode::Off, 2);
+    t.type_str("teh ");
+    assert_eq!(t.press(Key::Backspace), Action::Pass);
+    assert_eq!(t.press(Key::Backspace), Action::Pass);
+    assert_eq!(t.text, "th");
+}
+
+/// A word stops being fixed only after `learn_after_undos` undos of the same typo and fix.
+#[test]
+fn learning_needs_repeated_undos() {
+    let undo_twice = |t: &mut Typist| {
+        assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
+        assert!(matches!(t.press(Key::Backspace), Action::Undo(_)));
+    };
+    let mut t = mode(UndoMode::Twice, 2);
+    t.type_str("teh ");
+    undo_twice(&mut t);
+    assert!(learned(&mut t).is_empty());
+    assert_eq!(t.engine.undo_count("teh", "the"), 1);
+    t.type_str("teh ");
+    assert!(t.text.ends_with("the "), "fixed again after one undo");
+    undo_twice(&mut t);
+    assert_eq!(learned(&mut t), ["teh"]);
+    assert!(t.type_str("teh ").ends_with("teh teh "), "learned");
+
+    // 1: the first undo teaches. 0: never.
+    let mut t = mode(UndoMode::Once, 1);
+    t.type_str("teh ");
+    t.press(Key::Backspace);
+    assert_eq!(learned(&mut t), ["teh"]);
+    let mut t = mode(UndoMode::Once, 0);
+    for _ in 0..6 {
+        t.type_str("teh ");
+        t.press(Key::Backspace);
+        t.type_str("x ");
+    }
+    assert!(learned(&mut t).is_empty());
+    assert_eq!(t.engine.undo_count("teh", "the"), 6);
+}
+
+/// Counts come back from the app between runs, and an older snapshot never lowers them.
+#[test]
+fn undo_counts_are_seeded_and_only_grow() {
     let mut t = Typist::new(Config {
-        undo_learns: false,
+        undo_mode: UndoMode::Once,
+        undo_counts: vec![("Teh".into(), "the".into(), 1)],
         ..config()
     });
+    assert_eq!(t.engine.undo_count("teh", "the"), 1);
     t.type_str("teh ");
-    assert!(matches!(t.key(Key::Backspace), Action::Undo(_)));
-    let events = t.engine.drain_events();
-    assert!(!events.iter().any(|e| matches!(e, Event::Learned(_))));
-    assert_eq!(t.type_str("teh "), "teh the ");
+    t.press(Key::Backspace);
+    assert_eq!(
+        learned(&mut t),
+        ["teh"],
+        "1 seeded + 1 = the default threshold of 2"
+    );
+    t.engine.set_config(Config {
+        undo_counts: vec![("teh".into(), "the".into(), 1)],
+        ..config()
+    });
+    assert_eq!(t.engine.undo_count("teh", "the"), 2);
+}
+
+/// The double-Backspace window never opens after Enter or Tab either (review B2).
+#[test]
+fn no_held_backspace_after_enter() {
+    let mut t = mode(UndoMode::Twice, 2);
+    t.type_str("ok teh\n");
+    assert_eq!(t.press(Key::Backspace), Action::Pass);
+    assert_eq!(t.text, "ok the");
 }
 
 /// Review blocker B2: Enter may already have sent a chat message or moved to another cell, so
@@ -284,9 +439,10 @@ fn user_rules() {
     assert_eq!(r.source, Source::UserRule);
     // Rules keep the typed case and ignore the minimum word length.
     assert_eq!(t.type_str("Omw u "), "on my way On my way you ");
-    // Undoing a rule does not disable it.
+    // Undoing a rule does not disable it, however often.
     t.engine.drain_events();
-    assert!(matches!(t.key(Key::Backspace), Action::Undo(_)));
+    assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
+    assert!(matches!(t.press(Key::Backspace), Action::Undo(_)));
     assert!(!t
         .engine
         .drain_events()

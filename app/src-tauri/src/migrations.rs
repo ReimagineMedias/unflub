@@ -12,7 +12,7 @@ use serde_json::{json, Map, Value};
 type Step = fn(&mut Map<String, Value>);
 
 /// `STEPS[n]` upgrades version `n` to `n + 1`.
-const STEPS: &[Step] = &[v0_to_v1];
+const STEPS: &[Step] = &[v0_to_v1, v1_to_v2];
 
 const _: () = assert!(STEPS.len() == SCHEMA_VERSION as usize);
 
@@ -62,6 +62,19 @@ fn v0_to_v1(obj: &mut Map<String, Value>) {
     obj.entry("onboarded").or_insert(json!(false));
 }
 
+/// v1 to v2: undo became double-Backspace (`undoMode`, default "twice") and learning waits for
+/// repeated undos (`learnAfterUndos`). `undoLearns: false` keeps meaning "never learn"; words
+/// already in the personal dictionary are left alone.
+fn v1_to_v2(obj: &mut Map<String, Value>) {
+    let learned = obj
+        .remove("undoLearns")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    obj.entry("undoMode").or_insert(json!("twice"));
+    obj.entry("learnAfterUndos")
+        .or_insert(json!(if learned { 2 } else { 0 }));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,7 +111,7 @@ mod tests {
     fn v0_to_v1() {
         let (s, from) = load(V0);
         assert_eq!(from, Some(0));
-        assert_eq!(s.schema_version, 1);
+        assert_eq!(s.schema_version, SCHEMA_VERSION);
         assert_eq!(s.excluded_apps, DEFAULT_EXCLUDED_APPS);
         assert_eq!(s.channel, Channel::Stable);
         assert!(s.share_usage_stats);
@@ -111,6 +124,23 @@ mod tests {
         assert_eq!(s.min_word_len, 3);
         assert_eq!(s.language, "en-GB");
         assert!(s.extra.is_empty(), "{:?}", s.extra.keys());
+    }
+
+    #[test]
+    fn v1_to_v2_adds_the_undo_settings() {
+        use crate::settings::UndoMode;
+        let v1 = r#"{ "schemaVersion": 1, "undoLearns": true, "personalWords": ["teh"] }"#;
+        let (s, from) = load(v1);
+        assert_eq!(from, Some(1));
+        assert_eq!((s.undo_mode, s.learn_after_undos), (UndoMode::Twice, 2));
+        assert_eq!(s.personal_words, ["teh"], "learned words stay");
+        assert!(!s.extra.contains_key("undoLearns"));
+        // "Undo doesn't teach" stays that way.
+        let (s, _) = load(r#"{ "schemaVersion": 1, "undoLearns": false }"#);
+        assert_eq!((s.undo_mode, s.learn_after_undos), (UndoMode::Twice, 0));
+        // A file that already says otherwise keeps it.
+        let (s, _) = load(r#"{ "schemaVersion": 1, "undoMode": "off", "learnAfterUndos": 4 }"#);
+        assert_eq!((s.undo_mode, s.learn_after_undos), (UndoMode::Off, 4));
     }
 
     #[test]

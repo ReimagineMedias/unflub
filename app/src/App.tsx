@@ -12,7 +12,7 @@ import { PillPreview } from "./PillPreview";
 import { PrivacyPage } from "./PrivacyPage";
 import { StatsPage } from "./StatsPage";
 import { Tour } from "./Tour";
-import type { AppInfo, EngineMode, RemoteMessage, Settings, SystemLook, Theme, UpdateStatus } from "./types";
+import type { AppInfo, EngineMode, RemoteMessage, Settings, SystemLook, Theme, UndoMode, UpdateStatus } from "./types";
 
 type Page = "general" | "correction" | "appearance" | "apps" | "dictionary" | "stats" | "privacy" | "about";
 const PAGES: { id: Page; label: StringKey }[] = [
@@ -232,9 +232,6 @@ export default function App() {
                 <Switch label={t("general.login")} disabled={info ? !info.loginAllowed : false}
                   checked={s.startAtLogin && (info?.loginAllowed ?? true)} onChange={(v) => update({ startAtLogin: v })} />
               </Row>
-              <Row label={t("general.undo")} hint={t("general.undo.hint")}>
-                <Switch label={t("general.undo")} checked={s.undoLearns} onChange={(v) => update({ undoLearns: v })} />
-              </Row>
             </div>
           </>
         )}
@@ -261,6 +258,24 @@ export default function App() {
               </Row>
               <Row label={t("correction.code")} hint={t("correction.code.hint")}>
                 <Switch label={t("correction.code")} checked={s.skipCode} onChange={(v) => update({ skipCode: v })} />
+              </Row>
+              <Row stack label={t("correction.undo")} hint={t("correction.undo.hint")}>
+                <Segmented<UndoMode> label={t("correction.undo")} value={s.undoMode} onChange={(v) => update({ undoMode: v })}
+                  options={[
+                    { value: "twice", label: t("correction.undo.twice"), title: t("correction.undo.twice.tip") },
+                    { value: "once", label: t("correction.undo.once"), title: t("correction.undo.once.tip") },
+                    { value: "off", label: t("correction.undo.off"), title: t("correction.undo.off.tip") },
+                  ]} />
+              </Row>
+              <Row stack label={t("correction.learn")} hint={t("correction.learn.hint")}>
+                <Segmented label={t("correction.learn")} value={String(s.learnAfterUndos)}
+                  onChange={(v) => update({ learnAfterUndos: Number(v) })}
+                  options={[
+                    { value: "0", label: t("correction.learn.never") },
+                    { value: "1", label: "1" },
+                    { value: "2", label: "2" },
+                    { value: "3", label: t("correction.learn.three") },
+                  ]} />
               </Row>
             </div>
             <details className="exact" open={singleEngine || undefined}>

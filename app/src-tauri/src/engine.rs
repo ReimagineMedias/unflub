@@ -103,11 +103,18 @@ impl Launch {
     }
 }
 
-/// What the engine runs with: the user's settings with the remote flags applied. Remote flags
-/// only ever switch the pill or its UI Automation lookup off.
-pub fn engine_settings(s: &Settings, flags: &RemoteFlags) -> EngineSettings {
+/// What the engine runs with: the user's settings with the remote flags applied, and the undo
+/// counts so far. Remote flags only ever switch the pill or its UI Automation lookup off.
+pub fn engine_settings(
+    s: &Settings,
+    flags: &RemoteFlags,
+    undo_counts: Vec<(String, String, u32)>,
+) -> EngineSettings {
     EngineSettings {
-        core: s.to_core(),
+        core: unflub_core::Config {
+            undo_counts,
+            ..s.to_core()
+        },
         pill: PillSettings {
             style: match s.pill_style {
                 _ if !flags.pill_enabled => protocol::PillStyle::Off,
@@ -175,6 +182,7 @@ mod host {
     use super::{backoff, engine_settings, failures_after, Launch, Observed, Observer};
     use crate::remote::RemoteFlags;
     use crate::settings::Settings;
+    use crate::undo_counts::UndoCounts;
 
     /// No console window for the engine (it inherits our std handles, if any).
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -203,6 +211,7 @@ mod host {
         /// engine's checked-word counts are added to `words_checked`.
         pub fn start(
             launch: Option<Launch>,
+            undo_counts: Arc<UndoCounts>,
             settings: Settings,
             flags: RemoteFlags,
             words_checked: Arc<AtomicU64>,
@@ -212,6 +221,7 @@ mod host {
             let (tx, rx) = mpsc::channel();
             let supervisor = Supervisor {
                 launch,
+                undo_counts,
                 settings,
                 flags,
                 tx: tx.clone(),
@@ -272,6 +282,7 @@ mod host {
 
     struct Supervisor {
         launch: Option<Launch>,
+        undo_counts: Arc<UndoCounts>,
         settings: Settings,
         flags: RemoteFlags,
         tx: Sender<Cmd>,
@@ -346,9 +357,13 @@ mod host {
             }
         }
 
+        fn engine_settings(&self) -> unflub_engine::protocol::EngineSettings {
+            engine_settings(&self.settings, &self.flags, self.undo_counts.snapshot())
+        }
+
         fn configure(&self) {
             if let Some(r) = &self.running {
-                let settings = engine_settings(&self.settings, &self.flags);
+                let settings = self.engine_settings();
                 if let Err(e) = frame::write(&mut &*r.pipe, &ToEngine::Configure { settings }) {
                     eprintln!("autocorrect: can't reach the engine: {e}");
                 }
@@ -395,7 +410,7 @@ mod host {
             };
             self.generation += 1;
             let generation = self.generation;
-            let settings = engine_settings(&self.settings, &self.flags);
+            let settings = self.engine_settings();
             frame::write(&mut &*pipe, &ToEngine::Configure { settings })?;
             let reader = {
                 let pipe = pipe.clone();
@@ -562,8 +577,10 @@ mod host {
     pub struct EngineHost;
 
     impl EngineHost {
+        #[allow(clippy::too_many_arguments)]
         pub fn start(
             _launch: Option<Launch>,
+            _undo_counts: Arc<crate::undo_counts::UndoCounts>,
             _settings: Settings,
             _flags: RemoteFlags,
             _words_checked: Arc<AtomicU64>,
@@ -596,8 +613,17 @@ mod tests {
             appearance: Appearance::Dark,
             ..Settings::default()
         };
-        let e = engine_settings(&s, &RemoteFlags::default());
-        assert_eq!(e.core, s.to_core());
+        let counts = vec![("teh".to_string(), "the".to_string(), 1)];
+        let e = engine_settings(&s, &RemoteFlags::default(), counts.clone());
+        assert_eq!(e.core.undo_counts, counts);
+        assert_eq!(e.core.undo_window_ms, 2000, "the pill duration");
+        assert_eq!(
+            e.core,
+            unflub_core::Config {
+                undo_counts: counts,
+                ..s.to_core()
+            }
+        );
         assert_eq!(
             e.pill,
             PillSettings {
@@ -613,7 +639,7 @@ mod tests {
         // The app's defaults are the engine's defaults, but for the app's slightly
         // translucent pill.
         assert_eq!(
-            engine_settings(&Settings::default(), &RemoteFlags::default()).pill,
+            engine_settings(&Settings::default(), &RemoteFlags::default(), Vec::new()).pill,
             PillSettings {
                 opacity: Settings::default().pill_opacity,
                 ..PillSettings::default()
@@ -634,7 +660,12 @@ mod tests {
                 pill_style: from,
                 ..Settings::default()
             };
-            assert_eq!(engine_settings(&s, &RemoteFlags::default()).pill.style, to);
+            assert_eq!(
+                engine_settings(&s, &RemoteFlags::default(), Vec::new())
+                    .pill
+                    .style,
+                to
+            );
         }
         for (from, to) in [
             (Theme::Unflub, protocol::Theme::Unflub),
@@ -645,7 +676,12 @@ mod tests {
                 theme: from,
                 ..Settings::default()
             };
-            assert_eq!(engine_settings(&s, &RemoteFlags::default()).pill.theme, to);
+            assert_eq!(
+                engine_settings(&s, &RemoteFlags::default(), Vec::new())
+                    .pill
+                    .theme,
+                to
+            );
         }
     }
 
@@ -656,7 +692,7 @@ mod tests {
             uia_caret: false,
             ..RemoteFlags::default()
         };
-        let p = engine_settings(&Settings::default(), &flags).pill;
+        let p = engine_settings(&Settings::default(), &flags, Vec::new()).pill;
         assert_eq!(p.style, protocol::PillStyle::Off);
         assert!(!p.uia_caret);
     }
@@ -709,6 +745,7 @@ mod tests {
         };
         let host = EngineHost::start(
             Some(launch),
+            Arc::new(crate::undo_counts::UndoCounts::new(&dir)),
             Settings::default(),
             RemoteFlags::default(),
             Arc::default(),

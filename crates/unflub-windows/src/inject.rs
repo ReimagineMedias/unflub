@@ -354,6 +354,21 @@ impl Pipeline {
         }
     }
 
+    /// A key-down the hook holds back for now (the first Backspace of a double-Backspace
+    /// undo): its key-up is swallowed too.
+    pub fn hold(&mut self, ev: RawEvent) {
+        self.swallow.swallowed(ev.vk);
+    }
+
+    /// Send a key held with [`Pipeline::hold`] after all, as a key-down and key-up ahead of
+    /// anything held now, so the key that caused the release follows it. Call
+    /// [`Pipeline::pump`] afterwards.
+    pub fn release_held(&mut self, held: RawEvent) {
+        let up = RawEvent { up: true, ..held };
+        self.queue.splice(0..0, [held, up]);
+        self.replay_front += 2;
+    }
+
     /// The trigger was swallowed and an injection of `total` events is about to be sent.
     /// Returns its batch number for the tag. Only one injection is pending at a time; keys are
     /// only processed when none is.
@@ -773,6 +788,7 @@ mod tests {
     const BACK: u16 = 0x08;
     const N: u16 = 0x4E;
     const O: u16 = 0x4F;
+    const COMMA: u16 = 0xBC;
 
     fn now() -> Instant {
         Instant::now()
@@ -870,6 +886,43 @@ mod tests {
         assert!(p.tick(later, Duration::from_millis(500)));
         assert_eq!(p.pump(now())[0].events, vec![down(O)]);
         assert_eq!(user(&mut p, up(O)), Input::Process { repeat: false });
+    }
+
+    /// Double-Backspace undo: the held first Backspace goes out before the key that released
+    /// it, in order, and its own key-up never reaches the app twice.
+    #[test]
+    fn a_held_backspace_replays_before_the_next_key() {
+        let mut p = Pipeline::new();
+        assert_eq!(user(&mut p, down(BACK)), Input::Process { repeat: false });
+        p.hold(down(BACK));
+        assert_eq!(
+            user(&mut p, up(BACK)),
+            Input::Consumed,
+            "its up is swallowed"
+        );
+        // A comma arrives: the Backspace goes first, the comma behind it.
+        p.release_held(down(BACK));
+        assert_eq!(user(&mut p, down(COMMA)), Input::Queued);
+        let r = p.pump(now());
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].events, vec![down(BACK), up(BACK), down(COMMA)]);
+        assert_eq!(
+            replay(&mut p, &r[0]),
+            vec![Input::Process { repeat: false }; 3]
+        );
+        assert!(!p.busy());
+
+        // Released by the timer, with nothing behind it.
+        let mut p = Pipeline::new();
+        user(&mut p, down(BACK));
+        p.hold(down(BACK));
+        p.release_held(down(BACK));
+        assert_eq!(p.pump(now())[0].events, vec![down(BACK), up(BACK)]);
+        assert_eq!(
+            user(&mut p, up(BACK)),
+            Input::Queued,
+            "behind the replay in flight"
+        );
     }
 
     #[test]

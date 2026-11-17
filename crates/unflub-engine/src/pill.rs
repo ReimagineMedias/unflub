@@ -87,7 +87,8 @@ fn parse_hex(s: &str) -> Option<Rgba> {
 
 /// The overlay's settings for the pill settings and the current OS look.
 pub fn pill_config(s: &PillSettings, os: &OsLook) -> PillConfig {
-    let c = pill_colours(s.theme, is_dark(s.appearance, os), os.accent.as_deref());
+    let dark = is_dark(s.appearance, os);
+    let c = pill_colours(s.theme, dark, os.accent.as_deref());
     PillConfig {
         style: match s.style {
             protocol::PillStyle::UnderlineCapsule => PillStyle::UnderlineCapsule,
@@ -105,8 +106,16 @@ pub fn pill_config(s: &PillSettings, os: &OsLook) -> PillConfig {
         text: c.text,
         keycap: c.keycap,
         accent: c.accent,
+        alert: alert(dark),
+        alert_text: Rgba::hex(if dark { 0x1B1B1B } else { 0xFFFFFF }),
         uia_caret: s.uia_caret,
     }
+}
+
+/// The "Undo?" pill's red: deep on a light screen (white text, 5.4:1), lighter on a dark one
+/// (near-black text, 6.6:1).
+fn alert(dark: bool) -> Rgba {
+    Rgba::hex(if dark { 0xE06C5F } else { 0xC0392B })
 }
 
 #[cfg(test)]
@@ -221,6 +230,24 @@ mod tests {
         for bad in ["0078D4", "#0078D", "#0078D4F", "#GG0000", "#+078D4", ""] {
             assert_eq!(parse_hex(bad), None, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn undo_pending_red_follows_light_and_dark() {
+        let light = pill_config(&PillSettings::default(), &look(false, None));
+        assert_eq!(
+            (light.alert, light.alert_text),
+            (rgb(0xC0392B), rgb(0xFFFFFF))
+        );
+        let dark = PillSettings {
+            appearance: Appearance::Dark,
+            ..PillSettings::default()
+        };
+        let dark = pill_config(&dark, &look(false, None));
+        assert_eq!(
+            (dark.alert, dark.alert_text),
+            (rgb(0xE06C5F), rgb(0x1B1B1B))
+        );
     }
 
     #[test]

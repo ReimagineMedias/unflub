@@ -48,4 +48,4 @@ pub use overlay::{Correction, PillConfig, PillPosition, PillStyle};
 #[cfg(windows)]
 pub use overlay::{Overlay, OverlayHandle};
 #[cfg(windows)]
-pub use spell::{SpellLearner, WindowsSpellBackend};
+pub use spell::WindowsSpellBackend;

@@ -38,10 +38,36 @@ app stay the same.
    user presses before the correction has landed are held back and replayed right after it,
    in order, so fast typing can't interleave with a correction. Mouse clicks aren't held back:
    a click in the few milliseconds before a correction lands moves the caret first.
-5. If the very next key is Backspace, the engine returns `Action::Undo`: the original word comes
-   back and, by default, that word is never corrected again. Not after a fix ended by Enter or
-   Tab: undoing would type Enter or Tab again (a second chat message, the next spreadsheet
-   cell), so that Backspace is just a Backspace and the pill shows no undo hint.
+5. Undo is a double Backspace by default (setting "Undo a fix": Backspace twice, once, or off).
+   People press Backspace right after a fix all the time to delete the space before a comma,
+   so one Backspace alone never undoes:
+
+   | After a fix, while its pill shows (pill duration) | What happens |
+   |---|---|
+   | Backspace | Held: nothing is deleted, the pill turns red and asks "Undo?" (`Action::HoldBackspace`) |
+   | then Backspace again | The fix is undone: your word and the boundary come back, the pill says "Undone" |
+   | then any other key (comma, letter, arrow, Shift, Enter) | The held Backspace is sent first, then that key, in order (`,` after `the ` gives `the,`) |
+   | then nothing until the pill's time is up | The held Backspace is sent then |
+   | then a click or a focus change | The held Backspace is dropped |
+   | Backspace after the pill's time | A plain Backspace |
+
+   At timeout the held Backspace is applied rather than dropped: the user pressed it and
+   expects a deletion, and the red pill shows it is pending. It is not kept for the next key
+   either, which might come after a click in another field. A click is the exception: it has
+   already moved the caret, so sending the Backspace then would delete wherever the click
+   landed (holding the click back and replaying it would mean re-injecting mouse input).
+   With "Backspace once" the first Backspace right after a fix undoes it, as before; with "Off"
+   Backspace is always just Backspace.
+
+   A word stops being fixed only after its fix was undone `learnAfterUndos` times (default 2,
+   1 to 5, 0 never), counted per typo and fix in `undo-counts.json` beside the settings; then it
+   goes to the personal dictionary. unflub never writes to the Windows dictionary
+   (`ISpellChecker::Add`): that list is shared by every app, so a typo undone once would stop
+   being underlined everywhere (a test fails if any source calls it).
+
+   Never after a fix ended by Enter or Tab: undoing would type Enter or Tab again (a second chat
+   message, the next spreadsheet cell), so that Backspace is just a Backspace and the pill shows
+   no undo hint.
 
 The hook budget is **1 ms per key, worst case**. Anything slower would add input lag, so the
 engine never calls slow APIs on this path.

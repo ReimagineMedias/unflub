@@ -56,8 +56,33 @@ impl Typist {
                 }
                 self.text.push_str(&r.insert);
             }
+            // Held: nothing reaches the field yet.
+            Action::HoldBackspace(_) => {}
         }
         action
+    }
+
+    /// What the adapter does before any other key, and when the undo window runs out: send a
+    /// held Backspace on. Returns whether one was held.
+    pub fn release(&mut self) -> bool {
+        let held = self.engine.end_undo_window();
+        if held {
+            assert_eq!(
+                self.key(Key::Backspace),
+                Action::Pass,
+                "a plain Backspace now"
+            );
+        }
+        held
+    }
+
+    /// A key as the adapter delivers it: a held Backspace goes first, unless this is the
+    /// second Backspace.
+    pub fn press(&mut self, key: Key) -> Action {
+        if key != Key::Backspace {
+            self.release();
+        }
+        self.key(key)
     }
 
     pub fn key(&mut self, key: Key) -> Action {

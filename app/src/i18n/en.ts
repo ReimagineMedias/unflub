@@ -48,8 +48,6 @@ export const en = {
   "general.login": "Start at login",
   "general.login.hint": "Starts quietly in the tray.",
   "general.login.unavailable": "Start at login is available in the installed version.",
-  "general.undo": "Undo teaches unflub",
-  "general.undo.hint": "Backspace right after a fix restores your word and stops fixing it.",
 
   // Correction
   "correction.title": "Correction",
@@ -86,6 +84,19 @@ export const en = {
   "correction.minLen.many": "{n} letters",
   "correction.code": "Leave code alone",
   "correction.code.hint": "Skips camelCase, snake_case, paths, links and anything in `backticks`.",
+  "correction.undo": "Undo a fix",
+  "correction.undo.hint": "While the pill is showing. The pill's duration under Appearance sets how long you have.",
+  "correction.undo.twice": "Backspace twice",
+  "correction.undo.twice.tip":
+    "The first Backspace asks \"Undo?\" and the second puts your word back. Any other key deletes as usual, so you can still delete the space to add a comma.",
+  "correction.undo.once": "Backspace once",
+  "correction.undo.once.tip": "The first Backspace right after a fix puts your word back.",
+  "correction.undo.off": "Off",
+  "correction.undo.off.tip": "Backspace always just deletes.",
+  "correction.learn": "Stop fixing a word after it's undone",
+  "correction.learn.hint": "Counted per typo. The word then goes to your dictionary.",
+  "correction.learn.never": "Never",
+  "correction.learn.three": "3 times",
 
   // Appearance
   "appearance.title": "Appearance",

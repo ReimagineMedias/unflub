@@ -49,8 +49,8 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardLayout, GetLastInputInfo, ToUnicodeEx, HKL,
-    LASTINPUTINFO, VK_CAPITAL, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU,
-    VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB,
+    LASTINPUTINFO, VK_BACK, VK_CAPITAL, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
+    VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
@@ -118,6 +118,12 @@ pub enum HookEvent {
         took: Duration,
         timing: InjectTiming,
     },
+    /// A first Backspace after `replacement` is held (double-Backspace undo): the pill asks
+    /// "Undo?". Followed by `Undone` (second Backspace) or `UndoDeclined`.
+    UndoPending { replacement: Replacement },
+    /// The held Backspace was sent on (another key, or the undo window ran out) or dropped (a
+    /// click or focus change): the pill hides.
+    UndoDeclined,
     /// An `Undo` landed.
     Undone {
         replacement: Replacement,
@@ -330,6 +336,10 @@ struct State {
     /// Thread timer id while the pipeline is busy (0 when none).
     timer: usize,
     broken: bool,
+    /// A first Backspace held for a double-Backspace undo ([`Action::HoldBackspace`]).
+    held: Option<RawEvent>,
+    /// When the last fix stops being undoable by a double Backspace.
+    undo_deadline: Option<Instant>,
     /// While degraded: no probe before this time.
     probe_after: Option<Instant>,
     /// How long the next degraded spell waits before probing (doubles while it keeps
@@ -428,6 +438,8 @@ fn run(
         batches: Vec::new(),
         timer: 0,
         broken: false,
+        held: None,
+        undo_deadline: None,
         probe_after: None,
         degrade_backoff: FIRST_DEGRADE_BACKOFF,
         next_probe: 0,
@@ -917,10 +929,18 @@ impl State {
             up: !(msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN),
             foreign,
         };
-        let swallow = match self
-            .pipeline
-            .on_input(ev, origin, !ev.up && already_down(vk))
+        let async_down = !ev.up && already_down(vk);
+        // A held first Backspace goes out before any other key-down (the pipeline then holds
+        // this key behind it), so deleting the space to add a comma keeps working. Only a fresh
+        // second Backspace reaches the corrector, which undoes the fix.
+        if !ev.up
+            && origin == Origin::User
+            && self.held.is_some()
+            && (vk != VK_BACK.0 || async_down)
         {
+            self.release_held();
+        }
+        let swallow = match self.pipeline.on_input(ev, origin, async_down) {
             Input::Queued | Input::Consumed => true,
             Input::Process { repeat } => !ev.up && self.on_key_down(ev, repeat, start),
         };
@@ -998,9 +1018,17 @@ impl State {
             Action::Pass => return false,
             Action::Replace(r) => (r, false),
             Action::Undo(r) => (r, true),
+            Action::HoldBackspace(r) => return self.hold_backspace(r, key, ev, mods, repeat),
         };
         if let Some(reason) = injection_veto(key, mods, repeat, self.dry_run) {
             return self.skip(replacement, reason);
+        }
+        if undo {
+            // The second Backspace: the held one is spent with the undo.
+            self.held = None;
+            self.undo_deadline = None;
+        } else {
+            self.undo_deadline = self.corrector.undo_window().map(|w| Instant::now() + w);
         }
         // Swallow the key and hand the batch over; SendInput runs on the injector thread.
         let strokes = if undo {
@@ -1066,8 +1094,62 @@ impl State {
         self.pump();
     }
 
+    /// A first Backspace after a fix: swallow it and hold it (the pill asks "Undo?"), unless
+    /// it mustn't be swallowed (dry run, modifier held, auto-repeat).
+    fn hold_backspace(
+        &mut self,
+        replacement: Replacement,
+        key: Key,
+        ev: RawEvent,
+        mods: Modifiers,
+        repeat: bool,
+    ) -> bool {
+        if let Some(reason) = injection_veto(key, mods, repeat, self.dry_run) {
+            self.corrector.end_undo_window();
+            return self.skip(replacement, reason);
+        }
+        self.pipeline.hold(ev);
+        self.held = Some(ev);
+        let _ = self.events.send(HookEvent::UndoPending { replacement });
+        true
+    }
+
+    /// Send a held Backspace on, ahead of anything typed after it, and close the undo window.
+    fn release_held(&mut self) {
+        if let Some(held) = self.held.take() {
+            self.corrector.end_undo_window();
+            self.pipeline.release_held(held);
+            let _ = self.events.send(HookEvent::UndoDeclined);
+        }
+        self.undo_deadline = None;
+    }
+
+    /// A click or focus change: a held Backspace was meant for the old caret, so it is dropped
+    /// (sending it now would delete a character wherever the click put the caret).
+    fn drop_held(&mut self) {
+        if self.held.take().is_some() {
+            self.corrector.end_undo_window();
+            let _ = self.events.send(HookEvent::UndoDeclined);
+        }
+        self.undo_deadline = None;
+    }
+
+    /// The undo window ran out: a held Backspace goes out now; otherwise the next Backspace
+    /// is a plain one again.
+    fn check_undo_deadline(&mut self) {
+        if self.undo_deadline.is_some_and(|d| Instant::now() >= d) {
+            if self.held.is_some() {
+                self.release_held();
+            } else {
+                self.corrector.end_undo_window();
+                self.undo_deadline = None;
+            }
+        }
+    }
+
     /// The stale-batch timer fired.
     fn on_timer(&mut self) {
+        self.check_undo_deadline();
         if self.pipeline.tick(Instant::now(), STALE_AFTER) {
             let wait = self.degrade_backoff;
             self.degrade_backoff = (wait * 2).min(MAX_DEGRADE_BACKOFF);
@@ -1159,7 +1241,8 @@ impl State {
                 self.pipeline.on_replay_sent(r.batch, 0, total);
             }
         }
-        self.set_timer(self.pipeline.busy());
+        // The same timer also closes the undo window (within one tick of its end).
+        self.set_timer(self.pipeline.busy() || self.undo_deadline.is_some());
     }
 
     fn set_timer(&mut self, on: bool) {
@@ -1220,6 +1303,7 @@ impl State {
 
     /// Caret moved, focus changed, or we lost track: forget the word and start fresh.
     fn reset(&mut self) {
+        self.drop_held();
         self.gate.on_reset();
         self.reset_corrector();
     }

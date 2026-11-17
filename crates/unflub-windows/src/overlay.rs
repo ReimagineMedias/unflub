@@ -127,6 +127,10 @@ pub struct PillConfig {
     pub keycap: Rgba,
     /// The underline.
     pub accent: Rgba,
+    /// The "Undo?" pill while a first Backspace is held: its background and underline.
+    pub alert: Rgba,
+    /// Text on [`PillConfig::alert`], picked for contrast.
+    pub alert_text: Rgba,
     /// Ask UI Automation for the caret in browser and XAML fields. Off: the pill shows only
     /// where the system caret is known.
     pub uia_caret: bool,
@@ -153,12 +157,41 @@ impl Default for PillConfig {
             text: Rgba::hex(0xF2E6E3),
             keycap: Rgba::hex(0xE0A595),
             accent: Rgba::hex(0xB06A5C),
+            alert: Rgba::hex(0xC0392B),
+            alert_text: Rgba::hex(0xFFFFFF),
             uia_caret: true,
         }
     }
 }
 
+/// The colours one pill is drawn with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrawColours {
+    pub background: Rgba,
+    pub text: Rgba,
+    pub keycap: Rgba,
+    pub accent: Rgba,
+}
+
 impl PillConfig {
+    /// The theme's colours, or the alert colours while an undo is pending.
+    pub fn colours_for(&self, correction: &Correction) -> DrawColours {
+        match correction.kind {
+            CorrectionKind::UndoPending => DrawColours {
+                background: self.alert,
+                text: self.alert_text,
+                keycap: self.alert_text,
+                accent: self.alert,
+            },
+            _ => DrawColours {
+                background: self.background,
+                text: self.text,
+                keycap: self.keycap,
+                accent: self.accent,
+            },
+        }
+    }
+
     /// Bring every number into its allowed range.
     pub fn clamped(mut self) -> Self {
         self.opacity = if self.opacity.is_nan() {
@@ -175,6 +208,8 @@ impl PillConfig {
 pub enum CorrectionKind {
     /// A word was replaced. The pill offers Backspace to undo.
     Fixed,
+    /// A first Backspace is held: one more undoes the fix. Drawn in the alert colour.
+    UndoPending,
     /// The user undid a fix. The pill confirms it.
     Undone,
 }
@@ -230,6 +265,15 @@ impl Correction {
         }
     }
 
+    /// A first Backspace is held after `r` (the fix): the pill asks "Undo?".
+    pub fn undo_pending(r: &Replacement) -> Self {
+        Self {
+            kind: CorrectionKind::UndoPending,
+            undoable: false,
+            ..Self::fixed(r)
+        }
+    }
+
     /// From an engine event ([`Engine::drain_events`](unflub_core::Engine::drain_events)).
     pub fn from_event(event: &Event) -> Option<Self> {
         match event {
@@ -245,6 +289,7 @@ impl Correction {
         match event {
             crate::HookEvent::Corrected { replacement, .. } => Some(Self::fixed(replacement)),
             crate::HookEvent::Undone { replacement, .. } => Some(Self::undone(replacement)),
+            crate::HookEvent::UndoPending { replacement } => Some(Self::undo_pending(replacement)),
             _ => None,
         }
     }
@@ -252,7 +297,7 @@ impl Correction {
     /// The word now in the field, which the underline marks.
     pub fn word(&self) -> &str {
         match self.kind {
-            CorrectionKind::Fixed => &self.corrected,
+            CorrectionKind::Fixed | CorrectionKind::UndoPending => &self.corrected,
             CorrectionKind::Undone => &self.original,
         }
     }
@@ -260,7 +305,7 @@ impl Correction {
     /// Struck through in the capsule.
     pub fn before(&self) -> &str {
         match self.kind {
-            CorrectionKind::Fixed => &self.original,
+            CorrectionKind::Fixed | CorrectionKind::UndoPending => &self.original,
             CorrectionKind::Undone => &self.corrected,
         }
     }
@@ -271,7 +316,8 @@ impl Correction {
         match self.kind {
             CorrectionKind::Fixed if self.undoable => "\u{232B} undo",
             CorrectionKind::Fixed => "",
-            CorrectionKind::Undone => "undone",
+            CorrectionKind::UndoPending => "Undo?",
+            CorrectionKind::Undone => "Undone",
         }
     }
 
@@ -662,6 +708,7 @@ mod win {
 
     enum Command {
         Show(Correction),
+        Hide,
         Config(PillConfig),
         Shutdown,
     }
@@ -711,6 +758,11 @@ mod win {
         /// Show the pill for a correction. Replaces whatever is showing.
         pub fn show(&self, correction: Correction) {
             self.send(Command::Show(correction));
+        }
+
+        /// Hide whatever is showing (a held Backspace was sent on or dropped).
+        pub fn hide(&self) {
+            self.send(Command::Hide);
         }
 
         /// Apply new settings (from the next frame on).
@@ -919,6 +971,7 @@ mod win {
             while let Ok(command) = self.commands.try_recv() {
                 match command {
                     Command::Show(correction) => self.start_locating(correction),
+                    Command::Hide => self.cancel(),
                     Command::Config(config) => {
                         self.config = config;
                         if config_is_off(&self.config) {
@@ -1401,11 +1454,12 @@ mod win {
             let bitmap = Bitmap::new(placement.window.width(), placement.window.height())?;
             let to_dip = 96.0 / dpi;
             let rt: ID2D1RenderTarget = self.begin(&bitmap, dpi)?;
+            let colours = config.colours_for(correction);
             // SAFETY: drawing between BeginDraw (in `begin`) and EndDraw on a bound target.
             unsafe {
                 if let Some(u) = placement.underline {
                     let u = u.scaled(to_dip);
-                    let brush = brush(&rt, config.accent, 1.0)?;
+                    let brush = brush(&rt, colours.accent, 1.0)?;
                     rt.FillRoundedRectangle(&rounded(u, u.h / 2.0), &brush);
                 }
                 if let Some(cap) = placement.capsule {
@@ -1425,15 +1479,15 @@ mod win {
                     }
                     rt.FillRoundedRectangle(
                         &rounded(cap, radius),
-                        &brush(&rt, config.background, 1.0)?,
+                        &brush(&rt, colours.background, 1.0)?,
                     );
                     let at = |x: f32, y: f32| D2D_POINT_2F {
                         x: cap.x + x,
                         y: cap.y + y,
                     };
-                    let faint = brush(&rt, config.text, 0.55)?;
-                    let text = brush(&rt, config.text, 1.0)?;
-                    let keycap = brush(&rt, config.keycap, 1.0)?;
+                    let faint = brush(&rt, colours.text, 0.55)?;
+                    let text = brush(&rt, colours.text, 1.0)?;
+                    let keycap = brush(&rt, colours.keycap, 1.0)?;
                     let opts = D2D1_DRAW_TEXT_OPTIONS_NONE;
                     rt.DrawTextLayout(
                         at(layout.before_x, layout.text_y),
@@ -1454,7 +1508,7 @@ mod win {
                             y: cap.y + layout.key.y,
                             ..layout.key
                         };
-                        let fill = brush(&rt, config.keycap, 0.16)?;
+                        let fill = brush(&rt, colours.keycap, 0.16)?;
                         rt.FillRoundedRectangle(&rounded(key, dip::KEY_RADIUS), &fill);
                     }
                     rt.DrawTextLayout(
@@ -1810,6 +1864,29 @@ mod tests {
         }
     }
 
+    /// The held-Backspace pill: the same words as the fix, "Undo?", in the alert colours.
+    #[test]
+    fn undo_pending_pill_asks_in_the_alert_colour() {
+        let r = replacement(3, "the ", "teh", "the");
+        let pending = Correction::undo_pending(&r);
+        assert_eq!(pending.kind, CorrectionKind::UndoPending);
+        assert_eq!((pending.word(), pending.before()), ("the", "teh"));
+        assert_eq!((pending.label(), pending.keycap()), ("Undo?", false));
+        assert_eq!(pending.trailing, 1);
+        let config = PillConfig::default();
+        let c = config.colours_for(&pending);
+        assert_eq!(
+            (c.background, c.accent, c.text),
+            (config.alert, config.alert, config.alert_text)
+        );
+        let fixed = config.colours_for(&Correction::fixed(&r));
+        assert_eq!(
+            (fixed.background, fixed.text),
+            (config.background, config.text)
+        );
+        assert_eq!(Correction::undone(&r).label(), "Undone");
+    }
+
     /// Review blocker B2: no undo hint after Enter or Tab, where Backspace doesn't undo.
     #[test]
     fn no_undo_hint_after_enter_or_tab() {
@@ -1836,7 +1913,7 @@ mod tests {
             (undo.word(), undo.before(), undo.trailing),
             ("teh", "the", 0)
         );
-        assert_eq!(undo.label(), "undone");
+        assert_eq!(undo.label(), "Undone");
         assert_eq!(Correction::from_event(&Event::Learned("x".into())), None);
         // Non-ASCII counts characters, not bytes.
         let fix = Correction::fixed(&replacement(4, "café.", "cafe", "café"));

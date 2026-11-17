@@ -11,6 +11,7 @@ mod stats;
 mod strings;
 mod system;
 mod tour;
+mod undo_counts;
 mod updates;
 mod usage;
 
@@ -355,6 +356,8 @@ fn apply_remote(app: &AppHandle) {
 
 /// Undoing a fix taught the engine `word`: keep it in the personal dictionary for next time.
 fn learn_word(app: &AppHandle, word: String) {
+    // Learned: its undo count has done its job.
+    app.state::<Arc<undo_counts::UndoCounts>>().forget(&word);
     let state = app.state::<AppState>();
     merge_learned(
         &mut state.pending_learned.lock().unwrap(),
@@ -396,10 +399,14 @@ fn observe(app: &AppHandle, event: Observed) {
         Observed::Undone {
             original,
             corrected,
-            ..
+            user_rule,
         } => {
             usage.undo();
             app.state::<Stats>().undo(&original, &corrected);
+            if !user_rule {
+                app.state::<Arc<undo_counts::UndoCounts>>()
+                    .record(&original, &corrected);
+            }
         }
         Observed::CorrectorPanicked => usage.crash(),
         Observed::HookReinstalled => usage.hook_reinstall(),
@@ -759,6 +766,8 @@ pub fn run() {
                 usage.crash();
             }
             app.manage(usage);
+            let counts = Arc::new(undo_counts::UndoCounts::new(&data_dir));
+            app.manage(counts.clone());
             app.manage(Stats::new(data_dir));
             app.manage(tour::Tour::default());
             let enabled = settings.enabled;
@@ -781,6 +790,7 @@ pub fn run() {
             );
             let engine = EngineHost::start(
                 launch,
+                counts,
                 settings.clone(),
                 app.state::<Remote>().flags(),
                 app.state::<Stats>().words_checked.clone(),

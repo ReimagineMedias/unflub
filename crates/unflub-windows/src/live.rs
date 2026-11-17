@@ -99,6 +99,14 @@ impl LiveEngine {
 }
 
 impl Corrector for LiveEngine {
+    fn end_undo_window(&mut self) -> bool {
+        self.engine.end_undo_window()
+    }
+
+    fn undo_window(&self) -> Option<std::time::Duration> {
+        Corrector::undo_window(&self.engine)
+    }
+
     fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action {
         self.take_config();
         let action = self.engine.on_key(key, ctx);
@@ -192,17 +200,29 @@ mod tests {
     #[test]
     fn undo_reports_the_learned_word() {
         let (tx, rx) = mpsc::channel();
-        let (mut live, _config) = LiveEngine::new(
-            Engine::new(rules(&[("omw", "on my way")]), None),
-            move |w| {
-                let _ = tx.send(w);
-            },
+        let config = Config {
+            learn_after_undos: 1,
+            undo_window_ms: 900,
+            ..rules(&[("omw", "on my way")])
+        };
+        let (mut live, _config) = LiveEngine::new(Engine::new(config, None), move |w| {
+            let _ = tx.send(w);
+        });
+        assert_eq!(
+            live.undo_window(),
+            Some(std::time::Duration::from_millis(900))
         );
         // A user rule fix never teaches; check the bundled dictionary's fix instead.
         let actions = type_text(&mut live, " teh ");
         let Some(Action::Replace(_)) = actions.last() else {
             panic!("expected a fix for teh: {actions:?}");
         };
+        // Double Backspace: the first is held, the second undoes.
+        assert!(matches!(
+            live.on_key(Key::Backspace, &ctx()),
+            Action::HoldBackspace(_)
+        ));
+        assert!(rx.try_recv().is_err(), "nothing learned yet");
         assert!(matches!(
             live.on_key(Key::Backspace, &ctx()),
             Action::Undo(_)

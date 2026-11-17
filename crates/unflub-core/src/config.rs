@@ -20,6 +20,22 @@ pub enum EngineMode {
     Aggressive,
 }
 
+/// What Backspace right after a fix does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+pub enum UndoMode {
+    /// Default. While the pill is up, the first Backspace is held (nothing is deleted) and the
+    /// pill asks "Undo?"; a second Backspace undoes the fix. Anything else, or the pill timing
+    /// out, sends the held Backspace first, so deleting the space to add a comma still works.
+    #[default]
+    Twice,
+    /// The first Backspace right after a fix undoes it (the old behaviour).
+    Once,
+    /// Backspace is always just Backspace.
+    Off,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
@@ -38,8 +54,15 @@ pub struct Config {
     pub personal_words: Vec<String>,
     /// Exact user rules, typed -> replacement (abbreviations and learned fixes).
     pub user_rules: Vec<(String, String)>,
-    /// Backspace right after a correction restores the original and stops correcting that word.
-    pub undo_learns: bool,
+    /// How Backspace undoes a fix.
+    pub undo_mode: UndoMode,
+    /// A typo becomes "never fix" after its fix was undone this many times (1 to 5); 0 never.
+    pub learn_after_undos: u8,
+    /// Undos counted so far, `(typo, fix, times)` lowercased, kept by the app between runs. The
+    /// engine counts on from the highest of these and its own.
+    pub undo_counts: Vec<(String, String, u32)>,
+    /// How long after a fix the double-Backspace undo stays open (the pill's time on screen).
+    pub undo_window_ms: u32,
     /// BCP 47 tag for the system spell checker (e.g. `"en-US"`). The bundled dictionary is
     /// English only: for any other language its candidates are off (only the OS checker's own
     /// fixes apply) unless [`Config::english_for_other_languages`] or `BundledOnly`.
@@ -60,7 +83,10 @@ impl Default for Config {
             excluded_apps: Vec::new(),
             personal_words: Vec::new(),
             user_rules: Vec::new(),
-            undo_learns: true,
+            undo_mode: UndoMode::Twice,
+            learn_after_undos: 2,
+            undo_counts: Vec::new(),
+            undo_window_ms: 1100,
             language: "en-US".to_string(),
             english_for_other_languages: false,
         }

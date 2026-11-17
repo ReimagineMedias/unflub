@@ -298,7 +298,7 @@ mod tests {
                             pill_style: crate::settings::PillStyle::Off,
                             ..crate::settings::Settings::default()
                         };
-                        let p = crate::engine::engine_settings(&pill_off, &f).pill;
+                        let p = crate::engine::engine_settings(&pill_off, &f, Vec::new()).pill;
                         assert_eq!(p.style, unflub_engine::protocol::PillStyle::Off);
                     }
                 }

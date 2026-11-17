@@ -22,8 +22,9 @@ mod session;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-pub use config::{Config, EngineMode};
+pub use config::{Config, EngineMode, UndoMode};
 pub use dict::Dictionary;
 
 use case::Case;
@@ -63,6 +64,12 @@ pub enum Action {
     Replace(Replacement),
     /// Swallow the triggering Backspace and restore what the user originally typed.
     Undo(Replacement),
+    /// [`UndoMode::Twice`]: swallow this Backspace and hold it; the fix (`Replacement`) may be
+    /// undone by a second Backspace. Before anything else reaches the engine, the adapter
+    /// calls [`Corrector::end_undo_window`] and, when it returns true, sends the held
+    /// Backspace on (it then comes back as a plain Backspace). It does the same when the undo
+    /// window ([`Corrector::undo_window`]) runs out. On a click or focus change it drops it.
+    HoldBackspace(Replacement),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,8 +103,6 @@ pub enum Source {
 pub trait SpellBackend: Send {
     fn is_correct(&self, word: &str) -> bool;
     fn auto_replacement(&self, word: &str) -> Option<String>;
-    /// Add a word so the OS checker stops flagging it (best effort).
-    fn learn(&self, _word: &str) {}
 }
 
 /// Events the UI may want: corrections to show in the pill, undos, learned words.
@@ -113,12 +118,41 @@ pub enum Event {
 pub trait Corrector {
     /// Feed one key. Must return within the hook budget.
     fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action;
+
+    /// Close the double-Backspace undo window. True if a Backspace was being held
+    /// ([`Action::HoldBackspace`]); the adapter then sends it on, or drops it after a click.
+    fn end_undo_window(&mut self) -> bool {
+        false
+    }
+
+    /// How long a fix stays undoable by a double Backspace, if this corrector holds
+    /// Backspaces at all.
+    fn undo_window(&self) -> Option<Duration> {
+        None
+    }
 }
 
 impl Corrector for Engine {
     fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action {
         Engine::on_key(self, key, ctx)
     }
+
+    fn end_undo_window(&mut self) -> bool {
+        Engine::end_undo_window(self)
+    }
+
+    fn undo_window(&self) -> Option<Duration> {
+        (self.config.undo_mode == UndoMode::Twice)
+            .then(|| Duration::from_millis(u64::from(self.config.undo_window_ms)))
+    }
+}
+
+/// The last fix, while Backspace may still undo it.
+#[derive(Debug, Clone)]
+struct UndoWindow {
+    fix: Replacement,
+    /// A first Backspace is being held ([`UndoMode::Twice`]).
+    armed: bool,
 }
 
 /// The engine. One instance per process, driven from the platform hook thread.
@@ -130,9 +164,11 @@ pub struct Engine {
     ranker: Ranker,
     session: Session,
     /// The last correction, while the next key may still undo it.
-    undo: Option<Replacement>,
-    /// Lowercased words the user undid; never corrected again this session.
+    undo: Option<UndoWindow>,
+    /// Lowercased words the user undid often enough; never corrected again this session.
     learned: HashSet<String>,
+    /// `typo\tfix` (lowercased) to times undone, seeded from `Config::undo_counts`.
+    undo_counts: HashMap<String, u32>,
     events: Vec<Event>,
     word: String,
     lower: String,
@@ -194,6 +230,11 @@ pub fn undoable_boundary(boundary: char) -> bool {
     !matches!(boundary, '\n' | '\r' | '\t')
 }
 
+/// The key of a typo-to-fix pair in the undo counts.
+fn undo_key(typo: &str, fix: &str) -> String {
+    format!("{}\t{}", normalize(typo), normalize(fix))
+}
+
 fn normalize(word: &str) -> String {
     word.trim().to_lowercase().replace('\u{2019}', "'")
 }
@@ -210,7 +251,7 @@ fn is_dictionary_shape(w: &str) -> bool {
 impl Engine {
     /// Build an engine with the bundled English dictionary and the given config.
     pub fn new(config: Config, backend: Option<Box<dyn SpellBackend>>) -> Self {
-        Self {
+        let mut engine = Self {
             rules: Rules::new(&config),
             config,
             backend,
@@ -219,11 +260,14 @@ impl Engine {
             session: Session::new(),
             undo: None,
             learned: HashSet::new(),
+            undo_counts: HashMap::new(),
             events: Vec::new(),
             word: String::with_capacity(64),
             lower: String::with_capacity(64),
             words_checked: None,
-        }
+        };
+        engine.seed_undo_counts();
+        engine
     }
 
     /// Add one to `counter` for every word the engine decides on (fixed or not). The reader
@@ -234,7 +278,16 @@ impl Engine {
 
     /// Feed one key. Must return within the hook budget.
     pub fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action {
-        let undo = self.undo.take();
+        let undo = match (key, self.undo.take()) {
+            (Key::Backspace, undo) => undo,
+            (_, Some(w)) if w.armed => {
+                // The adapter should have sent the held Backspace on first
+                // (`end_undo_window`); if it didn't, count it as delivered.
+                self.session.pop();
+                None
+            }
+            _ => None,
+        };
         let excluded = ctx
             .app
             .is_some_and(|app| self.rules.excluded_apps.contains(app));
@@ -245,9 +298,18 @@ impl Engine {
         }
         match key {
             Key::Reset => self.session.reset(),
-            Key::Backspace => match undo {
-                Some(r) => return self.undo(r),
-                None => self.session.pop(),
+            Key::Backspace => match (self.config.undo_mode, undo) {
+                (UndoMode::Off, _) | (_, None) => self.session.pop(),
+                (UndoMode::Once, Some(w)) => return self.undo(w.fix),
+                (UndoMode::Twice, Some(w)) if w.armed => return self.undo(w.fix),
+                (UndoMode::Twice, Some(w)) => {
+                    let fix = w.fix.clone();
+                    self.undo = Some(UndoWindow {
+                        fix: w.fix,
+                        armed: true,
+                    });
+                    return Action::HoldBackspace(fix);
+                }
             },
             Key::Char(c) => self.session.push(c),
             Key::Boundary(c) if session::is_word_char(c) => self.session.push(c),
@@ -260,8 +322,11 @@ impl Engine {
                         self.push_event(Event::Corrected(r.clone()));
                         // Undoing would have to type the boundary again, and Enter or Tab
                         // may already have sent a message or moved to another cell.
-                        if undoable_boundary(c) {
-                            self.undo = Some(r.clone());
+                        if undoable_boundary(c) && self.config.undo_mode != UndoMode::Off {
+                            self.undo = Some(UndoWindow {
+                                fix: r.clone(),
+                                armed: false,
+                            });
                         }
                         return Action::Replace(r);
                     }
@@ -281,10 +346,39 @@ impl Engine {
     /// one, so neither building nor freeing them (milliseconds for a large personal dictionary)
     /// happens on the caller's thread. See `unflub_windows::LiveEngine`.
     pub fn set_prepared(&mut self, next: PreparedConfig) -> PreparedConfig {
-        PreparedConfig {
+        let old = PreparedConfig {
             config: std::mem::replace(&mut self.config, next.config),
             rules: std::mem::replace(&mut self.rules, next.rules),
+        };
+        self.seed_undo_counts();
+        old
+    }
+
+    /// Merge `Config::undo_counts` in. Counts only go up: an older snapshot from the app never
+    /// lowers what was counted here.
+    fn seed_undo_counts(&mut self) {
+        for (typo, fix, times) in &self.config.undo_counts {
+            let count = self.undo_counts.entry(undo_key(typo, fix)).or_insert(0);
+            *count = (*count).max(*times);
         }
+    }
+
+    /// Close the double-Backspace undo window ([`UndoMode::Twice`] only; `Once` stays open
+    /// until the next key, as before). True if a Backspace was being held: the adapter sends it
+    /// on (it comes back as a plain Backspace), or drops it after a click.
+    pub fn end_undo_window(&mut self) -> bool {
+        if self.config.undo_mode != UndoMode::Twice {
+            return false;
+        }
+        self.undo.take().is_some_and(|w| w.armed)
+    }
+
+    /// Times this typo-to-fix pair has been undone, for tests and diagnostics.
+    pub fn undo_count(&self, typo: &str, fix: &str) -> u32 {
+        self.undo_counts
+            .get(&undo_key(typo, fix))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Drain events produced since the last call (for the pill and settings UI).
@@ -317,7 +411,14 @@ impl Engine {
         };
         self.session.pop_n(undo.delete);
         self.session.push_str(&undo.insert);
-        if self.config.undo_learns && undo.source != Source::UserRule {
+        let count = self
+            .undo_counts
+            .entry(undo_key(&undo.original, &undo.corrected))
+            .or_insert(0);
+        *count += 1;
+        let threshold = u32::from(self.config.learn_after_undos.min(5));
+        // A user's own shortcut is never unlearned this way; they edit it in Settings.
+        if threshold > 0 && *count >= threshold && undo.source != Source::UserRule {
             self.learned.insert(normalize(&undo.original));
             self.push_event(Event::Learned(undo.original.clone()));
         }

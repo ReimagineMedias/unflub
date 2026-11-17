@@ -26,7 +26,7 @@ use unflub_engine::protocol::{EngineSettings, FromEngine, ToEngine};
 use unflub_engine::{frame, session};
 use unflub_windows::{
     Correction, Hook, HookEvent, HookOptions, LiveConfig, LiveEngine, Overlay, OverlayHandle,
-    PillConfig, PillStyle, SpellLearner, WindowsSpellBackend,
+    PillConfig, PillStyle, WindowsSpellBackend,
 };
 
 use crate::Args;
@@ -125,7 +125,6 @@ fn read_pipe(pipe: &Pipe, tx: &Sender<Msg>) {
 struct Running {
     hook: Hook,
     config: LiveConfig,
-    learner: Option<SpellLearner>,
     /// The language the user asked for (the checker may have fallen back to another).
     language: String,
 }
@@ -156,12 +155,9 @@ impl State {
                     self.sync();
                 }
                 Ok(Msg::Hook(event)) => self.on_hook_event(event),
-                Ok(Msg::Learned(word)) => {
-                    if let Some(learner) = self.running.as_ref().and_then(|r| r.learner.as_ref()) {
-                        learner.learn(&word);
-                    }
-                    self.out.send(&FromEngine::Learned { word });
-                }
+                // Only unflub's own settings learn the word; the Windows dictionary, which every
+                // app shares, is never written.
+                Ok(Msg::Learned(word)) => self.out.send(&FromEngine::Learned { word }),
                 Ok(Msg::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => self.send_words_checked(),
             }
@@ -303,6 +299,11 @@ impl State {
             HookEvent::InjectFailed { sent, total, .. } => {
                 eprintln!("unflub-engine: SendInput sent {sent}/{total} events")
             }
+            HookEvent::UndoDeclined => {
+                if let Some((overlay, _)) = &self.pill {
+                    overlay.hide();
+                }
+            }
             HookEvent::InputInterference { active } => {
                 self.out.send(&FromEngine::InputInterference { active })
             }
@@ -331,7 +332,6 @@ fn start(
     words_checked: &Arc<AtomicU64>,
 ) -> Option<Running> {
     let backend = spell_backend(&s.core.language);
-    let learner = backend.as_ref().map(WindowsSpellBackend::learner);
     let mut engine = Engine::new(
         s.core.clone(),
         backend.map(|b| Box::new(b) as Box<dyn SpellBackend>),
@@ -375,7 +375,6 @@ fn start(
     Some(Running {
         hook,
         config,
-        learner,
         language: s.core.language.clone(),
     })
 }
