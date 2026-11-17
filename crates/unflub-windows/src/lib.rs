@@ -7,8 +7,11 @@
 //! | `unflub-hook` | MTA | `WH_KEYBOARD_LL`, `WH_MOUSE_LL`, focus WinEvents, calls the [`Corrector`], `SendInput` |
 //! | `unflub-uia` | MTA | UI Automation `IsPassword` on focus change, with short UIA timeouts |
 //! | `unflub-spell` | MTA | slow `ComprehensiveCheck` lookups that fill the auto-replace cache |
+//! | `unflub-overlay` | none | the correction pill window ([`overlay`]): caret lookup, Direct2D drawing, fades |
+//! | `unflub-caret` | MTA | UI Automation caret position for browser and XAML fields, for the pill |
 //!
-//! The pure parts ([`translate`], [`policy`], [`inject::plan`], [`stats`], parts of [`focus`]) compile and
+//! The pure parts ([`translate`], [`policy`], [`inject::plan`], [`stats`], parts of [`focus`],
+//! [`overlay`] and [`caret`]) compile and
 //! are tested on every OS. Everything that calls Windows is behind `cfg(windows)`, so on
 //! Linux and macOS this crate builds to just those helpers.
 //!
@@ -21,8 +24,10 @@
 /// Re-exported so callers can name the hook's trait bound without depending on core directly.
 pub use unflub_core::Corrector;
 
+pub mod caret;
 pub mod focus;
 pub mod inject;
+pub mod overlay;
 pub mod policy;
 pub mod stats;
 pub mod translate;
@@ -34,5 +39,8 @@ pub mod spell;
 
 #[cfg(windows)]
 pub use hook::{Hook, HookEvent, HookOptions, HookReport, InjectTiming};
+pub use overlay::{Correction, PillConfig, PillPosition, PillStyle};
+#[cfg(windows)]
+pub use overlay::{Overlay, OverlayHandle};
 #[cfg(windows)]
 pub use spell::WindowsSpellBackend;
