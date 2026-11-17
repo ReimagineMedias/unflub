@@ -72,8 +72,9 @@ pub struct Launch {
     pub exe: PathBuf,
     /// Where a panicking engine leaves its marker (`crash.rs` reads it).
     pub crash_file: PathBuf,
-    /// Hook installed but never injects or swallows a key (`--perf-idle` runs).
-    pub dry_run: bool,
+    /// More engine arguments: `--dry-run` for `--perf-idle` runs (the hook only watches), or
+    /// `--test-ipc` in tests (no hook at all).
+    pub args: Vec<String>,
 }
 
 impl Launch {
@@ -82,10 +83,15 @@ impl Launch {
         let exe = std::env::current_exe()
             .ok()?
             .with_file_name(unflub_engine::ENGINE_EXE);
+        let args = if dry_run {
+            vec!["--dry-run".to_string()]
+        } else {
+            Vec::new()
+        };
         Some(Self {
             exe,
             crash_file,
-            dry_run,
+            args,
         })
     }
 }
@@ -358,10 +364,8 @@ mod host {
                 .arg("--crash-file")
                 .arg(&launch.crash_file)
                 .stdin(Stdio::null())
+                .args(&launch.args)
                 .creation_flags(CREATE_NO_WINDOW);
-            if launch.dry_run {
-                command.arg("--dry-run");
-            }
             let mut child = command.spawn().map_err(|e| {
                 std::io::Error::new(e.kind(), format!("{}: {e}", launch.exe.display()))
             })?;
@@ -654,6 +658,75 @@ mod tests {
         // Quick crashes add up; a healthy run starts over.
         assert_eq!(failures_after(3, Duration::from_secs(5)), 4);
         assert_eq!(failures_after(9, STABLE_RUN), 1);
+    }
+
+    /// The engine Cargo built next to this test (`target/<profile>/`), if any. `cargo test
+    /// --workspace` builds it before running any test; `-p unflub-app` alone doesn't.
+    #[cfg(windows)]
+    fn built_engine() -> Option<PathBuf> {
+        let deps = std::env::current_exe().ok()?;
+        let exe = deps.parent()?.parent()?.join(unflub_engine::ENGINE_EXE);
+        exe.exists().then_some(exe)
+    }
+
+    /// The real engine in `--test-ipc --test-panic` mode (never a hook): it panics after each
+    /// start, so the supervisor must see the crash, find the marker, restart it after the
+    /// backoff, and stop restarting on pause.
+    #[cfg(windows)]
+    #[test]
+    fn supervises_a_real_engine_through_crashes_and_pause() {
+        use std::sync::{mpsc, Mutex};
+        use std::time::Instant;
+
+        let Some(exe) = built_engine() else {
+            eprintln!("skipped: build unflub-engine first (cargo test --workspace does)");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("unflub-supervisor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("engine-crash.json");
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let observer: Observer = Arc::new(move |event| {
+            let _ = tx.lock().unwrap().send(event);
+        });
+        let launch = Launch {
+            exe,
+            crash_file: marker.clone(),
+            args: vec!["--test-ipc".into(), "--test-panic".into()],
+        };
+        let host = EngineHost::start(
+            Some(launch),
+            Settings::default(),
+            RemoteFlags::default(),
+            Arc::default(),
+            observer,
+            |_| {},
+        );
+        let wait = Duration::from_secs(30);
+        assert_eq!(rx.recv_timeout(wait), Ok(Observed::EngineCrashed));
+        assert!(marker.exists(), "the panic left its marker");
+        std::fs::remove_file(&marker).unwrap();
+
+        let since = Instant::now();
+        assert_eq!(rx.recv_timeout(wait), Ok(Observed::EngineCrashed));
+        assert!(
+            since.elapsed() >= Duration::from_millis(900),
+            "restarted after the 1 s backoff, not at once ({:?})",
+            since.elapsed()
+        );
+
+        // Pause: the pending restart (2 s backoff now) is dropped.
+        host.apply(&Settings {
+            enabled: false,
+            ..Settings::default()
+        });
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(4)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        host.shutdown();
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
