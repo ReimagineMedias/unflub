@@ -1,0 +1,106 @@
+---
+import { FAQ } from "../data/faq";
+---
+
+<section id="faq" class="faq chapter-block" aria-labelledby="faq-title">
+  <div class="wrap grid">
+    <h2 id="faq-title" class="section-title">Questions.</h2>
+    <div class="list">
+      {
+        FAQ.map((f) => (
+          <details>
+            <summary>
+              <h3>{f.q}</h3>
+              <span class="plus" aria-hidden="true" />
+            </summary>
+            <p>{f.a}</p>
+          </details>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .faq {
+    padding-top: 0;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+    gap: 48px;
+  }
+
+  details {
+    border-bottom: 1px solid var(--line);
+  }
+
+  details:first-child {
+    border-top: 1px solid var(--line);
+  }
+
+  summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 24px 0;
+    cursor: pointer;
+    list-style: none;
+    border-radius: 8px;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  summary h3 {
+    font-size: clamp(1.125rem, 1.6vw, 1.3125rem);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
+
+  .plus {
+    position: relative;
+    width: 14px;
+    height: 14px;
+    flex: none;
+  }
+
+  .plus::before,
+  .plus::after {
+    content: "";
+    position: absolute;
+    inset: 6px 0 auto;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--ink);
+    transition: transform 0.3s var(--ease);
+  }
+
+  .plus::after {
+    transform: rotate(90deg);
+  }
+
+  details[open] .plus::after {
+    transform: rotate(0deg);
+  }
+
+  details p {
+    padding: 0 48px 28px 0;
+    color: var(--muted);
+    max-width: 40em;
+  }
+
+  @media (max-width: 760px) {
+    .grid {
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+
+    details p {
+      padding-right: 0;
+    }
+  }
+</style>

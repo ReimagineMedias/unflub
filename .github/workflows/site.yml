@@ -1,0 +1,69 @@
+name: Site
+
+# unflub.rmgn.net: check, build and test on pull requests and on main. Vercel's Git integration builds and
+# deploys the site itself (Root Directory `site`, settings in site/vercel.json), so there is no deploy job here.
+# Third-party actions are pinned to commit SHAs; update the SHA and the tag comment together.
+
+on:
+  pull_request:
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  ASTRO_TELEMETRY_DISABLED: "1"
+
+jobs:
+  build:
+    name: Check, build, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - id: check
+        run: npm run check
+      - id: build
+        run: npm run build
+        env:
+          # Cloudflare Web Analytics site token. It is public (it ships in every page), so a repository variable,
+          # not a secret. Unset means no beacon.
+          PUBLIC_CF_BEACON_TOKEN: ${{ vars.PUBLIC_CF_BEACON_TOKEN }}
+          PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.PUBLIC_TURNSTILE_SITE_KEY }}
+      - id: lint
+        run: npm run lint
+      - id: test
+        run: npm test
+      - name: Summary
+        if: always()
+        run: |
+          mark() { [ "$1" = "success" ] && echo "✅" || { [ "$1" = "skipped" ] && echo "⏭️" || echo "❌"; }; }
+          {
+            echo "### Site"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Type check (astro check) | $(mark '${{ steps.check.outcome }}') |"
+            echo "| Build | $(mark '${{ steps.build.outcome }}') |"
+            echo "| HTML validation | $(mark '${{ steps.lint.outcome }}') |"
+            echo "| Tests (pages, links, metadata, JSON-LD, headers) | $(mark '${{ steps.test.outcome }}') |"
+          } >> "$GITHUB_STEP_SUMMARY"
