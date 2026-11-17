@@ -24,6 +24,9 @@ struct AppState {
     toggle: Mutex<Option<CheckMenuItem<tauri::Wry>>>,
     /// Hook, engine and pill. Taken out on quit.
     engine: Mutex<Option<EngineHost>>,
+    /// Words learned by undo since the settings window last saved. The window may still hold
+    /// settings from before they were learned, so its next save gets them merged back in.
+    pending_learned: Mutex<Vec<String>>,
 }
 
 #[derive(serde::Serialize)]
@@ -39,13 +42,38 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
-fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, String> {
-    apply_settings(&app, settings).map_err(|e| e.to_string())
+fn set_settings(app: AppHandle, mut settings: Settings) -> Result<Settings, String> {
+    let state = app.state::<AppState>();
+    let pending = state.pending_learned.lock().unwrap().clone();
+    merge_learned(&mut settings.personal_words, &pending);
+    let saved = apply_settings(&app, settings).map_err(|e| e.to_string())?;
+    // Saved to disk now; words learned during the save stay pending.
+    state
+        .pending_learned
+        .lock()
+        .unwrap()
+        .retain(|w| !pending.contains(w));
+    Ok(saved)
 }
 
 #[tauri::command]
 fn reset_settings(app: AppHandle) -> Result<Settings, String> {
+    app.state::<AppState>()
+        .pending_learned
+        .lock()
+        .unwrap()
+        .clear();
     apply_settings(&app, Settings::default()).map_err(|e| e.to_string())
+}
+
+/// Add each of `learned` to `words` unless it is already there (ignoring case).
+fn merge_learned(words: &mut Vec<String>, learned: &[String]) {
+    for word in learned {
+        let key = word.to_lowercase();
+        if !words.iter().any(|w| w.to_lowercase() == key) {
+            words.push(word.clone());
+        }
+    }
 }
 
 #[tauri::command]
@@ -79,7 +107,12 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
 
 /// Undoing a fix taught the engine `word`: keep it in the personal dictionary for next time.
 fn learn_word(app: &AppHandle, word: String) {
-    let mut next = app.state::<AppState>().settings.lock().unwrap().clone();
+    let state = app.state::<AppState>();
+    merge_learned(
+        &mut state.pending_learned.lock().unwrap(),
+        std::slice::from_ref(&word),
+    );
+    let mut next = state.settings.lock().unwrap().clone();
     let key = word.to_lowercase();
     if next.personal_words.iter().any(|w| w.to_lowercase() == key) {
         return;
@@ -239,6 +272,7 @@ pub fn run() {
                 settings: Mutex::new(settings.clone()),
                 toggle: Mutex::new(None),
                 engine: Mutex::new(None),
+                pending_learned: Mutex::new(Vec::new()),
             });
             let handle = app.handle();
             let learner = handle.clone();
@@ -273,4 +307,29 @@ pub fn run() {
         RunEvent::Exit => stop_engine(app),
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_learned;
+
+    #[test]
+    fn a_stale_save_keeps_words_learned_since_the_window_loaded() {
+        // The window loaded ["rmgn"]; meanwhile undo taught "unflub" and "Teh".
+        let learned = vec!["unflub".to_string(), "Teh".to_string()];
+        let mut from_window = vec!["rmgn".to_string()];
+        merge_learned(&mut from_window, &learned);
+        assert_eq!(from_window, ["rmgn", "unflub", "Teh"]);
+    }
+
+    #[test]
+    fn merging_ignores_words_already_there_in_any_case() {
+        let mut words = vec!["Unflub".to_string()];
+        merge_learned(&mut words, &["unflub".to_string(), "UNFLUB".to_string()]);
+        assert_eq!(words, ["Unflub"]);
+        let mut pending = Vec::new();
+        merge_learned(&mut pending, &["teh".to_string()]);
+        merge_learned(&mut pending, &["TEH".to_string()]);
+        assert_eq!(pending, ["teh"]);
+    }
 }
