@@ -38,9 +38,13 @@ screenshots of every page into `.local/shots/` (needs a running preview).
 
 ## Deploying
 
-Vercel's Git integration deploys the site: the project's Root Directory is `site`, and `vercel.json` sets the
-build, `dist/` output, trailing slashes and headers. `.github/workflows/site.yml` only checks, builds and tests.
-Build-time settings, both public values, set in Vercel and as GitHub repository variables:
+`.github/workflows/site.yml` deploys with the Vercel CLI pinned in `package.json` (Vercel Hobby has no Git
+integration for a private org repo): pull requests get a preview deployment and a comment with its URL, and pushes
+to `main` go to production, then ping IndexNow (`scripts/indexnow.mjs`). The jobs need the secrets
+`VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`. `vercel.json` sets the build, `dist/` output, trailing
+slashes and headers. To deploy by hand: `npx vercel deploy --prod` from `site/` (links `.vercel/`, which git
+ignores). Build-time settings, both public values, set in the Vercel project (and as GitHub repository variables
+for the check job):
 
 | Variable | What it does when set |
 |---|---|

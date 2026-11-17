@@ -1,7 +1,10 @@
 name: Site
 
-# unflub.rmgn.net: check, build and test on pull requests and on main. Vercel's Git integration builds and
-# deploys the site itself (Root Directory `site`, settings in site/vercel.json), so there is no deploy job here.
+# unflub.rmgn.net: check, build and test on pull requests and on main, then deploy with the Vercel CLI pinned in
+# site/package.json (Vercel Hobby has no Git integration for a private org repo). Pull requests get a preview
+# deployment and one comment with its URL; main goes to production and pings IndexNow.
+# Deploy steps need secrets VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID, passed only to those steps.
+# Build-time env (PUBLIC_TURNSTILE_SITE_KEY, PUBLIC_CF_BEACON_TOKEN) comes from the Vercel project via `vercel pull`.
 # Third-party actions are pinned to commit SHAs; update the SHA and the tag comment together.
 
 on:
@@ -66,4 +69,131 @@ jobs:
             echo "| Build | $(mark '${{ steps.build.outcome }}') |"
             echo "| HTML validation | $(mark '${{ steps.lint.outcome }}') |"
             echo "| Tests (pages, links, metadata, JSON-LD, headers) | $(mark '${{ steps.test.outcome }}') |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  preview:
+    name: Preview deployment
+    needs: build
+    # Secrets are not available to forks; previews are for branches in this repository.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - name: Pull preview settings
+        run: npx --no-install vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      - name: Build
+        run: npx --no-install vercel build --token="$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      - id: deploy
+        name: Deploy
+        run: |
+          url=$(npx --no-install vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      - name: Comment the preview URL
+        # One comment per pull request, found by its marker and updated on every push.
+        run: |
+          marker='<!-- unflub-site-preview -->'
+          body="$marker
+          Site preview: $URL ($SHA)"
+          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate             --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n 1)
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            gh api --method POST "repos/$REPO/issues/$PR/comments" -f body="$body" > /dev/null
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          URL: ${{ steps.deploy.outputs.url }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Site preview"
+            echo ""
+            echo "| Step | Result |"
+            echo "|---|---|"
+            echo "| Preview deployment | ${{ steps.deploy.outcome == 'success' && '✅' || '❌' }} ${{ steps.deploy.outputs.url }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  production:
+    name: Production deployment
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://unflub.rmgn.net
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - name: Pull production settings
+        run: npx --no-install vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      - name: Build
+        run: npx --no-install vercel build --prod --token="$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      - id: deploy
+        name: Deploy
+        run: |
+          url=$(npx --no-install vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      - id: indexnow
+        name: Ping IndexNow
+        # Tells Bing and other IndexNow engines the sitemap's pages changed. A failed ping doesn't fail the deploy.
+        continue-on-error: true
+        run: node scripts/indexnow.mjs unflub.rmgn.net
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Site production deploy"
+            echo ""
+            echo "| Step | Result |"
+            echo "|---|---|"
+            echo "| Deploy to https://unflub.rmgn.net | ${{ steps.deploy.outcome == 'success' && '✅' || '❌' }} ${{ steps.deploy.outputs.url }} |"
+            echo "| IndexNow ping | ${{ steps.indexnow.outcome == 'success' && '✅' || '❌' }} ${{ steps.indexnow.outputs.status }} for ${{ steps.indexnow.outputs.urls }} URLs |"
           } >> "$GITHUB_STEP_SUMMARY"

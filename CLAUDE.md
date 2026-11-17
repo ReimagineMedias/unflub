@@ -16,7 +16,9 @@ Repo is private until v0.1, then flipped public.
 - Brand: default theme palette `#2D1916` espresso, `#79453A` brown, `#F2E6E3` blush paper, `#B06A5C` rose. Other themes
   (RMGN paper, quiet ink, System accent) are settings, not replacements. Fonts Manrope + IBM Plex Mono.
 - Pill default: brief underline on the fixed word plus a small capsule (~1 s). Capsule, underline-only and off are all settings.
-- Site (`site/`): Astro static, hosted on Vercel through its Git integration (Root Directory `site`); headers, CSP,
+- Site (`site/`): Astro static on Vercel (project "unflub", team rmgn1), deployed by `.github/workflows/site.yml` with
+  the pinned Vercel CLI (Hobby has no Git integration for a private org repo): PR previews with a comment, production
+  on main, then an IndexNow ping (`site/scripts/indexnow.mjs`, key file `site/public/<32 hex>.txt`). Headers, CSP,
   trailing slashes and caching live in `site/vercel.json`, which `scripts/serve.mjs` and the tests also read. CI only
   checks, builds and tests. Performance figures live in `site/src/data/performance.ts`; keep them in step with
   docs/performance.md. Scripts must stay external files (the CSP has no 'unsafe-inline' for scripts; a test enforces it).
