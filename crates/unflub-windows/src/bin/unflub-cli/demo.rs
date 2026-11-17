@@ -1,5 +1,5 @@
 //! A tiny stand-in for the engine: three fixed rules, phone-style undo. Lets the hook be tried
-//! live before the core engine lands (`unflub --demo`).
+//! live before the core engine lands (`unflub-cli --demo`).
 
 use std::collections::HashSet;
 

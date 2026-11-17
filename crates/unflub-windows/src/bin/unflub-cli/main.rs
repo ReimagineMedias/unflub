@@ -1,9 +1,9 @@
-//! `unflub`: headless runner for the Windows adapter.
+//! `unflub-cli`: headless runner for the Windows adapter.
 //!
 //! ```text
-//! unflub --demo [--exclude <exe>]... [--pill <style>]   three fixed rules (teh, adn, recieve); try it now
-//! unflub [--exclude <exe>]... [--pill <style>]          the real engine
-//! unflub --dry-run --pill off                           hook and engine, but never inject or swallow a key
+//! unflub-cli --demo [--exclude <exe>]... [--pill <style>]   three fixed rules (teh, adn, recieve); try it now
+//! unflub-cli [--exclude <exe>]... [--pill <style>]          the real engine
+//! unflub-cli --dry-run --pill off                           hook and engine, but never inject or swallow a key
 //! ```
 //!
 //! Prints each correction and undo with the hook callback time, and shows the correction pill
@@ -14,7 +14,7 @@ mod demo;
 
 use unflub_windows::PillStyle;
 
-const USAGE: &str = "usage: unflub [--demo] [--dry-run] [--exclude <exe>]... [--pill <style>]
+const USAGE: &str = "usage: unflub-cli [--demo] [--dry-run] [--exclude <exe>]... [--pill <style>]
 
   --demo           use three built-in rules (teh->the, adn->and, recieve->receive)
                    instead of the engine

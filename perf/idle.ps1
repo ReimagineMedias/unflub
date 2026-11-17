@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-Measures what unflub.exe costs while it sits in the background.
+Measures what unflub-cli.exe costs while it sits in the background.
 
 .DESCRIPTION
-Starts unflub.exe with `--dry-run --pill off` (hook installed, engine loaded, nothing ever
+Starts unflub-cli.exe with `--dry-run --pill off` (hook installed, engine loaded, nothing ever
 injected or swallowed), waits until the hook is installed plus a warm-up, then samples it for
 a while: peak private bytes, peak working set, CPU time used, peak thread and handle counts.
 Prints one JSON report on stdout (logs go to stderr) and exits 1 if a limit in the given
@@ -11,7 +11,7 @@ section of perf/limits.toml is exceeded, 2 if the run itself failed.
 
 This script sends no input of any kind. It stops only the processes it started, always.
 
-If the hook can't be installed (some CI runners), unflub's dry run keeps the engine loaded and
+If the hook can't be installed (some CI runners), unflub-cli's dry run keeps the engine loaded and
 the report says "hook unavailable on runner": the numbers are then the engine-only footprint.
 
 .EXAMPLE
@@ -20,14 +20,14 @@ pwsh perf/idle.ps1 -Launcher target/release/examples/jobrun.exe -Section lowend.
 #>
 [CmdletBinding()]
 param(
-    [string]$Exe,       # default: target\release\unflub.exe
+    [string]$Exe,       # default: target\release\unflub-cli.exe
     [string]$Limits,    # default: perf\limits.toml
     [string]$Section = 'idle',
     [string]$Name = 'idle footprint',
     [int]$WarmupSeconds = 3,
     [int]$SampleSeconds = 20,
     [int]$ReadyTimeoutSeconds = 60,
-    # Optional wrapper that runs unflub.exe for us (perf/lowend.ps1 passes jobrun.exe). It must
+    # Optional wrapper that runs unflub-cli.exe for us (perf/lowend.ps1 passes jobrun.exe). It must
     # print "jobrun: pid <n>" on stderr.
     [string]$Launcher,
     [string[]]$LauncherArgs = @()
@@ -36,7 +36,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 # Defaults set here: Windows PowerShell 5.1 can leave $PSScriptRoot empty in param defaults.
-if (-not $Exe) { $Exe = Join-Path $PSScriptRoot '..\target\release\unflub.exe' }
+if (-not $Exe) { $Exe = Join-Path $PSScriptRoot '..\target\release\unflub-cli.exe' }
 if (-not $Limits) { $Limits = Join-Path $PSScriptRoot 'limits.toml' }
 
 # Start-Process joins arguments with spaces in Windows PowerShell 5.1; quote the ones that need it.
@@ -97,7 +97,7 @@ try {
         $null = $target.Handle
         $started.Add($target)
     }
-    Write-Log "started unflub.exe (pid $($target.Id)) with $($unflubArgs -join ' ')"
+    Write-Log "started unflub-cli.exe (pid $($target.Id)) with $($unflubArgs -join ' ')"
 
     # Ready when the hook is installed, or when the dry run says it carries on without one.
     $hook = $null
@@ -108,9 +108,9 @@ try {
         } elseif ($text -match '(?m)^hook unavailable') {
             $hook = 'unavailable'
         } elseif ($target.HasExited) {
-            throw "unflub.exe exited ($($target.ExitCode)) before it was ready:`n$(Get-SafeLog $outLog $errLog)"
+            throw "unflub-cli.exe exited ($($target.ExitCode)) before it was ready:`n$(Get-SafeLog $outLog $errLog)"
         } elseif ($clock.Elapsed.TotalSeconds -gt $ReadyTimeoutSeconds) {
-            throw "unflub.exe wasn't ready within $ReadyTimeoutSeconds s:`n$(Get-SafeLog $outLog $errLog)"
+            throw "unflub-cli.exe wasn't ready within $ReadyTimeoutSeconds s:`n$(Get-SafeLog $outLog $errLog)"
         } else {
             Start-Sleep -Milliseconds 10
         }
@@ -126,7 +126,7 @@ try {
     $sampleClock = [Diagnostics.Stopwatch]::StartNew()
     while ($true) {
         $target.Refresh()
-        if ($target.HasExited) { throw "unflub.exe exited ($($target.ExitCode)) while idle:`n$(Get-SafeLog $outLog $errLog)" }
+        if ($target.HasExited) { throw "unflub-cli.exe exited ($($target.ExitCode)) while idle:`n$(Get-SafeLog $outLog $errLog)" }
         $peak.private = [Math]::Max($peak.private, $target.PrivateMemorySize64)
         $peak.ws = [Math]::Max($peak.ws, $target.WorkingSet64)
         $peak.threads = [Math]::Max($peak.threads, $target.Threads.Count)

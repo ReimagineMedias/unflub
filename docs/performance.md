@@ -20,7 +20,7 @@ unknown words we know of.
 | `heap_bytes` | Memory the dictionary index holds. |
 | `peak_rss_bytes` | The most memory the bench process ever had resident (where the OS reports it). |
 
-**The idle footprint** (`perf/idle.ps1`, Windows). It starts `unflub.exe --dry-run --pill off`
+**The idle footprint** (`perf/idle.ps1`, Windows). It starts `unflub-cli.exe --dry-run --pill off`
 with the keyboard hook installed, waits until the hook is in, waits 3 more seconds, then samples
 the process every second for 20 seconds.
 
@@ -95,8 +95,8 @@ To test a genuinely slower CPU, run the same scripts on old hardware or a small 
 
 12 threads at first, 9 after about a minute. The extra three are Windows thread-pool workers
 started while loading DLLs, which retire when idle. Ours are the main thread, `unflub-hook`,
-`unflub-uia` and `unflub-spell`; the rest belong to Windows components we load (COM, UI
-Automation, the spell checker). The pill adds `unflub-overlay` and `unflub-caret` when it is
+`unflub-inject`, `unflub-uia` and `unflub-spell`; the rest belong to Windows components we load
+(COM, UI Automation, the spell checker). The pill adds `unflub-overlay` and `unflub-caret` when it is
 on.
 
 ## Running it yourself
@@ -105,7 +105,7 @@ Build from PowerShell (in Git Bash, `/usr/bin/link` hides the MSVC linker):
 
 ```powershell
 cargo build --release -p unflub-core --example bench
-cargo build --release -p unflub-windows --bin unflub --example jobrun
+cargo build --release -p unflub-windows --bin unflub-cli --example jobrun
 
 ./target/release/examples/bench --check perf/limits.toml   # human-readable; --json for JSON
 pwsh perf/idle.ps1                                          # ~25 s
@@ -133,5 +133,5 @@ switch a check off.
 - The pill: the idle check runs with `--pill off`. With it on, the overlay and caret threads
   are added, and Direct2D is loaded briefly after each fix.
 - Linux and macOS idle footprint: there is no adapter for them yet. The engine bench runs there.
-- Per-key latency inside the real hook under load: the bench times the engine alone. `unflub`
+- Per-key latency inside the real hook under load: the bench times the engine alone. `unflub-cli`
   prints the hook's own latency histogram when you stop it.

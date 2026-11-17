@@ -20,7 +20,7 @@ hard_max_us = 2_000           # measured 145-454 us: slowest of the hardest unkn
 heap_bytes = 25_165_824       # 24 MiB; measured 15_581_387 (14.9 MiB), deterministic
 peak_rss_bytes = 83_886_080   # 80 MiB; measured 43.6-45.7 MiB (index build peak)
 
-# pwsh perf/idle.ps1: unflub.exe --dry-run --pill off, 3 s warm-up, 20 s of samples
+# pwsh perf/idle.ps1: unflub-cli.exe --dry-run --pill off, 3 s warm-up, 20 s of samples
 [idle]
 ready_ms = 3_000               # measured 190-960 ms from launch to hook installed
 private_bytes = 41_943_040     # 40 MiB; measured 18.7-18.8 MiB

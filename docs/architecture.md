@@ -114,7 +114,7 @@ After a fix or an undo the adapter shows a small overlay at the caret for about 
 
 ### In the app
 
-The tray app (`app/src-tauri`) is the product; the `unflub` CLI stays as a developer tool. On
+The tray app (`app/src-tauri`) is the product; the `unflub-cli` runner stays as a developer tool. On
 launch, `EngineHost` (`engine.rs`) starts an `unflub-engine` thread that joins the COM MTA
 (the Tauri main thread is an STA, where the spell checker can't be created), builds the spell
 checker and engine, installs the hook, and reads `HookEvent`s through a small `unflub-events`
@@ -136,7 +136,7 @@ forwarder. Every settings change applies without a restart:
   the engine thread adds it to the Windows dictionary (on `unflub-spell`) and to the personal
   words in settings, which are saved and sent to the open settings window.
 
-Try the hook before the engine lands: `cargo run --release --bin unflub -- --demo` fixes
+Try the hook before the engine lands: `cargo run --release --bin unflub-cli -- --demo` fixes
 `teh`, `adn` and `recieve`, shows the pill (`--pill <style>` to change it), and prints each fix
 and the hook latency on exit. `--dry-run` installs the hook and runs the engine but never injects
 input or swallows a key; the perf checks use it ([performance.md](performance.md)).

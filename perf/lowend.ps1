@@ -12,7 +12,7 @@ Checks against the [lowend.core] and [lowend.idle] sections of perf/limits.toml.
 JSON report per line on stdout and exits 1 if a limit is exceeded, 2 if a run failed.
 
 Build first: cargo build --release -p unflub-core --example bench
-             cargo build --release -p unflub-windows --bin unflub --example jobrun
+             cargo build --release -p unflub-windows --bin unflub-cli --example jobrun
 #>
 [CmdletBinding()]
 param(
@@ -32,7 +32,7 @@ if (-not $Target) { $Target = Join-Path $PSScriptRoot '..\target\release' }
 
 $jobrun = (Resolve-Path -LiteralPath (Join-Path $Target 'examples\jobrun.exe')).Path
 $bench = (Resolve-Path -LiteralPath (Join-Path $Target 'examples\bench.exe')).Path
-$exe = (Resolve-Path -LiteralPath (Join-Path $Target 'unflub.exe')).Path
+$exe = (Resolve-Path -LiteralPath (Join-Path $Target 'unflub-cli.exe')).Path
 $limitsPath = (Resolve-Path -LiteralPath $Limits).Path
 $jobArgs = @('--core-percent', "$CorePercent", '--cores', "$Cores", '--memory-mb', "$MemoryMB")
 $worst = 0
@@ -62,7 +62,7 @@ if ($code -ge 2 -or -not $json) {
     $worst = [Math]::Max($worst, $code)
 }
 
-# Idle footprint, with unflub.exe started through jobrun. idle.ps1 stops what it started.
+# Idle footprint, with unflub-cli.exe started through jobrun. idle.ps1 stops what it started.
 $idle = & (Join-Path $PSScriptRoot 'idle.ps1') -Exe $exe -Limits $limitsPath -Section 'lowend.idle' `
     -Name 'idle (low-end sim)' -Launcher $jobrun -LauncherArgs $jobArgs -SampleSeconds $SampleSeconds
 $worst = [Math]::Max($worst, $LASTEXITCODE)

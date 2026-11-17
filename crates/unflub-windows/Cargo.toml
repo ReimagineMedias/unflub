@@ -8,8 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "unflub"
-path = "src/bin/unflub/main.rs"
+name = "unflub-cli"
+path = "src/bin/unflub-cli/main.rs"
 
 [[example]]
 name = "jobrun"
