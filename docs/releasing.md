@@ -53,8 +53,12 @@ contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
    approve it in the run.
 
 4. **What the run does after the builds**, in order, stopping at the first failure:
-   - VirusTotal scans each `*-setup.exe` and `*.msi` and fails the run if more than two engines
-     flag one (skipped, with a notice, without `VT_API_KEY`).
+   - VirusTotal scans each `*-setup.exe` and `*.msi`, and the two executables inside them on
+     their own (`unflub.exe` and `unflub-engine.exe`, from the build jobs' `binaries-*`
+     artifacts, never published), and fails the run if more than two engines flag one (skipped,
+     with a notice, without `VT_API_KEY`). Each build job first checks that both executables
+     are in both installers with the same publisher and copyright, and, when signing is on,
+     that both are signed.
    - `actions/attest-build-provenance` records which workflow run built each installer
      (`gh attestation verify <file> --repo ReimagineMedias/unflub` checks it).
    - `wrangler r2 object put` uploads the installers and their `.sig` files, nothing else, to

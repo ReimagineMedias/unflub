@@ -269,6 +269,39 @@ jobs:
           done
           [ -n "$(ls dist)" ] || { echo "::error::no bundles in $BUNDLE"; exit 1; }
           ls -l dist
+          # The two executables, for the antivirus scan and the signature check (not published).
+          if [ "$RUNNER_OS" = Windows ]; then
+            mkdir -p binaries
+            for exe in unflub.exe unflub-engine.exe; do
+              cp "target/${{ matrix.target }}/release/$exe" "binaries/${exe%.exe}_${VERSION}_${{ matrix.name }}.exe" \
+                || { echo "::error::$exe was not built"; exit 1; }
+            done
+            ls -l binaries
+          fi
+
+      - name: Both executables in the installers, same publisher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($exe in Get-ChildItem binaries -Filter *.exe) {
+            $v = $exe.VersionInfo
+            if ($v.CompanyName -ne 'Reimagine Media (RMGN)' -or $v.LegalCopyright -ne "$([char]0xA9) 2026 Matias Suxo") {
+              throw "$($exe.Name): CompanyName '$($v.CompanyName)', LegalCopyright '$($v.LegalCopyright)'"
+            }
+          }
+          $setup = Get-ChildItem dist -Filter *-setup.exe | Select-Object -First 1
+          $listing = & 7z l $setup.FullName
+          foreach ($exe in 'unflub.exe', 'unflub-engine.exe') {
+            if (-not ($listing -match "\s$([regex]::Escape($exe))$")) { throw "$exe is not in $($setup.Name)" }
+          }
+          $msi = Get-ChildItem dist -Filter *.msi | Select-Object -First 1
+          $extract = Join-Path $env:RUNNER_TEMP 'msi-extract'
+          Start-Process msiexec -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=`"$extract`"" -Wait
+          foreach ($exe in 'unflub.exe', 'unflub-engine.exe') {
+            if (-not (Get-ChildItem $extract -Recurse -Filter $exe)) { throw "$exe is not in $($msi.Name)" }
+          }
+          "Both executables are in $($setup.Name) and $($msi.Name)."
 
       - name: Upload debug symbols to Sentry
         if: steps.symbols.outputs.upload == 'true'
@@ -277,19 +310,28 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-        run: npx --yes @sentry/cli@3.8.2 debug-files upload --wait "target/${{ matrix.target }}/release"
+        # The app and the engine: scripts/build-engine.mjs builds the engine into target/release
+        # when the target is the runner's own.
+        run: npx --yes @sentry/cli@3.8.2 debug-files upload --wait "target/${{ matrix.target }}/release" target/release
 
       - name: Check Authenticode signatures
         if: runner.os == 'Windows' && steps.sign.outputs.mode != 'off'
         shell: pwsh
         run: |
-          $bad = Get-ChildItem dist -Include *.exe, *.msi -Recurse | Get-AuthenticodeSignature | Where-Object Status -ne 'Valid'
-          if ($bad) { $bad | Format-Table Path, Status; throw 'unsigned or invalid installers' }
+          $bad = Get-ChildItem dist, binaries -Include *.exe, *.msi -Recurse | Get-AuthenticodeSignature | Where-Object Status -ne 'Valid'
+          if ($bad) { $bad | Format-Table Path, Status; throw 'unsigned or invalid installers or executables' }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bundle-${{ matrix.name }}
           path: dist/*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Windows'
+        with:
+          name: binaries-${{ matrix.name }}
+          path: binaries/*
           if-no-files-found: error
 
       - name: Summary
@@ -340,6 +382,12 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-notes
+      # unflub.exe and unflub-engine.exe per platform: scanned, never published.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binaries-*
+          merge-multiple: true
+          path: binaries
 
       - name: latest.json and SHA256SUMS.txt
         run: |
@@ -366,6 +414,9 @@ jobs:
           fi
           mapfile -t installers < <(cd assets && ls -- *-setup.exe *.msi 2>/dev/null)
           (cd assets && node ../scripts/virustotal.mjs --max 2 "${installers[@]}")
+          # The executables too: the tray app and the engine that sees keys, each on its own.
+          mapfile -t exes < <(ls -- binaries/*.exe 2>/dev/null)
+          node scripts/virustotal.mjs --max 2 "${exes[@]}"
 
       - name: Build provenance
         if: env.DRY_RUN != 'true'

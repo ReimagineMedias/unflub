@@ -20,8 +20,13 @@ prompts. Press Backspace right after a fix to put your word back, and unflub rem
 
 ## Privacy
 
+**The part of unflub that sees your keys has no network code. CI enforces it.** unflub is two programs: `unflub-engine.exe` sees
+your keys and has no way to reach the internet, and `unflub.exe` (the tray icon) handles
+updates and the rest without ever seeing a key. See
+[docs/architecture.md](docs/architecture.md#two-processes).
+
 - **What you type stays on your computer.** Words go to the engine and the correction pill,
-  nowhere else.
+  and to the Stats page on this computer, nowhere else.
 - **The daily update check is anonymous.** It sends the unflub and Windows versions and a
   random number from 0 to 99 that changes with every version, so new releases can reach a few
   people first. No ID, nothing that tells your computer apart from anyone else's.

@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "ca.rmgn.unflub",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "cargo build -p unflub-engine && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && node ../scripts/build-engine.mjs",
     "frontendDist": "../dist"
   },
   "app": {
@@ -23,6 +23,7 @@
     "category": "Utility",
     "shortDescription": "Phone-style autocorrect for every text field",
     "copyright": "© 2026 Matias Suxo",
+    "externalBin": ["binaries/unflub-engine"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -2,12 +2,19 @@
 
 unflub fixes typos as you type, in any text field on the desktop. This page explains how.
 
+**The part of unflub that sees your keys has no network code. CI enforces it.** unflub runs as two processes: `unflub-engine.exe`
+holds the keyboard hook, the engine and the pill and has no network code at all, and
+`unflub.exe` (the tray app) does everything that talks to the internet and never sees a key.
+See [Two processes](#two-processes).
+
 ## Layout
 
 ```
 crates/unflub-core      Platform-free engine. No OS calls, no unsafe. Tested on every OS in CI.
 crates/unflub-windows   Windows adapter: keyboard hook, text injection, Windows spell checker.
-app/                    Tauri 2 app: tray, settings window, start at login. Runs the adapter in-process.
+crates/unflub-engine    unflub-engine.exe (hook, engine, pill) and the pipe protocol. No network code.
+app/                    Tauri 2 app, unflub.exe: tray, settings, tour, updates, stats, crash reports.
+                        Starts and supervises unflub-engine.exe.
 site/                   unflub.rmgn.ca (coming)
 ```
 
@@ -119,31 +126,76 @@ After a fix or an undo the adapter shows a small overlay at the caret for about 
 - **Placement.** Above the line by default, flipped below when there is no room, clamped to the
   monitor's work area, and scaled by that monitor's DPI.
 
-### In the app
+### Two processes
 
-The tray app (`app/src-tauri`) is the product; the `unflub-cli` runner stays as a developer tool. On
-launch, `EngineHost` (`engine.rs`) starts an `unflub-engine` thread that joins the COM MTA
-(the Tauri main thread is an STA, where the spell checker can't be created), builds the spell
-checker and engine, installs the hook, and reads `HookEvent`s through a small `unflub-events`
-forwarder. Every settings change applies without a restart:
+The part of unflub that sees your keys has no network code. CI enforces it.
 
-- **Engine settings** reach the hook thread through `LiveEngine` (`live.rs`): the app queues a
-  new `Config` on a channel, and the hook thread applies the newest one at the start of the next
-  key. Checking an empty channel is one atomic read, so the hook never waits or takes a lock.
-  Excluded apps travel in that `Config` (the engine drops keys from those apps). The hook's own
-  exclude list holds only `unflub.exe`, so nothing typed in unflub's own windows (your words,
-  app names) is ever "fixed". The tour's practice box runs a separate engine instead
-  (`tour.rs`): the web view sends each key over IPC and draws the result and the pill itself.
-- **Pause** removes the keyboard and mouse hooks and closes the pill; resume installs them
-  again. While paused unflub sees no keys at all.
-- **Language** changes restart the hook with a spell checker for the new language. If Windows
-  has no dictionary for it, the user's UI language is used.
-- **Pill** options and theme colours go to `OverlayHandle::set_config`. The OS dark mode
-  (`AppsUseLightTheme`) and accent colour are read again before each pill, so "match system"
-  follows the OS.
-- **Undo teaches**: the engine's `Learned` word is sent from the hook thread over a channel;
-  the engine thread adds it to the Windows dictionary (on `unflub-spell`) and to the personal
-  words in settings, which are saved and sent to the open settings window.
+| Process | Holds | Network |
+|---|---|---|
+| `unflub-engine.exe` (`crates/unflub-engine`) | keyboard and mouse hooks, the engine, the Windows spell checker, the pill | none: no HTTP, TLS, Sentry or Tauri crate, no `Win32_Networking` feature |
+| `unflub.exe` (`app/src-tauri`) | tray, settings window, tour, updater, remote config, usage stats, crash reports, the local Stats page | api.rmgn.ca only, see [Network and privacy](#network-and-privacy) |
+
+**The guard.** `crates/unflub-engine/tests/no_network.rs` runs `cargo tree -p unflub-engine
+-e normal --target all` and fails on any crate in the reqwest, hyper, h2, ureq, isahc, curl,
+surf, sentry, tauri, rustls, tokio-rustls, native-tls or openssl families (and a few more), and
+on any `Win32_Networking*` feature of `windows` (or a socket or HTTP module of `winapi`). CI
+runs it on every OS as its own step, "No network code in the engine".
+
+**The pipe.** The app creates `\\.\pipe\unflub-engine-<pid>-<64 random bits>` as the only
+instance of that name (`FILE_FLAG_FIRST_PIPE_INSTANCE`), with a protected DACL that grants
+access to the current user's SID alone, and `PIPE_REJECT_REMOTE_CLIENTS`. It starts the engine
+with that name and its own pid, then accepts one client and drops it unless
+`GetNamedPipeClientProcessId` is the pid it spawned; the engine checks
+`GetNamedPipeServerProcessId` the same way. I/O is overlapped, so a pending read never blocks a
+write on the same handle.
+
+**Messages** (`crates/unflub-engine/src/protocol.rs`) are a 4-byte little-endian length and a
+JSON body, at most 4 MB. JSON rather than bincode: messages are rare, so speed doesn't matter,
+while a self-describing format lets either side skip a message it doesn't know and keeps
+defaulted fields compatible across versions (bincode isn't self-describing, and the project
+stopped in 2025). The engine opens with `Hello { protocol, version }`; the app answers
+`Welcome` only if the protocol matches, else ends it. Then:
+
+| Direction | Messages |
+|---|---|
+| app to engine | `Configure` (core `Config` plus pill settings, remote flags already applied), `Shutdown` |
+| engine to app | `Ready { hooked }`, `Corrected`, `Undone` (with the words, for the local Stats page), `WordsChecked` every 10 s when it moved, `Learned`, `HookReinstalled`, `CorrectorPanicked` |
+
+**Supervision** (`app/src-tauri/src/engine.rs`). The app starts the engine beside `unflub.exe`
+in a Job Object with kill-on-close, so the engine never outlives the app (crash, Task Manager,
+the installer closing `unflub.exe`); the engine also exits when its pipe closes. If it exits
+unasked, the app counts a crash and starts it again after 1 s, doubling to at most 5 minutes,
+and back to 1 s once a run lasted a minute.
+
+- **Pause ends the engine process**; resume starts a new one (~0.3 s, mostly the dictionary
+  index, which an in-process resume rebuilt too). Unhooking inside a live engine would keep
+  ~20 MB and a process that could still see keys. While paused nothing holds a hook or a typed
+  character.
+- **Quit and updates** send `Shutdown`, wait up to 3 s, then end it. The updater does this
+  before the installer runs, so `unflub-engine.exe` is never locked.
+- **Settings** go over the pipe as one `Configure`; the engine applies them live. Engine
+  settings reach the hook thread through `LiveEngine` (`live.rs`): the hook thread applies the
+  newest queued `Config` at the start of the next key (one atomic read when nothing is queued).
+  Excluded apps travel in that `Config`. The hook's own exclude list holds only `unflub.exe`, so
+  nothing typed in unflub's own windows is ever "fixed". A language change restarts the hook
+  with a spell checker for the new language (or the user's UI language if Windows has none).
+- **The pill** is drawn by the engine. The OS dark mode and accent are read again before each
+  pill, so "match system" follows the OS without a message.
+- **Undo teaches**: the engine sends `Learned`; the app adds the word to the personal words in
+  settings, saves them, and sends the new settings back.
+- **Crashes**: the engine's panic hook writes `engine-crash.json` in the app data folder (the
+  panic location, frame addresses, loaded modules and thread name; never the message, and the
+  home folder cut out) and ends the process at once. The app turns it into the same opt-in
+  crash report as its own (`crash.rs`).
+- **The tour** runs its own engine inside the app (`tour.rs`), with no hook: the web view sends
+  each key typed in the practice box over Tauri IPC and draws the result itself.
+
+`unflub.exe --perf-idle <dir>` runs the pair for `perf/idle.ps1`: settings and data in `<dir>`,
+every network feature off, no settings window, and the engine with `--dry-run`.
+`unflub-engine.exe --test-ipc` does the handshake and messages without ever installing a hook
+(`tests/ipc.rs`).
+
+The `unflub-cli` runner stays as a developer tool with the whole stack in one process.
 
 Try the hook before the engine lands: `cargo run --release --bin unflub-cli -- --demo` fixes
 `teh`, `adn` and `recieve`, shows the pill (`--pill <style>` to change it), and prints each fix
@@ -195,15 +247,14 @@ count as known words and are never corrected.
 - The first word after a reset: the caret may be in the middle of text we never saw.
 - Hyphenated words, words with non-ASCII letters, and words ending in an apostrophe.
 
-## UI processes
+## Processes and threads
 
-- **Core process** (hook, engine, tray): always running, target about 30 MB RAM idle. The
-  bundled dictionary index alone takes about 15 MB.
-- **Pill**: drawn natively in a click-through, no-activate window, shown briefly after a fix.
-  No web view stays resident.
-- **Core process** (hook, engine, tray): always running, target under 15 MB RAM idle.
-- **Pill**: drawn natively in a click-through, no-activate window on the core process's
+- **Engine** (`unflub-engine.exe`: hook, engine, pill): runs while autocorrect is on. The
+  bundled dictionary index alone takes about 15 MB. Idle numbers are in
+  [performance.md](performance.md).
+- **Pill**: drawn natively in a click-through, no-activate window on the engine's
   `unflub-overlay` thread, shown briefly after a fix. No web view.
+- **Tray app** (`unflub.exe`): always running, also while paused.
 - **Settings**: a Tauri window created on demand and destroyed when closed.
 - **Updates**: an `unflub-update` thread that checks api.rmgn.ca about two minutes after launch and
   then daily. With automatic updates on it downloads and verifies a new version in the
@@ -214,8 +265,10 @@ count as known words and are never corrected.
 
 ## Network and privacy
 
-Nothing typed ever leaves the computer: words reach only the engine, the pill and, for the local
-Stats page, `stats.json` in the app data folder. Everything unflub sends goes to api.rmgn.ca
+The part of unflub that sees your keys has no network code. CI enforces it. Keys and words are handled in `unflub-engine.exe`, which
+has no network code (see [Two processes](#two-processes)). Nothing typed ever leaves the
+computer: words reach only the engine, the pill and, over the local pipe, the app's Stats page,
+`stats.json` in the app data folder. Everything unflub sends goes to api.rmgn.ca
 (contract: `D:\Code\rmgn-api\docs\unflub-contract.md`) and carries no identifier.
 
 | What | When | Carries | Off switch |
@@ -224,7 +277,7 @@ Stats page, `stats.json` in the app data folder. Everything unflub sends goes to
 | Remote config | at launch and with each check | the same headers | Policy `DisableRemoteConfig` |
 | Update download | when an update is found (auto) or on Restart now | nothing extra | Automatic updates, policy |
 | Usage stats | once a day | counts, settings snapshot, p99 latencies, health counters; no headers (`usage.rs`, allowlist test) | Privacy > Anonymous usage stats (on by default), policy `DisableUsageStats` |
-| Crash report | next start after a crash | scrubbed Sentry event: location, stack, modules, OS and app version (`crash.rs`) | Privacy > Crash reports (on by default), policy `DisableCrashReports`; builds without `SENTRY_DSN` |
+| Crash report | next start after a crash, or after an engine crash | scrubbed Sentry event: location, stack, modules, OS and app version (`crash.rs`); for the engine, from the marker it wrote | Privacy > Crash reports (on by default), policy `DisableCrashReports`; builds without `SENTRY_DSN` |
 
 - **Remote config only takes away.** Its flags (`pill_enabled`, `uia_caret`, `stats_enabled`,
   `min_check_interval_h`) can switch a feature off or make a limit stricter, never turn on what

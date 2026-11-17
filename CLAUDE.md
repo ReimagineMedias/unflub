@@ -33,10 +33,27 @@ Repo is private until v0.1, then flipped public.
   `cargo run --release --bin unflub-cli -- --demo` (rules teh/adn/recieve). Never run it in automation on a machine someone
   is typing on, except with `--dry-run`.
 - Windows `ISpellChecker::Check` reports any word of 64+ UTF-16 units as correct.
-- The tray app runs the hook in-process (`app/src-tauri/src/engine.rs`), so `npm run tauri dev` installs a real keyboard
-  hook too: same rule as the CLI, never in automation. Settings apply live through `unflub_windows::LiveEngine` (a
-  channel the hook thread drains at the next key); pausing unhooks. The Tauri main thread is an STA, so the spell
-  checker is created on the `unflub-engine` thread. The app's excluded apps live in the engine `Config` only.
+- Two processes since 2026-11-17: `unflub-engine.exe` (`crates/unflub-engine`: hook, engine, spell checker, pill; no
+  network code) and `unflub.exe` (tray, settings, tour, updater, remote config, stats, crash reports). The app spawns
+  the engine beside itself (`app/src-tauri/src/engine.rs`, kill-on-close Job Object, restart backoff 1 s doubling to
+  5 min), over a per-user named pipe (DACL = user SID, `PIPE_REJECT_REMOTE_CLIENTS`, first instance, client pid
+  checked) with 4-byte-length JSON frames and a `Hello`/`Welcome` protocol version. Pause ends the engine process.
+  `npm run tauri dev` still installs a real keyboard hook (through the engine): never in automation. Test IPC with
+  `unflub-engine --test-ipc` (never hooks; `crates/unflub-engine/tests/ipc.rs`) or the in-process pipe pair tests.
+- No-network guard: `cargo test -p unflub-engine --test no_network -- --nocapture` (`cargo tree -p unflub-engine -e
+  normal --target all`, fails on reqwest/hyper/h2/ureq/isahc/curl/surf/sentry/tauri/rustls/native-tls/openssl
+  families and on `Win32_Networking*` or winapi socket features). Verified it fails when reqwest or
+  `Win32_Networking_WinSock` is added. The app's `windows` features don't leak into the engine's tree.
+- Engine sidecar packaging: `bundle.externalBin = ["binaries/unflub-engine"]`; `beforeBuildCommand` runs
+  `scripts/build-engine.mjs` (honours `TAURI_ENV_TARGET_TRIPLE`, copies to `app/src-tauri/binaries/`, git-ignored).
+  `app/src-tauri/build.rs` removes externalBin through `TAURI_CONFIG` unless it is a release build under the Tauri CLI
+  (`TAURI_ENV_PLATFORM` set), because tauri-build copies the sidecar into `target/<profile>/unflub-engine.exe`, the
+  same path Cargo builds the engine to, and errors if it is missing. Plain cargo builds, clippy and tests need nothing
+  in `binaries/`.
+- Engine panics: the engine's hook writes `engine-crash.json` (Sentry event JSON: `symbolic` debug images use the
+  field names `name` and `id`, not `code_file`/`debug_id`) and ends the process with `TerminateProcess` (exit 101);
+  `abort()` started Windows Error Reporting and took seconds. The default panic hook is not called: it prints the
+  message, which may hold typed text.
 - UI Automation (and MSAA) queries switch on Chromium's accessibility tree, costing CPU and memory in Chrome and Electron.
   The adapter asks UIA only on focus changes, clicks, Tab and Enter, for every class except the standard edits (Edit, RichEdit*: ES_PASSWORD alone);
   unknown classes fail closed (secure until UIA says otherwise). Tests only create the UIA client and never query an app.
@@ -45,7 +62,10 @@ Repo is private until v0.1, then flipped public.
   `pwsh perf/idle.ps1`, low-end sim `pwsh perf/lowend.ps1` (Job Object via `examples/jobrun.rs`). The scripts run
   `unflub-cli --dry-run --pill off`: hook and engine live, but every action is vetoed (`policy::DRY_RUN`), so nothing is
   injected or swallowed. Safe on a machine someone is typing on; they stop only processes they started.
-- Idle measured 2026-11-16 (dry run, pill off): private 18.8 MB, working set 38-40 MB, ~0.03 s CPU per 20 s, 12
+- Idle of the pair measured 2026-11-17 (`pwsh perf/idle.ps1`, `unflub.exe --perf-idle <dir>`: temp settings, no
+  network, no single instance, dry-run engine; a second tray icon shows for 25 s): engine 19.5-19.8 MB private, app
+  4.3-4.4 MB, both 23.8-24.0 MB; CPU 0-0.047 s per 20 s; app has 40 threads (async runtime, one per core).
+- Idle of `unflub-cli` measured 2026-11-16 (dry run, pill off): private 18.8 MB, working set 38-40 MB, ~0.03 s CPU per 20 s, 12
   threads dropping to 9 after ~1 min (Windows thread-pool workers from DLL loading retire), ~210 handles.
 - A Job Object hard CPU cap is a duty cycle: at 25 % of one core the job runs ~150 ms then pauses ~430 ms. Work that
   fits in one burst (index build) runs at full speed; it doesn't simulate a slower clock.
@@ -89,4 +109,5 @@ Repo is private until v0.1, then flipped public.
   Program Files\unflub, Scoop `apps\unflub\current`); a release build run from `target\release` registered itself
   once before this rule, so never run one with startAtLogin on outside that check.
 - Binaries: the tray app's executable is `unflub.exe` (`[[bin]] name = "unflub"` in `app/src-tauri/Cargo.toml`; the
-  package stays `unflub-app`); the headless developer runner is `unflub-cli` (`crates/unflub-windows/src/bin/unflub-cli`).
+  package stays `unflub-app`); the keyboard engine is `unflub-engine.exe` (`crates/unflub-engine`); the headless
+  developer runner is `unflub-cli` (`crates/unflub-windows/src/bin/unflub-cli`, whole stack in one process).
