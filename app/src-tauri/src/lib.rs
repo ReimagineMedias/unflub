@@ -59,8 +59,8 @@ struct AppState {
     interference: Mutex<Interference>,
 }
 
-/// See [`AppState::interference`]. Counted here only: the usage stats contract has no field
-/// for it yet.
+/// See [`AppState::interference`]. Each start is also counted in the anonymous usage stats as
+/// `health.self_pauses`.
 #[derive(Debug, Default)]
 struct Interference {
     active: bool,
@@ -410,7 +410,12 @@ fn observe(app: &AppHandle, event: Observed) {
         }
         Observed::CorrectorPanicked => usage.crash(),
         Observed::HookReinstalled => usage.hook_reinstall(),
-        Observed::InputInterference { active } => set_interference(app, active),
+        Observed::InputInterference { active } => {
+            if active {
+                usage.self_pause();
+            }
+            set_interference(app, active);
+        }
         Observed::EngineCrashed => {
             set_interference(app, false);
             usage.crash();

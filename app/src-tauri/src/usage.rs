@@ -92,6 +92,10 @@ pub struct Health {
     /// The adapter's watchdog installed the keyboard hook again (Windows dropped it, or the
     /// computer resumed or was unlocked).
     pub hook_reinstalls: u64,
+    /// The engine fell back to pass-through because its own injected keys stopped coming back
+    /// (another program interferes with keyboard input).
+    #[serde(default)]
+    pub self_pauses: u64,
 }
 
 /// What is kept on disk between sends.
@@ -211,6 +215,10 @@ impl Usage {
 
     pub fn hook_reinstall(&self) {
         self.record(|t| t.health.hook_reinstalls += 1);
+    }
+
+    pub fn self_pause(&self) {
+        self.record(|t| t.health.self_pauses += 1);
     }
 
     /// The payload the next send would post, from the counts so far.
@@ -394,6 +402,7 @@ mod tests {
         "health",
         "health.crashes",
         "health.hook_reinstalls",
+        "health.self_pauses",
     ];
 
     fn paths(value: &Value, prefix: &str, out: &mut BTreeSet<String>) {
@@ -420,6 +429,7 @@ mod tests {
             health: Health {
                 crashes: 0,
                 hook_reinstalls: 1,
+                self_pauses: 0,
             },
             ..Tally::default()
         };

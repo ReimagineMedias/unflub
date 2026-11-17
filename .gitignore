@@ -7,3 +7,5 @@ dist/
 .env.*
 # The engine sidecar, built by scripts/build-engine.mjs for the installers.
 app/src-tauri/binaries/
+
+/target-*/
