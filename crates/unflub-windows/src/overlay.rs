@@ -190,6 +190,9 @@ pub struct Correction {
     /// Characters typed after the word in this action (the boundary), so the caret sits that far
     /// past the word.
     pub trailing: usize,
+    /// Backspace can undo it: the pill shows the hint. False after Enter or Tab (see
+    /// [`unflub_core::undoable_boundary`]) and for an undo.
+    pub undoable: bool,
 }
 
 impl Correction {
@@ -204,6 +207,11 @@ impl Correction {
             original: r.original.clone(),
             corrected: r.corrected.clone(),
             trailing,
+            undoable: r
+                .insert
+                .chars()
+                .last()
+                .is_none_or(unflub_core::undoable_boundary),
         }
     }
 
@@ -218,6 +226,7 @@ impl Correction {
             original: r.original.clone(),
             corrected: r.corrected.clone(),
             trailing,
+            undoable: false,
         }
     }
 
@@ -256,12 +265,19 @@ impl Correction {
         }
     }
 
-    /// The keycap (or, after an undo, plain) label at the end of the capsule.
+    /// The keycap (or, after an undo, plain) label at the end of the capsule. Empty for a fix
+    /// that can't be undone.
     pub fn label(&self) -> &'static str {
         match self.kind {
-            CorrectionKind::Fixed => "\u{232B} undo",
+            CorrectionKind::Fixed if self.undoable => "\u{232B} undo",
+            CorrectionKind::Fixed => "",
             CorrectionKind::Undone => "undone",
         }
+    }
+
+    /// The label is drawn as a keycap (the undo hint).
+    pub fn keycap(&self) -> bool {
+        self.kind == CorrectionKind::Fixed && self.undoable
     }
 }
 
@@ -999,7 +1015,7 @@ mod win {
             let renderer = self.renderer.as_ref().expect("renderer just created");
             let scale = dpi / 96.0;
             let texts = renderer.texts(correction)?;
-            let layout = capsule_layout(&texts.metrics, correction.kind == CorrectionKind::Fixed);
+            let layout = capsule_layout(&texts.metrics, correction.keycap());
             let (top, bottom, word) = anchor(spot, correction);
             let Some(placement) = place(
                 self.config.style,
@@ -1432,7 +1448,7 @@ mod win {
                         opts,
                     );
                     rt.DrawTextLayout(at(layout.word_x, layout.text_y), &texts.word, &text, opts);
-                    if correction.kind == CorrectionKind::Fixed {
+                    if correction.keycap() {
                         let key = BoxF {
                             x: cap.x + layout.key.x,
                             y: cap.y + layout.key.y,
@@ -1631,7 +1647,7 @@ mod win {
             word: None,
         };
         let texts = r.texts(correction).map_err(|e| e.to_string())?;
-        let layout = capsule_layout(&texts.metrics, correction.kind == CorrectionKind::Fixed);
+        let layout = capsule_layout(&texts.metrics, correction.keycap());
         let (top, bottom, word) = anchor(&spot, correction);
         let work = Rect {
             left: 0,
@@ -1792,6 +1808,20 @@ mod tests {
             corrected: corrected.into(),
             source: Source::UserRule,
         }
+    }
+
+    /// Review blocker B2: no undo hint after Enter or Tab, where Backspace doesn't undo.
+    #[test]
+    fn no_undo_hint_after_enter_or_tab() {
+        for insert in ["the\n", "the\t"] {
+            let fix = Correction::fixed(&replacement(3, insert, "teh", "the"));
+            assert!(!fix.undoable && !fix.keycap(), "{insert:?}");
+            assert_eq!(fix.label(), "");
+        }
+        let fix = Correction::fixed(&replacement(3, "the.", "teh", "the"));
+        assert!(fix.undoable && fix.keycap());
+        let undo = Correction::undone(&replacement(4, "teh.", "teh", "the"));
+        assert!(!undo.keycap());
     }
 
     #[test]

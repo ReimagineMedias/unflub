@@ -172,6 +172,12 @@ const MARGIN_AT_FULL_CONFIDENCE: f32 = 2.1;
 /// How much likelier (nats) a capitalised word mid-sentence is to be a deliberate name.
 const NAME_BONUS: f32 = 3.0;
 
+/// Can a fix that ended with `boundary` be undone? Not after Enter or Tab: the undo would type
+/// them again, which sends a chat message twice or commits a spreadsheet cell.
+pub fn undoable_boundary(boundary: char) -> bool {
+    !matches!(boundary, '\n' | '\r' | '\t')
+}
+
 fn normalize(word: &str) -> String {
     word.trim().to_lowercase().replace('\u{2019}', "'")
 }
@@ -236,7 +242,11 @@ impl Engine {
                         self.session.pop_n(r.delete);
                         self.session.push_str(&r.insert);
                         self.push_event(Event::Corrected(r.clone()));
-                        self.undo = Some(r.clone());
+                        // Undoing would have to type the boundary again, and Enter or Tab
+                        // may already have sent a message or moved to another cell.
+                        if undoable_boundary(c) {
+                            self.undo = Some(r.clone());
+                        }
                         return Action::Replace(r);
                     }
                 }
@@ -266,6 +276,11 @@ impl Engine {
 
     fn undo(&mut self, r: Replacement) -> Action {
         let boundary = r.insert.chars().last().unwrap_or(' ');
+        if !undoable_boundary(boundary) {
+            // Never reached (no undo is offered after Enter or Tab), and never press them.
+            self.session.pop();
+            return Action::Pass;
+        }
         let mut insert = r.original.clone();
         insert.push(boundary);
         let undo = Replacement {

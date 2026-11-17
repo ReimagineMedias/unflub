@@ -135,6 +135,41 @@ fn undo_without_learning() {
     assert_eq!(t.type_str("teh "), "teh the ");
 }
 
+/// Review blocker B2: Enter may already have sent a chat message or moved to another cell, so
+/// a fix ended by Enter or Tab can't be undone, and an undo never types Enter or Tab.
+#[test]
+fn no_undo_after_enter_or_tab() {
+    for boundary in ['\n', '\t'] {
+        let mut t = Typist::bundled();
+        let typed = t.type_str(&format!("ok teh{boundary}")).to_string();
+        assert_eq!(typed, format!("ok the{boundary}"));
+        t.engine.drain_events();
+        // Backspace is just a Backspace: it deletes the boundary, nothing is retyped.
+        assert_eq!(t.key(Key::Backspace), Action::Pass, "{boundary:?}");
+        assert_eq!(t.text, "ok the");
+        assert!(t.engine.drain_events().is_empty());
+        assert!(!unflub_core::undoable_boundary(boundary));
+    }
+    for boundary in [' ', '.', ',', '!', '?'] {
+        assert!(unflub_core::undoable_boundary(boundary), "{boundary:?}");
+    }
+}
+
+/// Every undo the engine can produce restores the word and a boundary that isn't Enter or Tab.
+#[test]
+fn undos_never_type_enter_or_tab() {
+    for boundary in [' ', '.', ',', ';', '!', '?', ')', '"'] {
+        let mut t = Typist::bundled();
+        t.type_str(&format!("ok teh{boundary}"));
+        if let Action::Undo(r) = t.key(Key::Backspace) {
+            assert!(
+                !r.insert.contains(['\n', '\r', '\t']),
+                "{boundary:?}: {r:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn any_other_key_closes_the_undo_window() {
     let mut t = Typist::bundled();

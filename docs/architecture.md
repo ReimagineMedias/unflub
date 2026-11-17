@@ -39,7 +39,9 @@ app stay the same.
    in order, so fast typing can't interleave with a correction. Mouse clicks aren't held back:
    a click in the few milliseconds before a correction lands moves the caret first.
 5. If the very next key is Backspace, the engine returns `Action::Undo`: the original word comes
-   back and, by default, that word is never corrected again.
+   back and, by default, that word is never corrected again. Not after a fix ended by Enter or
+   Tab: undoing would type Enter or Tab again (a second chat message, the next spreadsheet
+   cell), so that Backspace is just a Backspace and the pill shows no undo hint.
 
 The hook budget is **1 ms per key, worst case**. Anything slower would add input lag, so the
 engine never calls slow APIs on this path.
