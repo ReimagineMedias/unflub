@@ -1,0 +1,26 @@
+---
+/** A neutral Windows-style app window that scenes play in. */
+interface Props {
+  title: string;
+  class?: string;
+  /** Describes the scene for screen readers; the moving parts inside are hidden from them. */
+  label?: string;
+  [key: `data-${string}`]: string | undefined;
+}
+const { title, class: className, label, ...rest } = Astro.props;
+---
+
+<div class:list={["win", className]} role={label ? "img" : undefined} aria-label={label} {...rest}>
+  <div class="win-bar">
+    <span class="app-dot"></span>
+    <span class="title">{title}</span>
+    <span class="win-controls" aria-hidden="true">
+      <i><svg viewBox="0 0 10 10"><path d="M0 5.5h10"></path></svg></i>
+      <i><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" rx="1.5"></rect></svg></i>
+      <i><svg viewBox="0 0 10 10"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9"></path></svg></i>
+    </span>
+  </div>
+  <div class="win-body">
+    <slot />
+  </div>
+</div>

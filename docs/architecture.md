@@ -15,7 +15,7 @@ crates/unflub-windows   Windows adapter: keyboard hook, text injection, Windows 
 crates/unflub-engine    unflub-engine.exe (hook, engine, pill) and the pipe protocol. No network code.
 app/                    Tauri 2 app, unflub.exe: tray, settings, tour, updates, stats, crash reports.
                         Starts and supervises unflub-engine.exe.
-site/                   unflub.rmgn.net (coming)
+site/                   unflub.rmgn.net (Astro, static)
 ```
 
 macOS and Linux get their own adapter crates (`unflub-macos`, `unflub-linux`). The core and the

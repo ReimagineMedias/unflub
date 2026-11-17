@@ -1,0 +1,871 @@
+---
+/**
+ * The real settings window (desktop-app/app/src), rebuilt as static HTML with the app's own theme tokens.
+ * A small script makes the nav, themes, switches and pill styles respond.
+ */
+import Window from "./Window.astro";
+import DemoToggle from "./DemoToggle.astro";
+import Mark from "./Mark.astro";
+import Pill from "./Pill.astro";
+
+const pages = [
+  { id: "general", label: "General", icon: "M4 6h12M4 10h12M4 14h7" },
+  { id: "correction", label: "Correction", icon: "M5 10.5l3 3 7-8" },
+  { id: "appearance", label: "Appearance", icon: "M10 3a7 7 0 1 0 0 14c1 0 1.5-.8 1.2-1.7-.4-1 .3-2 1.3-2H15a3 3 0 0 0 2-3A7 7 0 0 0 10 3Z" },
+  { id: "apps", label: "Apps", icon: "M4 4h5v5H4zM11 4h5v5h-5zM4 11h5v5H4zM11 11h5v5h-5z" },
+  { id: "dictionary", label: "Dictionary", icon: "M5 4h8a2 2 0 0 1 2 2v10H7a2 2 0 0 1-2-2V4Zm0 10a2 2 0 0 1 2-2h8" },
+  { id: "stats", label: "Stats", icon: "M4 16v-5M10 16V4M16 16V8" },
+  { id: "about", label: "About", icon: "M10 9v5M10 6.5v.01M10 17a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z" },
+];
+const start = "appearance";
+
+const themes = [
+  { id: "unflub", name: "unflub", note: "default", swatch: ["#2D1916", "#79453A", "#B06A5C"], bg: "#F2E6E3" },
+  { id: "paper", name: "Paper", note: "rmgn", swatch: ["#292827", "#4e4843", "#a77a55"], bg: "#e7e2da" },
+  { id: "ink", name: "Quiet ink", note: "dark", swatch: ["#ededef", "#8a8f98", "#c69c72"], bg: "#121214" },
+  { id: "system", name: "System", note: "os accent", swatch: ["#005fb8", "#1b1b1b", "#ffffff"], bg: "linear-gradient(135deg,#dfe7f2,#ece6f0)" },
+];
+
+const pillStyles = [
+  { value: "underline-capsule", label: "Underline + capsule" },
+  { value: "capsule", label: "Capsule" },
+  { value: "underline", label: "Underline" },
+  { value: "off", label: "Nothing" },
+];
+
+const engines = [
+  { value: "both", label: "Windows + unflub", hint: "Windows spots the typo, unflub's own ranking picks the fix. Fewest wrong fixes." },
+  { value: "system-only", label: "Windows only", hint: "Only words Windows underlines in red get fixed." },
+  { value: "bundled-only", label: "unflub only", hint: "unflub's built-in dictionary only. Works the same on every computer." },
+  { value: "aggressive", label: "Aggressive", hint: "Fixes anything either engine flags, like a phone. More fixes, more surprises." },
+];
+
+const words = ["RMGN", "Ines", "Kubernetes", "poutine", "Saoirse"];
+const rules: [string, string][] = [
+  ["omw", "on my way"],
+  ["brb", "be right back"],
+  ["tyvm", "thank you very much"],
+];
+const mostCorrected: [string, string, number][] = [
+  ["teh", "the", 31],
+  ["recieve", "receive", 12],
+  ["definately", "definitely", 9],
+  ["thier", "their", 7],
+];
+const apps = ["windowsterminal.exe", "powershell.exe", "cmd.exe", "wsl.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe"];
+---
+
+<section id="settings" class="settings chapter-block" aria-labelledby="settings-title">
+  <div class="wrap">
+    <header class="section-head center">
+      <h2 id="settings-title" class="chapter">Make it yours.</h2>
+      <p class="lead">
+        Four themes, four ways to show a fix, an engine you can tune, your own words. On first run a short tour lets you try a
+        fix before you type anywhere else, and the Stats page counts what unflub fixed this week, on your computer only. Try it
+        here: this is the settings window, rebuilt for the web.
+      </p>
+    </header>
+
+    <Window title="unflub settings" class="settings-win">
+      <div class="app" data-theme="unflub" data-mode="light" data-settings>
+        <nav class="app-nav" aria-label="Settings pages (demo)">
+          <div class="app-brand"><Mark /><span>unflub</span></div>
+          {
+            pages.map((p) => (
+              <button type="button" data-page={p.id} aria-current={p.id === start ? "page" : undefined}>
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d={p.icon} />
+                </svg>
+                {p.label}
+              </button>
+            ))
+          }
+          <span class="app-spacer"></span>
+          <div class="app-status"><span class="dot"></span>Fixing typos</div>
+        </nav>
+
+        <div class="app-main">
+          <div class="app-page" data-panel="general" hidden>
+            <h3 class="app-h">General</h3>
+            <p class="app-lead">unflub lives in your tray and fixes words the moment you finish them, in any app.</p>
+            <div class="card">
+              <div class="row">
+                <div class="label"><span>Autocorrect</span><small>Also in the tray menu. While paused, unflub doesn't read your keys at all.</small></div>
+                <button type="button" class="switch" role="switch" aria-checked="true" aria-label="Autocorrect"></button>
+              </div>
+              <div class="row">
+                <div class="label"><span>Start at login</span><small>Starts quietly in the tray.</small></div>
+                <button type="button" class="switch" role="switch" aria-checked="true" aria-label="Start at login"></button>
+              </div>
+              <div class="row">
+                <div class="label"><span>Check for updates</span><small>Once a day. Sends the app and Windows version, never what you type.</small></div>
+                <button type="button" class="switch" role="switch" aria-checked="true" aria-label="Check for updates"></button>
+              </div>
+              <div class="row">
+                <div class="label"><span>Anonymous usage stats and crash reports</span><small>Counts like fixes per day. Never what you type.</small></div>
+                <button type="button" class="switch" role="switch" aria-checked="true" aria-label="Anonymous usage stats and crash reports"></button>
+              </div>
+              <div class="row">
+                <div class="label"><span>Undo teaches unflub</span><small>Backspace right after a fix restores your word and stops fixing it.</small></div>
+                <button type="button" class="switch" role="switch" aria-checked="true" aria-label="Undo teaches unflub"></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="app-page" data-panel="correction" hidden>
+            <h3 class="app-h">Correction</h3>
+            <p class="app-lead">Decide who spots a typo and how sure unflub must be before it changes a word.</p>
+            <div class="card">
+              <div class="row stack">
+                <div class="label"><span>Engine</span><small data-engine-hint>{engines[0]?.hint}</small></div>
+                <div class="seg" role="group" aria-label="Engine" data-engine>
+                  {
+                    engines.map((e, i) => (
+                      <button type="button" aria-pressed={i === 0 ? "true" : "false"} data-value={e.value} data-hint={e.hint}>
+                        {e.label}
+                      </button>
+                    ))
+                  }
+                </div>
+              </div>
+              <div class="row">
+                <div class="label"><span>Confidence</span><small>Cautious leaves ambiguous words alone. Eager fixes more.</small></div>
+                <div class="slider">
+                  <input id="demo-confidence" type="range" min="0" max="1" step="0.05" value="0.6" aria-label="Confidence" data-confidence />
+                  <output for="demo-confidence">balanced</output>
+                </div>
+              </div>
+              <div class="row">
+                <div class="label"><span>Leave code alone</span><small>Skips camelCase, snake_case, paths, links and anything in `backticks`.</small></div>
+                <button type="button" class="switch" role="switch" aria-checked="true" aria-label="Leave code alone"></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="app-page" data-panel="appearance">
+            <h3 class="app-h">Appearance</h3>
+            <p class="app-lead">How unflub looks, and how it tells you it fixed something.</p>
+            <div class="app-title">Theme</div>
+            <div class="themes" role="group" aria-label="Theme">
+              {
+                themes.map((t) => (
+                  <button type="button" class="theme-card" aria-pressed={t.id === "unflub" ? "true" : "false"} data-theme-pick={t.id}>
+                    <span class="swatch" style={`background:${t.bg}`}>
+                      {t.swatch.map((c) => (
+                        <i style={`background:${c}`} />
+                      ))}
+                    </span>
+                    <span class="name">
+                      {t.name}
+                      <small>{t.note}</small>
+                    </span>
+                  </button>
+                ))
+              }
+            </div>
+            <div class="app-title">After a fix</div>
+            <div class="card">
+              <div class="row stack">
+                <div class="label"><span>Show</span><small>The capsule never takes focus, and clicks pass through it.</small></div>
+                <div class="seg" role="group" aria-label="Show after a fix" data-pill-style>
+                  {
+                    pillStyles.map((p, i) => (
+                      <button type="button" aria-pressed={i === 0 ? "true" : "false"} data-value={p.value}>
+                        {p.label}
+                      </button>
+                    ))
+                  }
+                </div>
+                <div class="preview" aria-hidden="true">
+                  <div class="field" data-script="I type fast and most {issuses|issues} get caught, but {teh|the} fix never landed. Now it does, {liek|like} magic.">
+                    <span class="ink">I type fast and most <span class="fx lit">issues<Pill from="issuses" to="issues" /></span> get caught</span>
+                    <span class="pill"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="row">
+                <div class="label"><span>Light or dark</span></div>
+                <div class="seg" role="group" aria-label="Light or dark" data-mode-pick>
+                  <button type="button" aria-pressed="true" data-value="auto">Match system</button>
+                  <button type="button" aria-pressed="false" data-value="light">Light</button>
+                  <button type="button" aria-pressed="false" data-value="dark">Dark</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="app-page" data-panel="apps" hidden>
+            <h3 class="app-h">Apps</h3>
+            <p class="app-lead">unflub stays off in these apps. Password fields are always skipped.</p>
+            <div class="card">
+              <div class="row stack">
+                <div class="label"><span>Never fix in</span><small>The program's file name, like code.exe or windowsterminal.exe.</small></div>
+                <div class="chips">{apps.map((a) => <span class="chip">{a}</span>)}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="app-page" data-panel="dictionary" hidden>
+            <h3 class="app-h">Dictionary</h3>
+            <p class="app-lead">Words unflub should leave alone, and shortcuts it should expand.</p>
+            <div class="card">
+              <div class="row stack">
+                <div class="label"><span>Your words</span><small>Names, slang, product names. Words you undo land here too.</small></div>
+                <div class="chips" data-words>{words.map((w) => <span class="chip">{w}</span>)}</div>
+                <form class="add" data-add-word>
+                  <input type="text" placeholder="Add a word" aria-label="Add a word (demo)" maxlength="32" autocomplete="off" spellcheck="false" />
+                  <button type="submit" class="app-btn">Add</button>
+                </form>
+              </div>
+              <div class="row stack">
+                <div class="label"><span>Shortcuts</span><small>Typed exactly, then replaced when you finish the word.</small></div>
+                <div class="rules">
+                  {
+                    rules.map(([from, to]) => (
+                      <div class="rule">
+                        <span class="in mono">{from}</span>
+                        <span class="arrow" aria-hidden="true">→</span>
+                        <span class="in">{to}</span>
+                      </div>
+                    ))
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="app-page" data-panel="stats" hidden>
+            <h3 class="app-h">Stats</h3>
+            <p class="app-lead">Counted on this computer. This page is never sent anywhere.</p>
+            <div class="tally">
+              <div class="card tile"><b>214</b><small>corrections this week</small></div>
+              <div class="card tile"><b>1,180</b><small>keystrokes saved</small></div>
+            </div>
+            <div class="card">
+              <div class="row stack">
+                <div class="label"><span>Most corrected</span><small>The words your fingers trip on most.</small></div>
+                <div class="rules">
+                  {
+                    mostCorrected.map(([from, to, n]) => (
+                      <div class="rule counted">
+                        <span class="in mono">{from}</span>
+                        <span class="arrow" aria-hidden="true">→</span>
+                        <span class="in">{to}</span>
+                        <span class="count">{n}</span>
+                      </div>
+                    ))
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="app-page" data-panel="about" hidden>
+            <h3 class="app-h">About</h3>
+            <div class="card">
+              <div class="row">
+                <div class="label"><span>unflub 0.1.0</span><small>Phone-style autocorrect for every text field.</small></div>
+              </div>
+              <div class="row">
+                <div class="label"><span>Private by design</span><small>Nothing you type is sent anywhere. unflub counts how it's used, never what you write.</small></div>
+              </div>
+              <div class="row">
+                <div class="label"><span>Open source</span><small>MIT licensed. An RMGN product.</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Window>
+    <div class="demo-row"><DemoToggle name="settings" /></div>
+  </div>
+</section>
+
+<script>
+  import "../scripts/settings";
+</script>
+
+<style>
+  .demo-row {
+    display: flex;
+    justify-content: flex-end;
+    max-width: 1040px;
+    margin: 12px auto 0;
+  }
+
+  .settings :global(.settings-win) {
+    max-width: 1040px;
+    height: clamp(560px, 60vw, 660px);
+    margin-inline: auto;
+  }
+
+  /* Theme tokens, copied from desktop-app/app/src/styles.css. */
+  .app {
+    --font: "Manrope Variable", "Manrope Fallback", "Segoe UI Variable Text", system-ui, sans-serif;
+    --radius: 12px;
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 212px 1fr;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.5 var(--font);
+    letter-spacing: 0;
+    transition:
+      background-color 0.25s ease,
+      color 0.25s ease;
+  }
+
+  .app[data-theme="unflub"][data-mode="light"] {
+    --bg: #f2e6e3; --surface: #fbf5f3; --raised: #ffffff; --ink: #2d1916; --muted: #79453a;
+    --accent: #b06a5c; --accent-ink: #fbf5f3; --line: rgba(45, 25, 22, 0.11); --hover: rgba(45, 25, 22, 0.05);
+    --pill-bg: #2d1916; --pill-ink: #f2e6e3; --pill-key: #e0a595;
+  }
+  .app[data-theme="unflub"][data-mode="dark"] {
+    --bg: #2d1916; --surface: #3a231f; --raised: #452b26; --ink: #f2e6e3; --muted: #c9a59c;
+    --accent: #d08a7b; --accent-ink: #2d1916; --line: rgba(242, 230, 227, 0.1); --hover: rgba(242, 230, 227, 0.05);
+    --pill-bg: #f2e6e3; --pill-ink: #2d1916; --pill-key: #79453a;
+  }
+  .app[data-theme="paper"][data-mode="light"] {
+    --bg: #e7e2da; --surface: #f3efe9; --raised: #fbf9f6; --ink: #292827; --muted: #4e4843;
+    --accent: #a77a55; --accent-ink: #fbf9f6; --line: rgba(41, 40, 39, 0.12); --hover: rgba(41, 40, 39, 0.05);
+    --pill-bg: #292827; --pill-ink: #e7e2da; --pill-key: #c69c72;
+  }
+  .app[data-theme="paper"][data-mode="dark"] {
+    --bg: #292827; --surface: #33312f; --raised: #3d3b38; --ink: #e7e2da; --muted: #b3aaa1;
+    --accent: #c69c72; --accent-ink: #292827; --line: rgba(231, 226, 218, 0.1); --hover: rgba(231, 226, 218, 0.05);
+    --pill-bg: #e7e2da; --pill-ink: #292827; --pill-key: #a77a55;
+  }
+  .app[data-theme="ink"][data-mode="light"] {
+    --bg: #f4f4f5; --surface: #ffffff; --raised: #ffffff; --ink: #121214; --muted: #5b5f68;
+    --accent: #a77a55; --accent-ink: #ffffff; --line: rgba(18, 18, 20, 0.09); --hover: rgba(18, 18, 20, 0.04);
+    --pill-bg: rgba(18, 18, 20, 0.88); --pill-ink: #ededef; --pill-key: #c69c72;
+  }
+  .app[data-theme="ink"][data-mode="dark"] {
+    --bg: #121214; --surface: #1b1c20; --raised: #23242a; --ink: #ededef; --muted: #8a8f98;
+    --accent: #c69c72; --accent-ink: #121214; --line: rgba(237, 237, 239, 0.08); --hover: rgba(237, 237, 239, 0.04);
+    --pill-bg: rgba(237, 237, 239, 0.1); --pill-ink: #ededef; --pill-key: #c69c72;
+  }
+  .app[data-theme="system"][data-mode="light"] {
+    --bg: #ece9f1; --surface: rgba(255, 255, 255, 0.62); --raised: rgba(255, 255, 255, 0.85); --ink: #1b1b1b; --muted: #5d5d5d;
+    --accent: #005fb8; --accent-ink: #ffffff; --line: rgba(0, 0, 0, 0.07); --hover: rgba(0, 0, 0, 0.035);
+    --pill-bg: rgba(249, 249, 249, 0.78); --pill-ink: #1b1b1b; --pill-key: #005fb8;
+  }
+  .app[data-theme="system"][data-mode="dark"] {
+    --bg: #202020; --surface: rgba(43, 43, 43, 0.6); --raised: rgba(55, 55, 55, 0.8); --ink: #ffffff; --muted: #c5c5c5;
+    --accent: #60cdff; --accent-ink: #000000; --line: rgba(255, 255, 255, 0.07); --hover: rgba(255, 255, 255, 0.04);
+    --pill-bg: rgba(44, 44, 44, 0.78); --pill-ink: #ffffff; --pill-key: #60cdff;
+  }
+  .app[data-theme="system"] {
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+
+  .app button,
+  .app input {
+    font: inherit;
+    color: inherit;
+  }
+
+  .app :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .app-nav {
+    padding: 22px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-right: 1px solid var(--line);
+    min-height: 0;
+  }
+
+  .app-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 2px 10px 20px;
+    font-weight: 700;
+    font-size: 19px;
+    letter-spacing: -0.02em;
+  }
+
+  .app-brand :global(svg) {
+    width: 26px;
+    height: 26px;
+  }
+
+  .app-nav button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 0;
+    background: none;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--muted);
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .app-nav button svg {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    opacity: 0.8;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .app-nav button:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+
+  .app-nav button[aria-current="page"] {
+    background: var(--surface);
+    color: var(--ink);
+    font-weight: 600;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+
+  .app-spacer {
+    flex: 1;
+  }
+
+  .app-status {
+    margin: 0 4px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: 0 0 0 1px var(--line);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    font-size: 12.5px;
+  }
+
+  .app-status .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  .app-main {
+    overflow-y: auto;
+    padding: 30px 36px 40px;
+    min-height: 0;
+  }
+
+  .app-h {
+    margin: 0 0 4px;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .app-lead {
+    margin: 0 0 22px;
+    color: var(--muted);
+    max-width: 60ch;
+  }
+
+  .app-title {
+    margin: 26px 0 8px;
+    font: 12px/1 var(--mono);
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+  .app-page > .app-title:first-of-type {
+    margin-top: 0;
+  }
+
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: 0 0 0 1px var(--line);
+    overflow: hidden;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 14px 18px;
+    min-height: 60px;
+  }
+
+  .row + .row {
+    border-top: 1px solid var(--line);
+  }
+
+  .label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .label span {
+    font-weight: 600;
+  }
+
+  .label small {
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+
+  .row.stack {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .switch {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    border-radius: 999px;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    flex: none;
+    background: color-mix(in srgb, var(--ink) 18%, transparent);
+    transition: background 0.2s var(--ease);
+  }
+
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--raised);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transition: transform 0.22s var(--ease);
+  }
+
+  .switch[aria-checked="true"] {
+    background: var(--accent);
+  }
+
+  .switch[aria-checked="true"]::after {
+    transform: translateX(18px);
+    background: var(--accent-ink);
+  }
+
+  .seg {
+    display: inline-flex;
+    align-self: flex-start;
+    padding: 3px;
+    gap: 2px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    flex-wrap: wrap;
+  }
+
+  .seg button {
+    border: 0;
+    background: none;
+    padding: 6px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    color: var(--muted);
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .seg button:hover {
+    color: var(--ink);
+  }
+
+  .seg button[aria-pressed="true"] {
+    background: var(--raised);
+    color: var(--ink);
+    font-weight: 600;
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.12),
+      0 0 0 1px var(--line);
+  }
+
+  .slider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 240px;
+  }
+
+  .slider input {
+    flex: 1;
+    accent-color: var(--accent);
+  }
+
+  .slider output {
+    font: 12px var(--mono);
+    color: var(--muted);
+    min-width: 64px;
+    text-align: right;
+  }
+
+  .themes {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+  }
+
+  .theme-card {
+    border: 0;
+    padding: 0;
+    border-radius: 12px;
+    cursor: pointer;
+    text-align: left;
+    background: var(--surface);
+    box-shadow: 0 0 0 1px var(--line);
+    overflow: hidden;
+    transition:
+      box-shadow 0.15s,
+      transform 0.15s var(--ease);
+  }
+
+  .theme-card:hover {
+    transform: translateY(-1px);
+  }
+
+  .theme-card[aria-pressed="true"] {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+
+  .swatch {
+    height: 64px;
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    padding: 10px;
+  }
+
+  .swatch i {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+  }
+
+  .name {
+    padding: 10px 12px;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .name small {
+    font: 11px var(--mono);
+    color: var(--muted);
+    font-weight: 400;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .chips :global(.chip) {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--raised);
+    box-shadow: 0 0 0 1px var(--line);
+    font: 12.5px var(--mono);
+  }
+
+  .add {
+    display: flex;
+    gap: 8px;
+  }
+
+  .add input,
+  .rule .in {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 12px;
+    border-radius: 9px;
+    border: 0;
+    background: var(--raised);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  .add input:focus {
+    outline: none;
+    box-shadow: inset 0 0 0 1.5px var(--accent);
+  }
+
+  .app-btn {
+    border: 0;
+    padding: 8px 14px;
+    border-radius: 9px;
+    cursor: pointer;
+    background: var(--accent);
+    color: var(--accent-ink) !important;
+    font-weight: 600;
+  }
+
+  .rules {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .rule {
+    display: grid;
+    grid-template-columns: 1fr 18px 1.6fr;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .rule .mono {
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+
+  .rule .arrow {
+    color: var(--muted);
+    text-align: center;
+  }
+
+  .rule.counted {
+    grid-template-columns: 1fr 18px 1.6fr 3ch;
+  }
+
+  .rule .count {
+    font: 13px/1 var(--mono);
+    color: var(--muted);
+    text-align: right;
+  }
+
+  .tally {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .tile {
+    display: grid;
+    gap: 2px;
+    padding: 16px 18px;
+  }
+
+  .tile b {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tile small {
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+
+  /* Live pill preview, as in PillPreview.tsx, with the theme's pill colours. */
+  .preview {
+    position: relative;
+    padding: 44px 18px 18px;
+    border-radius: 10px;
+    background: var(--raised);
+    box-shadow: inset 0 0 0 1px var(--line);
+    font-size: 15px;
+    line-height: 1.8;
+    min-height: 112px;
+    color: var(--ink);
+  }
+
+  .preview .field {
+    --win-ink: var(--ink);
+    --pill-size: 12px;
+    color: var(--ink);
+  }
+
+  .preview :global(.pill) {
+    background: var(--pill-bg);
+    color: var(--pill-ink);
+    backdrop-filter: blur(18px) saturate(1.5);
+  }
+
+  .preview :global(.pill s),
+  .preview :global(.pill .arr) {
+    color: color-mix(in srgb, var(--pill-ink) 68%, transparent);
+  }
+
+  .preview :global(.pill kbd),
+  .preview :global(.pill .done) {
+    color: var(--pill-key);
+  }
+
+  .preview :global(.pill kbd) {
+    background: color-mix(in srgb, var(--pill-key) 16%, transparent);
+  }
+
+  .preview :global(.fx::after) {
+    background: var(--accent);
+  }
+
+  @media (max-width: 760px) {
+    /* Phones: the window grows with its page instead of scrolling inside itself, so swipes scroll the site. */
+    .settings :global(.settings-win) {
+      height: auto;
+      min-height: 560px;
+    }
+
+    .app {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr;
+      min-height: 0;
+    }
+
+    .app-nav {
+      flex-direction: row;
+      overflow-x: auto;
+      padding: 10px;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+      scrollbar-width: none;
+    }
+
+    .app-brand,
+    .app-spacer,
+    .app-status {
+      display: none;
+    }
+
+    .app-nav button {
+      flex: none;
+    }
+
+    .app-main {
+      overflow: visible;
+      padding: 20px 16px 28px;
+    }
+
+    .row:not(.stack) {
+      flex-wrap: wrap;
+    }
+
+    .slider {
+      min-width: 0;
+      width: 100%;
+    }
+  }
+</style>
