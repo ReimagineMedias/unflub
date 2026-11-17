@@ -132,6 +132,14 @@ test("unknown paths get the 404 page, which is not indexed", async () => {
   assert.equal(doc.querySelectorAll("h1").length, 1);
 });
 
+test("the night nav copy never hides the real nav's focus ring", () => {
+  const doc = pages.get("/");
+  const night = doc.querySelector(".pill-nav.night");
+  assert.ok(night?.hasAttribute("inert") && night.getAttribute("aria-hidden") === "true", "night nav is inert and hidden");
+  const css = doc.querySelectorAll("style").map((s) => s.textContent).join("\n");
+  assert.match(css, /:focus-within \.night[^{]*\{visibility:hidden\}/, "night nav steps aside on focus");
+});
+
 test("robots.txt points at the sitemap", async () => {
   const res = await fetch(`${base}/robots.txt`);
   assert.equal(res.status, 200);

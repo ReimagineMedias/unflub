@@ -81,6 +81,13 @@ const links = [
     opacity: 1;
   }
 
+  /* The overlay never covers the real nav while someone is using it: on keyboard focus or pointer hover it steps
+     aside, so the focus ring and hover state always show. Visibility, because the scroll animation owns opacity. */
+  .site-header:focus-within .night,
+  .site-header:has(.day:hover) .night {
+    visibility: hidden;
+  }
+
   @supports (animation-timeline: view()) {
     @media (prefers-reduced-motion: no-preference) {
       .night {

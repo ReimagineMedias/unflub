@@ -64,7 +64,7 @@ const beacon = beaconToken ? JSON.stringify({ token: beaconToken }) : undefined;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    <link rel="canonical" href={canonical} />
+    {!noindex && <link rel="canonical" href={canonical} />}
     {noindex && <meta name="robots" content="noindex" />}
     <link rel="preload" href={manrope} as="font" type="font/woff2" crossorigin />
 

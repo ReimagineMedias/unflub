@@ -143,7 +143,7 @@ const steps = [
   </div>
     </div>
     <div class="names" role="group" aria-label="Jump to an app">
-      {steps.map((s, i) => <button type="button" data-goto={i} class:list={{ on: i === 0 }}>{s.name}</button>)}
+      {steps.map((s, i) => <button type="button" data-goto={i} class:list={{ on: i === 0 }} aria-pressed={i === 0 ? "true" : "false"}>{s.name}</button>)}
     </div>
   </div>
 </section>

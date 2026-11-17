@@ -37,7 +37,10 @@ if (section) {
     if (i === current) return;
     current = i;
     figures.forEach((f, n) => f.classList.toggle("is-active", n === i));
-    names.forEach((b, n) => b.classList.toggle("on", n === i));
+    names.forEach((b, n) => {
+      b.classList.toggle("on", n === i);
+      b.setAttribute("aria-pressed", String(n === i));
+    });
     void play(i);
   };
 
