@@ -4976,6 +4976,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "unflub-engine"
+version = "0.1.0"
+dependencies = [
+ "backtrace",
+ "embed-resource",
+ "findshlibs",
+ "serde",
+ "serde_json",
+ "unflub-core",
+ "unflub-windows",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "unflub-windows"
 version = "0.1.0"
 dependencies = [
