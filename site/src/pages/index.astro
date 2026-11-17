@@ -1,0 +1,38 @@
+---
+import Base from "../layouts/Base.astro";
+import Hero from "../components/Hero.astro";
+import CloseUp from "../components/CloseUp.astro";
+import Everywhere from "../components/Everywhere.astro";
+import Undo from "../components/Undo.astro";
+import Speed from "../components/Speed.astro";
+import Privacy from "../components/Privacy.astro";
+import Settings from "../components/Settings.astro";
+import Compare from "../components/Compare.astro";
+import Faq from "../components/Faq.astro";
+import FinalCta from "../components/FinalCta.astro";
+import Guides from "../components/Guides.astro";
+import { faqPage, softwareApplication, website } from "../data/schema";
+import "../styles/scenes.css";
+---
+
+<Base
+  title="unflub: free phone-style autocorrect for any app on your Windows PC"
+  description="unflub is system-wide autocorrect for Windows: it fixes a typo the moment you finish the word, in any app. Free, open source, and nothing you type leaves your PC."
+  schema={[website, softwareApplication, faqPage]}
+>
+  <Hero />
+  <CloseUp />
+  <!-- Night: the page sinks to near-black for the product story, then daylight returns for settings and questions. -->
+  <span class="dusk" aria-hidden="true"></span>
+  <div class="story night">
+    <Everywhere />
+    <Undo />
+    <Speed />
+    <Privacy />
+  </div>
+  <Settings />
+  <Compare />
+  <Faq />
+  <Guides />
+  <FinalCta />
+</Base>
