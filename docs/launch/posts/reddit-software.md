@@ -30,8 +30,8 @@ Rules read 2026-11-17:
 ---
 
 A while back someone here asked for software "that corrects your typing on the fly while you're typing it",
-not a spell checker you run afterwards. I wanted the same
-thing and couldn't find one I trusted with a keyboard hook, so I built it.
+not a spell checker you run afterwards. I wanted the same thing and couldn't find one I trusted with a
+keyboard hook, so I built it.
 
 **What it does.** You finish a word, and if it was a typo, it's fixed before your next key lands. Backspace
 right after a fix brings your word back, and unflub won't fix that word again.
