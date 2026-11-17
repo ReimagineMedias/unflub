@@ -68,6 +68,10 @@ import { PERFORMANCE } from "../data/performance";
     @media (prefers-reduced-motion: no-preference) {
       .num {
         animation: weigh linear both;
+      }
+
+      /* Separate rule so the timeline is not folded into the shorthand. */
+      .stats .num {
         animation-timeline: view();
         animation-range: entry 20% cover 45%;
       }

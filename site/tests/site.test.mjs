@@ -153,6 +153,20 @@ test("security headers are set and no page needs an inline script", async () => 
   assert.match(cached.headers.get("cache-control") ?? "", /immutable/);
 });
 
+test("scroll-driven animations keep their timeline out of the animation shorthand", () => {
+  // Browsers reject `animation: ... view()`; the minifier produces it if one rule sets both.
+  const css = (path) =>
+    pages
+      .get(path)
+      .querySelectorAll("style")
+      .map((s) => s.textContent)
+      .join("\n");
+  for (const path of pages.keys()) {
+    assert.doesNotMatch(css(path), /animation:[^;}]*(view\(|scroll\()/, `${path} folds a timeline into the shorthand`);
+  }
+  assert.match(css("/"), /animation-timeline:scroll\(root\)/);
+});
+
 test("wrangler config serves dist on the custom domain", () => {
   const text = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8")
     .replace(/^\s*\/\/.*$/gm, "")

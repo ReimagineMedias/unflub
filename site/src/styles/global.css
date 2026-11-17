@@ -186,7 +186,7 @@ code {
 
 /* Type scale: display, chapter, section, lead, body, small. */
 .display {
-  font-size: clamp(3.25rem, 9.2vw, 8.25rem);
+  font-size: clamp(3.25rem, 6.2vw, 6.25rem);
   line-height: 0.92;
   font-weight: 780;
   letter-spacing: -0.055em;

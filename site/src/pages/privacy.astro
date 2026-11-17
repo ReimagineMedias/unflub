@@ -5,7 +5,7 @@ import { SITE } from "../data/site";
 
 <Subpage
   title="Privacy: unflub collects nothing"
-  description="unflub runs offline. No account, no telemetry, no analytics. What the app and this website do and do not collect, in plain words."
+  description="unflub works offline and never sends what you type. No account, no telemetry, no analytics. What the app and this website collect, in plain words."
   crumb="Privacy"
 >
   <h1>We collect nothing.</h1>
@@ -27,8 +27,9 @@ import { SITE } from "../data/site";
       you can delete that file at any time.
     </li>
     <li>
-      To tell you about a new version, unflub asks GitHub for the latest release. That request carries nothing you typed and no
-      identifier.
+      The only network request unflub makes is an optional update check: once a day it asks GitHub whether a new version is
+      out. That request carries nothing you typed, no account and no identifier. Turn it off in Settings, under General, and
+      unflub never goes online.
     </li>
   </ul>
 

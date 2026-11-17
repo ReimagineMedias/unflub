@@ -17,7 +17,7 @@ export const ROWS: { name: string; cells: Cell[]; ours?: boolean }[] = [
     ours: true,
     cells: [
       { mark: "yes" },
-      { mark: "yes" },
+      { mark: "yes", note: "Optional daily update check" },
       { mark: "yes" },
       { mark: "yes", note: "MIT" },
       { mark: "yes" },

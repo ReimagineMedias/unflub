@@ -1,8 +1,9 @@
 name: Site
 
 # unflub.rmgn.ca: check, build and test on pull requests; deploy to Cloudflare from main.
-# Deploying needs two repository secrets: CLOUDFLARE_API_TOKEN (Workers Scripts edit, plus
-# Workers Routes / DNS edit on the rmgn.ca zone for the custom domain) and CLOUDFLARE_ACCOUNT_ID.
+# Deploying needs two secrets on the production environment or repository: CLOUDFLARE_ACCOUNT_ID and
+# CLOUDFLARE_API_TOKEN, scoped to Account > Workers Scripts:Edit and Zone (rmgn.ca) > Workers Routes:Edit
+# + DNS:Edit only. Third-party actions are pinned to commit SHAs; update the SHA and the tag comment together.
 
 on:
   pull_request:
@@ -34,8 +35,8 @@ jobs:
       run:
         working-directory: site
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -51,8 +52,8 @@ jobs:
         run: npm test
       - id: dry
         name: Deploy dry run
-        run: npx wrangler deploy --dry-run
-      - uses: actions/upload-artifact@v4
+        run: npx --no-install wrangler deploy --dry-run
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'push'
         with:
           name: site-dist
@@ -84,25 +85,25 @@ jobs:
       name: production
       url: https://unflub.rmgn.ca
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         working-directory: site
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: site-dist
           path: site/dist
+      # The wrangler pinned in site/package-lock.json; the token is only exposed to this step.
       - id: deploy
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: site
-          command: deploy
+        working-directory: site
+        run: npx --no-install wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Summary
         if: always()
         run: |

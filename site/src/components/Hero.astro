@@ -86,7 +86,7 @@ const chats = [
 
 <style>
   .hero {
-    padding-top: clamp(40px, 6.5vw, 88px);
+    padding-top: clamp(24px, 2.2vw, 32px);
     overflow: clip;
   }
 
@@ -94,7 +94,7 @@ const chats = [
     display: grid;
     justify-items: center;
     text-align: center;
-    gap: 28px;
+    gap: 20px;
   }
 
   h1 span {
@@ -124,7 +124,13 @@ const chats = [
   }
 
   .lead {
-    max-width: 36em;
+    max-width: 38em;
+    font-size: 1.25rem;
+  }
+
+  /* The scene reads at share size: slightly larger than a real chat app. */
+  .track :global(.msg p) {
+    font-size: 16px;
   }
 
   @media (max-width: 600px) {
@@ -139,40 +145,44 @@ const chats = [
   }
 
   .fine {
-    margin-top: -8px;
+    margin-top: -6px;
   }
 
   .stage {
-    margin-top: clamp(48px, 5.5vw, 72px);
+    margin-top: clamp(24px, 1.7vw, 24px);
     padding-bottom: clamp(72px, 12vw, 160px);
     perspective: 1600px;
   }
 
   @supports (animation-timeline: view()) {
     @media (prefers-reduced-motion: no-preference) {
+      /* At rest on load; grows to full size over the first scroll, transform only.
+         The timeline sits in its own, more specific rule: the minifier would otherwise fold it into
+         the animation shorthand, which browsers reject. */
       .stage :global(.chat) {
         animation: settle linear both;
-        animation-timeline: view();
-        animation-range: entry 10% cover 42%;
         transform-origin: 50% 0%;
+      }
+
+      .hero .stage :global(.chat) {
+        animation-timeline: scroll(root);
+        animation-range: 0px 360px;
       }
     }
   }
 
   @keyframes settle {
     from {
-      transform: rotateX(9deg) scale(0.93);
-      opacity: 0.7;
+      transform: scale(0.95);
     }
     to {
       transform: none;
-      opacity: 1;
     }
   }
 
   .stage :global(.chat) {
-    height: clamp(460px, 56vw, 620px);
-    max-width: 1120px;
+    height: 410px;
+    max-width: 1080px;
     margin-inline: auto;
   }
 
@@ -347,8 +357,8 @@ const chats = [
   .composer .field {
     flex: 1;
     min-width: 0;
-    font-size: 16px;
-    --pill-size: 13px;
+    font-size: 18px;
+    --pill-size: 15px;
   }
 
   .send {
@@ -368,6 +378,10 @@ const chats = [
   }
 
   @media (max-width: 760px) {
+    .stage :global(.chat) {
+      height: 460px;
+    }
+
     .side {
       display: none;
     }

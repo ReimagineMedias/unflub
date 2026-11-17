@@ -6,7 +6,11 @@ export const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Does unflub see my passwords?",
-    a: "No. unflub skips password fields, and password managers such as KeePass, KeePassXC, 1Password and Bitwarden are on its skip list from the start. Everywhere else it only keeps the word you are typing in memory, never on disk, and nothing leaves your computer.",
+    a: "No. unflub skips password fields, and password managers such as KeePass, KeePassXC, 1Password and Bitwarden are on its skip list from the start. Everywhere else it only keeps the word you are typing in memory, never on disk, and nothing you type leaves your computer.",
+  },
+  {
+    q: "Does unflub connect to the internet?",
+    a: "Only to check for updates. Once a day it asks GitHub whether a new version is out. That request carries nothing you typed, no account and no identifier, and you can turn it off in Settings. Corrections themselves work fully offline.",
   },
   {
     q: "Does it work in games and terminals?",

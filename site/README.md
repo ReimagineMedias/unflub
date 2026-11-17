@@ -37,6 +37,16 @@ screenshots of every page into `.local/shots/` (needs a running preview).
 
 ## Deploying
 
-`.github/workflows/site.yml` deploys on every push to `main` that touches `site/`. It needs the
-repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The first deploy creates
-the `unflub.rmgn.ca` custom domain on the `rmgn.ca` zone.
+`.github/workflows/site.yml` deploys on every push to `main` that touches `site/`, from the
+`production` environment, with the wrangler pinned in `package-lock.json` (`npx --no-install wrangler
+deploy`). It needs two secrets, `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. Scope the token to
+these permissions only:
+
+| Scope | Permission |
+|---|---|
+| Account | Workers Scripts: Edit |
+| Zone `rmgn.ca` | Workers Routes: Edit |
+| Zone `rmgn.ca` | DNS: Edit |
+
+The first deploy creates the `unflub.rmgn.ca` custom domain on the `rmgn.ca` zone. Actions in the
+workflow are pinned to commit SHAs with the tag in a comment; update both together.
