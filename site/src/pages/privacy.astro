@@ -1,0 +1,90 @@
+---
+import Subpage from "../layouts/Subpage.astro";
+import { SITE } from "../data/site";
+---
+
+<Subpage
+  title="Privacy: nothing you type leaves your computer"
+  description="Nothing you type leaves your computer. What unflub shares, with no ID attached, and how to turn it off: a daily update check, usage counts and crash reports."
+  crumb="Privacy"
+>
+  <h1>Nothing you type leaves your computer.</h1>
+  <p class="lead">
+    You choose everything unflub does. No hidden settings. The code is public and free for anyone to read. Here is exactly what is
+    shared.
+  </p>
+
+  <h2>What you type</h2>
+  <ul>
+    <li>Corrections are worked out on your computer. Your text is never sent anywhere.</li>
+    <li>
+      unflub holds the word you are typing, and the one before it for context, in memory. It never writes what you type to disk.
+    </li>
+    <li>The words you misspell, and what they were fixed to, are never collected.</li>
+    <li>
+      Password fields are always skipped. Terminals and password managers are skipped by default, and you can add any other app.
+    </li>
+  </ul>
+
+  <h2>The daily update check</h2>
+  <p>Once a day, unflub asks whether a newer version is out. The request carries this and nothing else:</p>
+  <ul>
+    <li>the unflub version, such as {SITE.version}</li>
+    <li>your Windows version and processor type, x64 or ARM</li>
+    <li>three yes or no flags: whether this is the first check today, this week and this month</li>
+  </ul>
+  <p>
+    The flags let us count how many people use unflub each day, week and month. There is no ID, so nothing ties one check to
+    the next or to you. Turn off Automatic updates on the About page in Settings and unflub stops checking.
+  </p>
+
+  <h2>Usage stats and crash reports</h2>
+  <p>
+    On first run, unflub asks whether to share these. They are on unless you say no, and one switch in Settings turns them off
+    any time.
+  </p>
+  <ul>
+    <li>
+      <strong>Usage stats.</strong> Anonymous counts, such as corrections per day, how often a fix gets undone, which settings are
+      on and how long a check takes. Never a word you typed.
+    </li>
+    <li>
+      <strong>Crash reports.</strong> If unflub crashes, it sends where in the code it failed. Any text is scrubbed out first.
+    </li>
+  </ul>
+
+  <h2>Your Stats page stays home</h2>
+  <p>
+    The Stats page in the app shows your corrections this week, the words you get wrong most and how many keystrokes unflub
+    saved you. It is worked out and kept on your computer, and none of it is sent.
+  </p>
+
+  <h2>No account, no ads</h2>
+  <p>There is no account and no advertising ID. We don't sell or share data, and unflub shows no ads.</p>
+
+  <h2>This website</h2>
+  <p>
+    The site is hosted on Vercel and doesn't set cookies. We count visits with Cloudflare Web Analytics, which uses no cookies.
+    Downloads are verified by Cloudflare Turnstile.
+  </p>
+
+  <h2>Your settings</h2>
+  <p>
+    Your settings, your words and your shortcuts are saved in a file on your computer. Uninstalling unflub removes the app and its
+    login entry, and the uninstaller asks whether to delete that file too.
+  </p>
+
+  <h2>Check for yourself</h2>
+  <p>
+    The code is public, so you do not have to take our word for any of this. <a href={SITE.repo}>Read it on GitHub</a>, or
+    <a href={SITE.issues}>open an issue</a> if you have a question.
+  </p>
+
+  <p class="small updated">Last updated November 2026. unflub is an <a href={SITE.org.url}>RMGN</a> product.</p>
+</Subpage>
+
+<style>
+  .updated {
+    margin-top: 48px;
+  }
+</style>

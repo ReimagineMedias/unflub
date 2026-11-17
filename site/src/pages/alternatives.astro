@@ -1,0 +1,148 @@
+---
+import Base from "../layouts/Base.astro";
+import Compare from "../components/Compare.astro";
+import { SITE } from "../data/site";
+import { faqSchema } from "../data/schema";
+
+const faq = [
+  {
+    q: "Is unflub a Grammarly alternative?",
+    a: "Only for typos. Grammarly checks grammar, tone and clarity and suggests rewrites. unflub fixes misspelled words the moment you finish them and does nothing else. If you want writing advice, Grammarly does more.",
+  },
+  {
+    q: "Is tinySpell still a good choice?",
+    a: "If you want to be told about a typo and choose the fix yourself, yes. tinySpell watches your typing in any app, beeps at a misspelled word and lets you pick a correction. It doesn't change the word for you.",
+  },
+  {
+    q: "What about the AutoHotkey AutoCorrect script?",
+    a: "It fixes a fixed list of common misspellings in any app, and you can read and edit every line. It only knows the words on its list, it fixes them everywhere including code, and Backspace doesn't undo a fix.",
+  },
+];
+---
+
+<Base
+  title="unflub vs Grammarly, tinySpell and the AutoHotkey AutoCorrect script"
+  description="A fair comparison of autocorrect for Windows: unflub, Grammarly, tinySpell, the AutoHotkey AutoCorrect script and Windows' own setting, with what each does better."
+  crumbs={[{ name: "Alternatives", path: "/alternatives/" }]}
+  schema={[faqSchema(faq)]}
+>
+  <div class="top">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="/">unflub</a></li>
+        <li><span aria-current="page">Alternatives</span></li>
+      </ol>
+    </nav>
+    <h1>unflub, Grammarly, tinySpell and the AutoHotkey script, compared</h1>
+    <p class="lead">
+      They solve different problems. Grammarly is about writing well, tinySpell flags typos for you to fix, the AutoHotkey script
+      fixes a list of known misspellings, and unflub fixes typos as you type, in every app. Here is what each does better.
+    </p>
+  </div>
+
+  <Compare all title="Side by side." lead="From each tool's own documentation. Where a tool doesn't say, we say so." />
+
+  <article class="prose more">
+    <h2>Grammarly: pick it for grammar and tone</h2>
+    <p>
+      Grammarly reads whole sentences. It catches grammar, word choice and tone, and suggests rewrites you accept one at a time.
+      unflub does none of that. It only fixes misspelled words, on the spot, without asking. Grammarly checks your text on its
+      servers, so it needs a connection, and the fuller checks are in its paid plans.
+    </p>
+
+    <h2>tinySpell: pick it if you want to approve every fix</h2>
+    <p>
+      tinySpell is a small spell checker that watches your typing in any Windows app. When you misspell a word it beeps, and you
+      pick a correction from a list. Nothing changes until you choose. It is free, with a paid tinySpell+ that adds features. unflub
+      makes the fix itself and lets you take it back with Backspace.
+    </p>
+
+    <h2>The AutoHotkey AutoCorrect script: pick it if you want every rule in plain text</h2>
+    <p>
+      The classic AutoCorrect script for AutoHotkey turns lists of common misspellings, from Wikipedia and Office, into
+      replacements that work in any app. Every rule is a line you can read and edit. It fixes only the words on its list, it
+      fixes them everywhere, code included, and you need AutoHotkey installed. unflub works from a dictionary instead of a fixed
+      list, and leaves camelCase, paths and links alone.
+    </p>
+
+    <h2>Windows' own setting: try it first</h2>
+    <p>
+      It is free and already on your PC: <span class="path">Settings</span>, <span class="path">Time &amp; language</span>,
+      <span class="path">Typing</span>, then <strong>Autocorrect misspelled words</strong>. It only reaches apps that use
+      Windows' text services, which leaves out most browsers and chat apps. <a href="/autocorrect-not-working/">Why it skips
+      most apps</a>.
+    </p>
+
+    <h2>unflub: pick it for typos in every app</h2>
+    <p>
+      unflub fixes a typo the moment you finish the word, in any app on Windows 10 and 11, the way a phone keyboard does. It is
+      free and open source, corrections run on your computer, and Backspace right after a fix puts your word back. It does not
+      check grammar, it is Windows only for now, and it is new. <a href="/download/">Download unflub</a> or
+      <a href={SITE.repo}>read the code</a>.
+    </p>
+
+    <h2>Questions</h2>
+    {
+      faq.map((f) => (
+        <>
+          <h3>{f.q}</h3>
+          <p>{f.a}</p>
+        </>
+      ))
+    }
+
+    <p class="small">
+      Grammarly, tinySpell and AutoHotkey are trademarks of their owners. unflub is not affiliated with them. Checked November
+      2026; <a href={SITE.issues}>tell us</a> if something changed.
+    </p>
+  </article>
+</Base>
+
+<style>
+  .top {
+    width: var(--page);
+    margin-inline: auto;
+    padding-top: calc(var(--header) + clamp(24px, 5vw, 64px));
+    display: grid;
+    gap: 20px;
+  }
+
+  .top h1 {
+    max-width: 18em;
+    font-size: clamp(2.25rem, min(5vw, 8vh), 3.75rem);
+    line-height: 1.02;
+    letter-spacing: -0.045em;
+  }
+
+  .crumbs ol {
+    display: flex;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.875rem;
+    color: var(--muted);
+  }
+
+  .crumbs li + li::before {
+    content: "/";
+    margin-right: 8px;
+    opacity: 0.6;
+  }
+
+  .crumbs a {
+    color: var(--muted);
+  }
+
+  .top + :global(.compare) {
+    padding-top: clamp(40px, 8vh, 80px);
+  }
+
+  .more {
+    padding-top: 0;
+  }
+
+  .more h2:first-child {
+    margin-top: 0;
+  }
+</style>

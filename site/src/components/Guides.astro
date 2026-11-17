@@ -1,0 +1,84 @@
+---
+/** Guides, linked from the page body so readers (and search engines) find them without the footer. */
+const guides = [
+  { href: "/autocorrect-windows/", title: "Autocorrect on Windows 11", text: "What the built-in switch does and where it stops." },
+  { href: "/autocorrect-not-working/", title: "Autocorrect not working?", text: "Why Windows skips most apps, and what to check." },
+  { href: "/spell-check-everywhere/", title: "System-wide spell check", text: "Why some apps catch typos and others don't." },
+  { href: "/alternatives/", title: "unflub vs alternatives", text: "Grammarly, tinySpell and the AutoHotkey script, side by side." },
+];
+---
+
+<section class="guides wrap" aria-labelledby="guides-title">
+  <h2 id="guides-title" class="title">Guides</h2>
+  <ul>
+    {
+      guides.map((g) => (
+        <li>
+          <a href={g.href}>
+            <b>{g.title}</b>
+            <span>{g.text}</span>
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</section>
+
+<style>
+  .guides {
+    display: grid;
+    gap: 20px;
+    padding-block: clamp(48px, 8vh, 96px) 0;
+  }
+
+  .title {
+    font-size: 1.375rem;
+    letter-spacing: -0.03em;
+  }
+
+  ul {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  a {
+    display: grid;
+    gap: 6px;
+    height: 100%;
+    padding: 20px 22px;
+    border-radius: 22px;
+    background: var(--surface);
+    text-decoration: none;
+    transition: background-color 0.15s ease;
+  }
+
+  a:hover {
+    background: #eee8e6;
+  }
+
+  b {
+    font-size: 1.0625rem;
+    letter-spacing: -0.02em;
+  }
+
+  span {
+    font-size: 0.9375rem;
+    color: var(--muted);
+  }
+
+  @media (max-width: 900px) {
+    ul {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 520px) {
+    ul {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

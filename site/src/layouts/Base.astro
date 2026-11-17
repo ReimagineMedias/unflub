@@ -1,0 +1,112 @@
+---
+import "@fontsource-variable/manrope/wght.css";
+import "@fontsource/ibm-plex-mono/latin-400.css";
+import "@fontsource/ibm-plex-mono/latin-500.css";
+import "../styles/global.css";
+import manrope from "@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2?url";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { SITE } from "../data/site";
+
+export interface Crumb {
+  name: string;
+  path: string;
+}
+
+interface Props {
+  title: string;
+  description: string;
+  /** Extra JSON-LD objects for this page. Organization is always added. */
+  schema?: Record<string, unknown>[];
+  /** Subpages pass their trail; the home crumb is added for them. */
+  crumbs?: Crumb[];
+  /** The 404 page has no address of its own, so no canonical. Every page stays indexable: no noindex anywhere. */
+  canonical?: boolean;
+  ogImage?: string;
+}
+
+const { title, description, schema = [], crumbs, canonical: withCanonical = true, ogImage = SITE.ogImage } = Astro.props;
+const site = Astro.site ?? new URL(SITE.url);
+const canonical = new URL(Astro.url.pathname, site).href;
+const image = new URL(ogImage, site).href;
+
+const organization = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "@id": `${SITE.org.url}/#organization`,
+  name: SITE.org.name,
+  url: SITE.org.url,
+  logo: new URL("/icon-512.png", site).href,
+  sameAs: ["https://github.com/ReimagineMedias"],
+};
+
+const breadcrumb = crumbs && {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [{ name: "unflub", path: "/" }, ...crumbs].map((c, i) => ({
+    "@type": "ListItem",
+    position: i + 1,
+    name: c.name,
+    item: new URL(c.path, site).href,
+  })),
+};
+
+const graph = [organization, ...(breadcrumb ? [breadcrumb] : []), ...schema];
+
+/** Cloudflare Turnstile site key for the download buttons. Set at build time; unset, they link straight to the API. */
+const turnstileKey: string | undefined = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || undefined;
+
+/** Cloudflare Web Analytics (cookieless). Set at build time; no token, no beacon. */
+const beaconToken: string | undefined = import.meta.env.PUBLIC_CF_BEACON_TOKEN;
+const beacon = beaconToken ? JSON.stringify({ token: beaconToken }) : undefined;
+---
+
+<!doctype html>
+<html lang="en-CA">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {withCanonical && <link rel="canonical" href={canonical} />}
+    <link rel="preload" href={manrope} as="font" type="font/woff2" crossorigin />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="unflub" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={image} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="unflub: Type fast. Land it right. A correction capsule shows teh fixed to the." />
+    <meta property="og:locale" content="en_CA" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={image} />
+
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+
+    {graph.map((g) => <script type="application/ld+json" set:html={JSON.stringify(g)} />)}
+    {beacon && <script is:inline defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon={beacon}></script>}
+  </head>
+  <body data-turnstile={turnstileKey} data-download-api={SITE.downloadApi} data-download-refs={SITE.refs.join(" ")} data-releases={SITE.releases}>
+    <a class="skip" href="#main">Skip to content</a>
+    <Header />
+    <main id="main" tabindex="-1">
+      <slot />
+    </main>
+    <Footer />
+    <!-- Shown only if Turnstile needs the visitor to interact before a download. -->
+    <div class="human-check" data-human-check hidden>
+      <p>One quick check, then your download starts.</p>
+      <div data-human-widget></div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,44 @@
+---
+import DownloadButton from "./DownloadButton.astro";
+import { SITE } from "../data/site";
+---
+
+<section class="final" aria-labelledby="final-title">
+  <div class="wrap inner">
+    <svg class="icon" viewBox="0 0 1024 1024" aria-hidden="true">
+      <rect width="1024" height="1024" rx="232" fill="#2D1916"></rect>
+      <path d="M300 330 V560 a150 150 0 0 0 300 0 V330" fill="none" stroke="#F2E6E3" stroke-width="104" stroke-linecap="round"></path>
+      <rect x="694" y="232" width="60" height="560" rx="30" fill="#B06A5C"></rect>
+    </svg>
+    <h2 id="final-title" class="chapter">Get unflub.</h2>
+    <p class="lead">Free and open source. No paid tier. Windows today, Mac and Linux next.</p>
+    <div class="cta-row">
+      <DownloadButton />
+      <a class="btn btn-quiet" href={SITE.repo}>Star on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<style>
+  .final {
+    padding-block: clamp(80px, 12vw, 160px);
+  }
+
+  .inner {
+    display: grid;
+    justify-items: center;
+    text-align: center;
+    gap: 26px;
+  }
+
+  .icon {
+    width: 88px;
+    height: 88px;
+    border-radius: 20px;
+    box-shadow: 0 20px 40px -16px rgba(45, 25, 22, 0.45);
+  }
+
+  .cta-row {
+    justify-content: center;
+  }
+</style>

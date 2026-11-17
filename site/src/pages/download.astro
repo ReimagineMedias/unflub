@@ -1,0 +1,151 @@
+---
+import Subpage from "../layouts/Subpage.astro";
+import DownloadButton from "../components/DownloadButton.astro";
+import { SITE } from "../data/site";
+import { softwareApplication } from "../data/schema";
+---
+
+<Subpage
+  title="Download unflub for Windows: free autocorrect for every app"
+  description="Download unflub, free and open-source autocorrect for every text field on Windows. Mac and Linux versions are on the way."
+  crumb="Download"
+  schema={[softwareApplication]}
+  cta={false}
+>
+  <h1>Download unflub</h1>
+  <p class="lead">Free and open source, with no paid tier. Nothing you type leaves your computer.</p>
+
+  <div class="systems">
+    <section class="os ready" aria-labelledby="os-windows">
+      <div>
+        <h2 id="os-windows">Windows</h2>
+        <p>Windows 10 and 11. Version {SITE.version}.</p>
+      </div>
+      <div class="get">
+        <DownloadButton />
+        <a class="more" href={SITE.releases}>All versions</a>
+      </div>
+    </section>
+    <section id="mac" class="os" aria-labelledby="os-mac">
+      <h2 id="os-mac">macOS</h2>
+      <p>Coming soon, on the same engine as Windows.</p>
+      <a class="btn btn-quiet" href={SITE.releases}>Watch releases on GitHub</a>
+    </section>
+    <section id="linux" class="os" aria-labelledby="os-linux">
+      <h2 id="os-linux">Linux</h2>
+      <p>Coming soon, on the same engine as Windows.</p>
+      <a class="btn btn-quiet" href={SITE.releases}>Watch releases on GitHub</a>
+    </section>
+  </div>
+
+  <h2>After you install</h2>
+  <ol>
+    <li>Run the installer. unflub starts in the system tray and opens a short tour where you can try a fix.</li>
+    <li>Type in any app. When you finish a misspelled word, unflub fixes it and shows a small capsule above it.</li>
+    <li>If a fix is wrong, press Backspace straight away. Your word comes back and unflub remembers it.</li>
+    <li>Open settings from the tray icon to pick a theme, change how fixes look, or add your own words and shortcuts.</li>
+  </ol>
+
+  <h2>Support unflub</h2>
+  <p>
+    unflub has no paid tier. {SITE.sponsorPitch} A star on GitHub helps other people find it.
+  </p>
+  <div class="cta-row support">
+    <a class="btn btn-quiet" href={SITE.sponsor}>Sponsor</a>
+    <a class="btn btn-quiet" href={SITE.repo}>Star on GitHub</a>
+  </div>
+
+  <h2>Build it yourself</h2>
+  <p>
+    unflub is MIT licensed. You can read the code, build it with Rust and the Visual Studio Build Tools, and send fixes. The
+    <a href={SITE.repo}>README on GitHub</a> has the steps.
+  </p>
+</Subpage>
+
+<style>
+  .systems {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 48px 0 24px;
+  }
+
+  .os {
+    display: grid;
+    gap: 10px;
+    align-content: start;
+    justify-items: start;
+    padding: 26px 24px;
+    border-radius: 22px;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  .os.ready {
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    padding: 32px;
+    background: var(--deep);
+    color: var(--deep-ink);
+    --ink: var(--deep-ink);
+    --ground: var(--deep);
+    --muted: var(--deep-muted);
+    --line: rgba(242, 230, 227, 0.16);
+    --focus: var(--rose-on-dark);
+  }
+
+  .os h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    letter-spacing: -0.035em;
+  }
+
+  .os p {
+    color: var(--muted);
+    font-size: 0.9375rem;
+    margin-bottom: 10px;
+  }
+
+  .os :global(.btn) {
+    width: 100%;
+    font-size: 0.9375rem;
+    padding: 0 16px;
+  }
+
+  .get {
+    display: grid;
+    justify-items: center;
+    gap: 10px;
+  }
+
+  .os.ready :global(.btn) {
+    width: auto;
+    padding: 0 26px;
+  }
+
+  .support {
+    margin-top: 20px;
+  }
+
+  .more {
+    margin-top: 4px;
+    font-size: 0.8125rem;
+    color: var(--muted);
+  }
+
+  .os.ready .more {
+    color: var(--deep-muted);
+  }
+
+  @media (max-width: 760px) {
+    .systems,
+    .os.ready {
+      grid-template-columns: 1fr;
+    }
+
+    .get {
+      justify-items: start;
+    }
+  }
+</style>

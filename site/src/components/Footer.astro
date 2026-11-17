@@ -1,0 +1,175 @@
+---
+import Wordmark from "./Wordmark.astro";
+import { SITE } from "../data/site";
+
+const groups = [
+  {
+    title: "unflub",
+    links: [
+      { href: "/download/", label: "Download" },
+      { href: SITE.releases, label: "Releases" },
+      { href: SITE.repo, label: "GitHub" },
+      { href: SITE.issues, label: "Report a wrong fix" },
+    ],
+  },
+  {
+    title: "Guides",
+    links: [
+      { href: "/autocorrect-windows/", label: "Autocorrect on Windows" },
+      { href: "/spell-check-everywhere/", label: "Spell check in every app" },
+      { href: "/autocorrect-not-working/", label: "Autocorrect not working?" },
+      { href: "/alternatives/", label: "unflub vs alternatives" },
+    ],
+  },
+  {
+    title: "About",
+    links: [
+      { href: "/privacy/", label: "Privacy" },
+      { href: SITE.license, label: "MIT licence" },
+      { href: SITE.trademarks, label: "Trademarks" },
+    ],
+  },
+];
+---
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">
+        <Wordmark />
+        <p>Phone-style autocorrect for every text box on your computer.</p>
+        <div class="support" aria-label="Support unflub" role="group">
+          <a class="chip" href={SITE.sponsor}>Sponsor</a>
+          <a class="chip" href={SITE.repo}>Star on GitHub</a>
+        </div>
+        <p class="pitch">{SITE.sponsorPitch}</p>
+      </div>
+      {
+        groups.map((g) => (
+          <nav aria-label={g.title}>
+            <h2>{g.title}</h2>
+            <ul>
+              {g.links.map((l) => (
+                <li>
+                  <a href={l.href}>{l.label}</a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        ))
+      }
+    </div>
+    <div class="legal">
+      <p>
+        Code is MIT licensed. The unflub name and logo are trademarks of RMGN.
+      </p>
+      <p>
+        An <a href={SITE.org.url}>RMGN</a> product.
+      </p>
+    </div>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    padding-block: 72px 40px;
+    font-size: 0.9375rem;
+  }
+
+  .top {
+    display: grid;
+    grid-template-columns: 1.6fr repeat(3, 1fr);
+    gap: 40px;
+  }
+
+  .brand {
+    display: grid;
+    gap: 14px;
+    align-content: start;
+  }
+
+  .brand p {
+    color: var(--muted);
+    max-width: 26ch;
+  }
+
+  .support {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .support .chip {
+    padding: 7px 14px;
+    border-radius: 999px;
+    color: var(--ink);
+    font-size: 0.875rem;
+    font-weight: 600;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  .brand .pitch {
+    max-width: 30ch;
+    font-size: 0.8125rem;
+  }
+
+  .support .chip:hover {
+    text-decoration: none;
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  h2 {
+    font-size: 0.875rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin-bottom: 14px;
+  }
+
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+  }
+
+  a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+  }
+
+  .legal {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+
+  .legal a {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+  }
+
+  @media (max-width: 760px) {
+    .top {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .brand {
+      grid-column: 1 / -1;
+    }
+  }
+</style>
