@@ -13,6 +13,9 @@
 //! Windows removes a low-level hook whose callback is too slow (`LowLevelHooksTimeout`, at most
 //! 1 s on Windows 10+), and every millisecond here is input lag for the whole desktop, so the
 //! callback does no I/O: corrections are reported through a channel and printed elsewhere.
+//! It doesn't call `SendInput` either: injected events pass through every low-level hook on
+//! the system, ours included, so a correction is handed to the `unflub-inject` thread and the
+//! user's next keys are held back until it has landed (see [`inject::Pipeline`]).
 //!
 //! Limitation: a non-elevated process doesn't see keys typed into elevated (administrator)
 //! windows, and can't inject into them (UIPI). unflub simply does nothing there.
@@ -35,16 +38,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, GetWindowThreadProcessId, PeekMessageW,
-    PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, EVENT_OBJECT_FOCUS,
-    EVENT_SYSTEM_FOREGROUND, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, PM_NOREMOVE,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_XBUTTONDOWN,
+    CallNextHookEx, DispatchMessageW, GetMessageW, GetWindowThreadProcessId, KillTimer,
+    PeekMessageW, PostThreadMessageW, SetTimer, SetWindowsHookExW, UnhookWindowsHookEx,
+    EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
+    LLKHF_INJECTED, MSG, PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS, WM_APP, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_QUIT,
+    WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_TIMER, WM_XBUTTONDOWN,
 };
 
 use crate::focus::{self, FocusState, PasswordProbe};
-use crate::inject::{self, SendOutcome, INJECT_TAG};
-use crate::policy::{injection_veto, is_ime_language, Gate, GateDecision, SwallowTracker};
+use crate::inject::{self, Finished, Input, Origin, Pipeline, RawEvent, SendOutcome, Tag};
+use crate::policy::{injection_veto, is_ime_language, Gate, GateDecision};
 use crate::stats::LatencyHistogram;
 use crate::translate::{KeyTranslator, Modifiers, RawKey, Typed};
 use crate::Corrector;
@@ -59,6 +63,13 @@ const HOOK_THREAD_NAME: &str = "unflub-hook";
 /// the app has handled the input that may have moved focus. The field is secure meanwhile.
 const INPUT_RECHECK_DELAY: Duration = Duration::from_millis(50);
 
+/// Posted by the injector thread: results are waiting in the channel.
+const WM_APP_SENT: u32 = WM_APP + 1;
+
+/// If an injection or replay hasn't come back after this long, replay the held keys anyway.
+const STALE_AFTER: Duration = Duration::from_millis(500);
+const STALE_CHECK_MS: u32 = 100;
+
 #[derive(Debug, Clone, Default)]
 pub struct HookOptions {
     /// Lowercased exe names where keys are not fed to the corrector at all.
@@ -68,17 +79,19 @@ pub struct HookOptions {
 /// Reported from the hook thread; read it on another thread (printing is too slow for the hook).
 #[derive(Debug, Clone)]
 pub enum HookEvent {
-    /// A `Replace` was injected. `took` is the whole hook callback, injection included.
+    /// A `Replace` landed. `took` is the hook callback for the triggering key.
     Corrected {
         replacement: Replacement,
         app: Option<String>,
         took: Duration,
+        timing: InjectTiming,
     },
-    /// An `Undo` was injected.
+    /// An `Undo` landed.
     Undone {
         replacement: Replacement,
         app: Option<String>,
         took: Duration,
+        timing: InjectTiming,
     },
     /// The corrector asked for an action we didn't apply; the key went through untouched and
     /// the corrector was sent `Key::Reset`.
@@ -101,11 +114,28 @@ pub enum HookEvent {
     Warning(String),
 }
 
+/// Where the time of one correction went.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InjectTiming {
+    /// The corrector call that decided on the fix.
+    pub decide: Duration,
+    /// From handing the batch to the injector thread until `SendInput` returned.
+    pub inject: Duration,
+    /// From swallowing the key until the last injected event came back through our hook.
+    pub end_to_end: Duration,
+}
+
 /// What the hook thread hands back when it stops.
 #[derive(Debug, Default)]
 pub struct HookReport {
-    /// Duration of every keyboard callback that reached our code (our own injections excluded).
+    /// Every keyboard callback for a user key (our injected events excluded).
     pub keyboard: LatencyHistogram,
+    /// Corrector calls that led to a fix or undo.
+    pub decide: LatencyHistogram,
+    /// Hand-off to `SendInput` return, per fix or undo.
+    pub inject: LatencyHistogram,
+    /// Swallowed key to last injected event seen, per fix or undo.
+    pub end_to_end: LatencyHistogram,
 }
 
 /// The running hook thread. Stops (and unhooks) on [`Hook::stop`] or drop.
@@ -191,6 +221,68 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
         .unwrap_or_else(|| "unknown panic".into())
 }
 
+/// A correction or undo on its way out.
+struct Batch {
+    batch: u16,
+    replacement: Replacement,
+    undo: bool,
+    app: Option<String>,
+    took: Duration,
+    swallowed_at: Instant,
+    timing: InjectTiming,
+    released: bool,
+}
+
+enum JobKind {
+    Inject,
+    Replay,
+}
+
+/// Work for the injector thread.
+struct Job {
+    kind: JobKind,
+    batch: u16,
+    inputs: Vec<windows::Win32::UI::Input::KeyboardAndMouse::INPUT>,
+    handed_over: Instant,
+}
+
+// SAFETY: INPUT is plain data (no pointers); the vector is moved to the injector thread.
+unsafe impl Send for Job {}
+
+struct JobDone {
+    kind: JobKind,
+    batch: u16,
+    sent: usize,
+    total: usize,
+    released: bool,
+    took: Duration,
+}
+
+/// The `unflub-inject` thread: runs `SendInput` for the hook thread, in hand-over order, and
+/// posts `WM_APP_SENT` back. Ends when the hook thread drops its sender.
+fn injector(jobs: Receiver<Job>, done: Sender<JobDone>, hook_thread: u32) {
+    while let Ok(job) = jobs.recv() {
+        let total = job.inputs.len();
+        let (sent, released) = match inject::send(&job.inputs) {
+            SendOutcome::Complete => (total, false),
+            SendOutcome::Partial { sent, released, .. } => (sent, released),
+        };
+        let result = JobDone {
+            kind: job.kind,
+            batch: job.batch,
+            sent,
+            total,
+            released,
+            took: job.handed_over.elapsed(),
+        };
+        if done.send(result).is_err() {
+            return;
+        }
+        // SAFETY: posting to the hook thread, which has a message queue.
+        let _ = unsafe { PostThreadMessageW(hook_thread, WM_APP_SENT, WPARAM(0), LPARAM(0)) };
+    }
+}
+
 struct State {
     corrector: Box<dyn Corrector>,
     translator: KeyTranslator,
@@ -198,9 +290,14 @@ struct State {
     probe: Option<PasswordProbe>,
     excluded: Vec<String>,
     events: Sender<HookEvent>,
-    histogram: LatencyHistogram,
+    report: HookReport,
     gate: Gate,
-    swallow: SwallowTracker,
+    pipeline: Pipeline,
+    jobs: Sender<Job>,
+    done: Receiver<JobDone>,
+    batches: Vec<Batch>,
+    /// Thread timer id while the pipeline is busy (0 when none).
+    timer: usize,
     broken: bool,
 }
 
@@ -246,6 +343,16 @@ fn run(
     // SAFETY: trivial query.
     let thread_id = unsafe { GetCurrentThreadId() };
 
+    let (jobs, job_rx) = mpsc::channel();
+    let (done_tx, done) = mpsc::channel();
+    if let Err(e) = std::thread::Builder::new()
+        .name("unflub-inject".into())
+        .spawn(move || injector(job_rx, done_tx, thread_id))
+    {
+        let _ = ready.send(Err(format!("can't start the injector thread: {e}")));
+        return HookReport::default();
+    }
+
     let mut focus = FocusState::default();
     let probe = match PasswordProbe::start(focus.slot.clone()) {
         Ok((p, warnings)) => {
@@ -273,9 +380,13 @@ fn run(
             .map(|e| e.to_lowercase())
             .collect(),
         events,
-        histogram: LatencyHistogram::new(),
+        report: HookReport::default(),
         gate: Gate::default(),
-        swallow: SwallowTracker::default(),
+        pipeline: Pipeline::new(),
+        jobs,
+        done,
+        batches: Vec::new(),
+        timer: 0,
         broken: false,
     };
     state.refresh_focus(None, Duration::ZERO);
@@ -292,10 +403,21 @@ fn run(
     };
     let _ = ready.send(Ok(thread_id));
 
-    // SAFETY: standard message loop; hook callbacks are delivered inside GetMessageW.
+    // SAFETY: standard message loop; hook callbacks are delivered inside GetMessageW. Thread
+    // messages (no window) are ours: injector results and the stale-batch timer.
     unsafe {
         while GetMessageW(&mut msg, HWND::default(), 0, 0).0 > 0 {
-            DispatchMessageW(&msg);
+            match msg.message {
+                WM_APP_SENT if msg.hwnd.is_invalid() => {
+                    with_state(State::on_results);
+                }
+                WM_TIMER if msg.hwnd.is_invalid() => {
+                    with_state(State::on_timer);
+                }
+                _ => {
+                    DispatchMessageW(&msg);
+                }
+            }
         }
         hooks.uninstall();
     }
@@ -304,9 +426,12 @@ fn run(
 
 fn take_report() -> HookReport {
     let state = STATE.with(|s| s.borrow_mut().take());
-    HookReport {
-        keyboard: state.map(|s| s.histogram).unwrap_or_default(),
-    }
+    state
+        .map(|mut s| {
+            s.set_timer(false);
+            s.report
+        })
+        .unwrap_or_default()
 }
 
 struct Installed {
@@ -370,16 +495,8 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         let start = Instant::now();
         // SAFETY: for HC_ACTION, lparam points to a KBDLLHOOKSTRUCT valid for this call.
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        let injected = kb.flags.0 & LLKHF_INJECTED.0 != 0;
-        if !(injected && kb.dwExtraInfo == INJECT_TAG) {
-            let swallow = with_state(|s| {
-                let swallow = s.on_keyboard(wparam.0 as u32, kb, injected, start);
-                s.histogram.record(start.elapsed());
-                swallow
-            });
-            if swallow == Some(true) {
-                return LRESULT(1);
-            }
+        if with_state(|s| s.on_keyboard(wparam.0 as u32, kb, start)) == Some(true) {
+            return LRESULT(1);
         }
     }
     CallNextHookEx(HHOOK::default(), code, wparam, lparam)
@@ -502,37 +619,60 @@ fn to_unicode(vk: u16, scan: u16, key_state: &[u8; 256], layout: HKL) -> Typed {
 }
 
 impl State {
-    fn on_keyboard(
-        &mut self,
-        msg: u32,
-        kb: &KBDLLHOOKSTRUCT,
-        foreign_injected: bool,
-        start: Instant,
-    ) -> bool {
-        let vk = kb.vkCode as u16;
-        let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-        if !down {
-            // Key-up of a key we swallowed: swallow it too so apps see a matched pair.
-            return self.swallow.on_up(vk);
+    /// Every keyboard event. Returns true to swallow it.
+    fn on_keyboard(&mut self, msg: u32, kb: &KBDLLHOOKSTRUCT, start: Instant) -> bool {
+        let injected = kb.flags.0 & LLKHF_INJECTED.0 != 0;
+        let tag = injected.then(|| Tag::decode(kb.dwExtraInfo)).flatten();
+        if let Some(Tag::Inject(batch)) = tag {
+            // One of our own correction events coming back: count it and let it through.
+            if let Some(f) = self.pipeline.on_injected(batch) {
+                self.finished(f);
+            }
+            self.pump();
+            return false;
         }
-        let repeat = self.swallow.on_down(vk, already_down(vk));
+        let (origin, foreign) = match tag {
+            Some(Tag::Replay { batch, foreign }) => (Origin::Replay(batch), foreign),
+            _ => (Origin::User, injected),
+        };
+        let vk = kb.vkCode as u16;
+        let ev = RawEvent {
+            vk,
+            scan: kb.scanCode as u16,
+            extended: kb.flags.0 & LLKHF_EXTENDED.0 != 0,
+            up: !(msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN),
+            foreign,
+        };
+        let swallow = match self
+            .pipeline
+            .on_input(ev, origin, !ev.up && already_down(vk))
+        {
+            Input::Queued | Input::Consumed => true,
+            Input::Process { repeat } => !ev.up && self.on_key_down(ev, repeat, start),
+        };
+        self.pump();
+        self.report.keyboard.record(start.elapsed());
+        swallow
+    }
+
+    fn on_key_down(&mut self, ev: RawEvent, repeat: bool, start: Instant) -> bool {
         if MISSED.with(Cell::take) {
             self.reset();
         }
         if self.broken {
             return false;
         }
-        let (mods, key_state) = if foreign_injected {
+        let (mods, key_state) = if ev.foreign {
             (Modifiers::default(), [0u8; 256])
         } else {
             read_keyboard()
         };
         let layout = foreground_layout();
         let raw = RawKey {
-            vk,
-            scan: kb.scanCode as u16,
-            down,
-            foreign_injected,
+            vk: ev.vk,
+            scan: ev.scan,
+            down: true,
+            foreign_injected: ev.foreign,
         };
         let key = self.translator.translate(raw, mods, || {
             to_unicode(raw.vk, raw.scan, &key_state, layout)
@@ -540,13 +680,13 @@ impl State {
         let swallow = match key {
             Some(key) => {
                 let ime = is_ime_language((layout.0 as usize & 0xFFFF) as u16);
-                self.handle_key(key, vk, mods, repeat, ime, start)
+                self.handle_key(key, ev, mods, repeat, ime, start)
             }
             None => false,
         };
         // Tab and Enter can move focus or submit a form without any focus WinEvent (Chromium
         // without its accessibility tree): check the field again once the app has reacted.
-        if vk == VK_TAB.0 || vk == VK_RETURN.0 {
+        if ev.vk == VK_TAB.0 || ev.vk == VK_RETURN.0 {
             self.refresh_focus(None, INPUT_RECHECK_DELAY);
         }
         swallow
@@ -555,7 +695,7 @@ impl State {
     fn handle_key(
         &mut self,
         key: Key,
-        vk: u16,
+        ev: RawEvent,
         mods: Modifiers,
         repeat: bool,
         ime: bool,
@@ -570,9 +710,11 @@ impl State {
             }
             GateDecision::Drop => return false,
         }
+        let decide_start = Instant::now();
         let Some(action) = self.call(key) else {
             return false;
         };
+        let decide = decide_start.elapsed();
         let (replacement, undo) = match action {
             Action::Pass => return false,
             Action::Replace(r) => (r, false),
@@ -581,41 +723,143 @@ impl State {
         if let Some(reason) = injection_veto(key, mods, repeat) {
             return self.skip(replacement, reason);
         }
-        let inputs = inject::to_inputs(&inject::plan(replacement.delete, &replacement.insert));
-        if let SendOutcome::Partial {
-            sent,
-            total,
-            released,
-        } = inject::send(&inputs)
-        {
-            // Let the user's key through; nothing more we can safely do about partial text.
-            self.reset_corrector();
-            let _ = self.events.send(HookEvent::InjectFailed {
-                replacement,
-                sent,
-                total,
-                released,
-            });
-            return false;
+        // Swallow the key and hand the batch over; SendInput runs on the injector thread.
+        let strokes = inject::plan(replacement.delete, &replacement.insert);
+        let batch = self.pipeline.begin(ev, strokes.len() * 2);
+        let job = Job {
+            kind: JobKind::Inject,
+            batch,
+            inputs: inject::to_inputs(&strokes, batch),
+            handed_over: Instant::now(),
+        };
+        self.batches.push(Batch {
+            batch,
+            replacement,
+            undo,
+            app: self.focus.app.clone(),
+            took: start.elapsed(),
+            swallowed_at: Instant::now(),
+            timing: InjectTiming {
+                decide,
+                ..InjectTiming::default()
+            },
+            released: false,
+        });
+        if self.jobs.send(job).is_err() {
+            // Injector gone: nothing was sent, so the pipeline gives the key back.
+            if let Some(f) = self.pipeline.on_sent(batch, 0) {
+                self.finished(f);
+            }
         }
-        self.swallow.swallowed(vk);
-        let app = self.focus.app.clone();
-        let took = start.elapsed();
-        let event = if undo {
+        true
+    }
+
+    /// Injector results arrived (`WM_APP_SENT`).
+    fn on_results(&mut self) {
+        while let Ok(r) = self.done.try_recv() {
+            match r.kind {
+                JobKind::Inject => {
+                    if let Some(b) = self.batches.iter_mut().find(|b| b.batch == r.batch) {
+                        b.timing.inject = r.took;
+                        b.released = r.released;
+                    }
+                    self.report.inject.record(r.took);
+                    if let Some(f) = self.pipeline.on_sent(r.batch, r.sent) {
+                        self.finished(f);
+                    }
+                }
+                JobKind::Replay => {
+                    let lost = self.pipeline.on_replay_sent(r.batch, r.sent, r.total);
+                    if lost > 0 {
+                        self.reset();
+                        let _ = self.events.send(HookEvent::Warning(format!(
+                            "{lost} held-back key events could not be replayed (SendInput refused them)"
+                        )));
+                    }
+                }
+            }
+        }
+        self.pump();
+    }
+
+    /// The stale-batch timer fired.
+    fn on_timer(&mut self) {
+        if self.pipeline.tick(Instant::now(), STALE_AFTER) {
+            self.reset();
+            let _ = self.events.send(HookEvent::Warning(format!(
+                "a correction took over {} ms to land; replayed the keys held behind it",
+                STALE_AFTER.as_millis()
+            )));
+        }
+        self.pump();
+    }
+
+    /// An injection batch is over: report it.
+    fn finished(&mut self, f: Finished) {
+        let Some(i) = self.batches.iter().position(|b| b.batch == f.batch) else {
+            return;
+        };
+        let mut b = self.batches.swap_remove(i);
+        if f.sent < f.total {
+            // Let the corrector forget the word; the pipeline already gave the key back if
+            // nothing was typed.
+            self.reset();
+            let _ = self.events.send(HookEvent::InjectFailed {
+                replacement: b.replacement,
+                sent: f.sent,
+                total: f.total,
+                released: b.released,
+            });
+            return;
+        }
+        b.timing.end_to_end = b.swallowed_at.elapsed();
+        self.report.decide.record(b.timing.decide);
+        self.report.end_to_end.record(b.timing.end_to_end);
+        let event = if b.undo {
             HookEvent::Undone {
-                replacement,
-                app,
-                took,
+                replacement: b.replacement,
+                app: b.app,
+                took: b.took,
+                timing: b.timing,
             }
         } else {
             HookEvent::Corrected {
-                replacement,
-                app,
-                took,
+                replacement: b.replacement,
+                app: b.app,
+                took: b.took,
+                timing: b.timing,
             }
         };
         let _ = self.events.send(event);
-        true
+    }
+
+    /// Hand due replays to the injector and keep the stale-batch timer in step.
+    fn pump(&mut self) {
+        for r in self.pipeline.pump(Instant::now()) {
+            let total = r.events.len();
+            let job = Job {
+                kind: JobKind::Replay,
+                batch: r.batch,
+                inputs: inject::replay_inputs(&r.events, r.batch),
+                handed_over: Instant::now(),
+            };
+            if self.jobs.send(job).is_err() {
+                self.pipeline.on_replay_sent(r.batch, 0, total);
+            }
+        }
+        self.set_timer(self.pipeline.busy());
+    }
+
+    fn set_timer(&mut self, on: bool) {
+        // SAFETY: thread timers on this thread; WM_TIMER arrives in our message loop.
+        unsafe {
+            if on && self.timer == 0 {
+                self.timer = SetTimer(HWND::default(), 0, STALE_CHECK_MS, None);
+            } else if !on && self.timer != 0 {
+                let _ = KillTimer(HWND::default(), self.timer);
+                self.timer = 0;
+            }
+        }
     }
 
     fn excluded(&self) -> bool {

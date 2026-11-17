@@ -33,6 +33,6 @@ pub mod hook;
 pub mod spell;
 
 #[cfg(windows)]
-pub use hook::{Hook, HookEvent, HookOptions, HookReport};
+pub use hook::{Hook, HookEvent, HookOptions, HookReport, InjectTiming};
 #[cfg(windows)]
 pub use spell::WindowsSpellBackend;

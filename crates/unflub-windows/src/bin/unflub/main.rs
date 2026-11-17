@@ -70,7 +70,9 @@ mod win {
     use std::time::Duration;
 
     use unflub_core::{Config, Engine, SpellBackend};
-    use unflub_windows::{Corrector, Hook, HookEvent, HookOptions, WindowsSpellBackend};
+    use unflub_windows::{
+        Corrector, Hook, HookEvent, HookOptions, InjectTiming, WindowsSpellBackend,
+    };
     use windows::Win32::Foundation::{BOOL, TRUE};
     use windows::Win32::System::Console::{SetConsoleCtrlHandler, CTRL_CLOSE_EVENT};
 
@@ -140,10 +142,23 @@ mod win {
             print_event(&event);
         }
         println!("unhooked. keyboard callback latency: {}", report.keyboard);
+        println!("  decide:  {}", report.decide);
+        println!("  inject:  {}", report.inject);
+        println!("  landed:  {}", report.end_to_end);
     }
 
     fn ms(d: Duration) -> f64 {
         d.as_secs_f64() * 1e3
+    }
+
+    fn times(hook: Duration, t: &InjectTiming) -> String {
+        format!(
+            "hook {:.3} ms, decide {:.3} ms, inject {:.3} ms, landed {:.3} ms",
+            ms(hook),
+            ms(t.decide),
+            ms(t.inject),
+            ms(t.end_to_end)
+        )
     }
 
     fn print_event(event: &HookEvent) {
@@ -152,24 +167,26 @@ mod win {
                 replacement: r,
                 app,
                 took,
+                timing,
             } => println!(
-                "fixed  {:?} -> {:?}  ({:?}, {}, {:.3} ms)",
+                "fixed  {:?} -> {:?}  ({:?}, {}, {})",
                 r.original,
                 r.corrected,
                 r.source,
                 app.as_deref().unwrap_or("?"),
-                ms(*took)
+                times(*took, timing)
             ),
             HookEvent::Undone {
                 replacement: r,
                 app,
                 took,
+                timing,
             } => println!(
-                "undo   {:?} -> {:?}  ({}, {:.3} ms)",
+                "undo   {:?} -> {:?}  ({}, {})",
                 r.corrected,
                 r.original,
                 app.as_deref().unwrap_or("?"),
-                ms(*took)
+                times(*took, timing)
             ),
             HookEvent::Skipped {
                 replacement: r,
