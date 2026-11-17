@@ -6,6 +6,7 @@ import {
   downloadUrl,
   isDownloadHref,
   pickRef,
+  targetFrom,
   withDeadline,
 } from "../src/scripts/download-core.ts";
 
@@ -47,4 +48,14 @@ test("stopping the deadline lets an interactive check take its time", async () =
   const d = withDeadline(slow, 20, "check");
   d.stop();
   assert.equal(await d.promise, "token");
+});
+
+test("the API's answer is followed only to our download host or GitHub, over https", () => {
+  assert.equal(targetFrom({ url: "https://dl.rmgn.net/unflub/latest/windows-x86_64" }), "https://dl.rmgn.net/unflub/latest/windows-x86_64");
+  assert.equal(targetFrom({ url: "https://github.com/ReimagineMedias/unflub/releases/latest" }), "https://github.com/ReimagineMedias/unflub/releases/latest");
+  assert.equal(targetFrom({ url: "http://dl.rmgn.net/x" }), null);
+  assert.equal(targetFrom({ url: "https://evil.example/x" }), null);
+  assert.equal(targetFrom({ url: "javascript:alert(1)" }), null);
+  assert.equal(targetFrom({ nope: true }), null);
+  assert.equal(targetFrom(null), null);
 });

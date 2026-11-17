@@ -6,6 +6,10 @@ export const SCRIPT_TIMEOUT_MS = 8000;
 export const CHECK_TIMEOUT_MS = 12000;
 /** How long the "opening GitHub instead" message shows before the fallback opens. */
 export const FALLBACK_DELAY_MS = 2500;
+/** How long the API may take to answer with the installer's address. */
+export const API_TIMEOUT_MS = 4000;
+/** Where an API answer may send the visitor: our download host, or GitHub's releases. */
+export const ALLOWED_TARGETS: ReadonlySet<string> = new Set(["dl.rmgn.net", "github.com"]);
 
 /** The ref to count: the landing page's ?ref= if rmgn-api counts it, else the one kept for this visit, else "site". */
 export function pickRef(search: string, kept: string | null, known: ReadonlySet<string>): string {
@@ -21,6 +25,19 @@ export function downloadUrl(api: string, ref: string, token?: string): string {
   url.searchParams.set("ref", ref);
   if (token) url.searchParams.set("t", token);
   return url.href;
+}
+
+/** The API's JSON answer (`?format=json`, `{ "url": … }`), accepted only for an https URL on an allowed host. */
+export function targetFrom(json: unknown, allowed: ReadonlySet<string> = ALLOWED_TARGETS): string | null {
+  if (typeof json !== "object" || json === null || !("url" in json)) return null;
+  const raw = (json as { url: unknown }).url;
+  if (typeof raw !== "string") return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" && allowed.has(u.hostname) ? u.href : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Whether a link points at the download endpoint itself (same origin and path), not somewhere else. */

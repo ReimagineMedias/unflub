@@ -6,6 +6,8 @@ export const SITE = {
   tagline: "Phone-style autocorrect for every text box on your computer.",
   repo: "https://github.com/ReimagineMedias/unflub",
   releases: "https://github.com/ReimagineMedias/unflub/releases",
+  /** Where a download falls back to when the check or the API can't finish. */
+  releasesLatest: "https://github.com/ReimagineMedias/unflub/releases/latest",
   /** The Windows download: rmgn-api redirects to the current setup and counts the download by `ref`.
    *  scripts/download.ts adds the visitor's `ref` and a Turnstile token (`t`) when a site key is set. */
   downloadApi: "https://api.rmgn.net/unflub/v1/download/windows",

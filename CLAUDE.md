@@ -38,6 +38,7 @@ Repo is private until v0.1, then flipped public.
 - Downloads (site): `PUBLIC_TURNSTILE_SITE_KEY` (public; invisible widget for unflub.rmgn.net and localhost) turns on
   the Turnstile check in `site/src/scripts/download.ts`. Invisible mode requires the visible notice
   (`TurnstileNotice.astro`) by the download buttons and in the footer, linking Cloudflare's Turnstile Privacy Addendum.
-  A failed or stalled check falls back to GitHub releases after a short message. Headless Chrome fails the real key;
+  After the check the page fetches `?format=json` from the API (4 s timeout) and opens the returned URL (only
+  dl.rmgn.net or github.com). Any failure falls back to GitHub's latest release after a one-line message. Headless Chrome fails the real key;
   test the flow with Cloudflare's test keys (1x...BB pass, 3x...FF interactive) or by hand in a normal browser.
 - In Git Bash, `--flag=/path`-style args get rewritten to Windows paths (MSYS); pass names, not leading-slash paths.

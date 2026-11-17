@@ -96,7 +96,7 @@ const beacon = beaconToken ? JSON.stringify({ token: beaconToken }) : undefined;
     {graph.map((g) => <script type="application/ld+json" set:html={JSON.stringify(g)} />)}
     {beacon && <script is:inline defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon={beacon}></script>}
   </head>
-  <body data-turnstile={turnstileKey} data-download-api={SITE.downloadApi} data-download-refs={SITE.refs.join(" ")} data-releases={SITE.releases}>
+  <body data-turnstile={turnstileKey} data-download-api={SITE.downloadApi} data-download-refs={SITE.refs.join(" ")} data-releases={SITE.releasesLatest}>
     <a class="skip" href="#main">Skip to content</a>
     <Header />
     <main id="main" tabindex="-1">

@@ -196,7 +196,7 @@ test("security headers are set and no page needs an inline script", async () => 
   // Nothing else.
   assert.match(csp, /script-src 'self' https:\/\/static\.cloudflareinsights\.com https:\/\/challenges\.cloudflare\.com;/);
   assert.match(csp, /frame-src https:\/\/challenges\.cloudflare\.com;/);
-  assert.match(csp, /connect-src 'self' https:\/\/challenges\.cloudflare\.com https:\/\/cloudflareinsights\.com;/);
+  assert.match(csp, /connect-src 'self' https:\/\/api\.rmgn\.net https:\/\/challenges\.cloudflare\.com https:\/\/cloudflareinsights\.com;/);
   assert.ok(res.headers.get("strict-transport-security"));
   assert.equal(res.headers.get("x-content-type-options"), "nosniff");
   assert.ok(res.headers.get("referrer-policy"));

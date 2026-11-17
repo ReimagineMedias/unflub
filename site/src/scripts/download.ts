@@ -4,17 +4,20 @@
  * Turnstile check and adds its token as `t`. The Turnstile script loads only when someone reaches for a download
  * button, never on page load. No key (local dev): the links go straight to the API.
  *
- * A check that fails, stalls or is unsupported never leaves the button stuck: after a short message, the GitHub
- * releases page opens instead. If Cloudflare asks for interaction, a labelled panel takes focus, with Cancel and the
+ * After the check, the page asks the API (`?format=json`) where the installer is, with a short timeout, and opens
+ * that address. A check or API call that fails, stalls or is unsupported (including the API's daily limit) never
+ * leaves the button stuck: after a one-line message, GitHub's latest release opens instead. If Cloudflare asks for interaction, a labelled panel takes focus, with Cancel and the
  * GitHub link beside the challenge.
  */
 import {
+  API_TIMEOUT_MS,
   CHECK_TIMEOUT_MS,
   FALLBACK_DELAY_MS,
   SCRIPT_TIMEOUT_MS,
   downloadUrl,
   isDownloadHref,
   pickRef,
+  targetFrom,
   withDeadline,
 } from "./download-core";
 
@@ -175,6 +178,23 @@ async function check(): Promise<Outcome> {
   }
 }
 
+/** Ask the API where the installer is. Null on any failure: timeout, error status, CORS, or an unexpected answer. */
+async function installerUrl(token: string): Promise<string | null> {
+  const url = new URL(downloadUrl(api, ref, token));
+  url.searchParams.set("format", "json");
+  const abort = new AbortController();
+  const timer = window.setTimeout(() => abort.abort(), API_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: abort.signal, credentials: "omit", cache: "no-store", referrerPolicy: "origin" });
+    if (!res.ok) return null;
+    return targetFrom(await res.json());
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 if (siteKey && api) {
   const warm = (): void => {
     loadTurnstile().catch(() => undefined);
@@ -192,10 +212,21 @@ if (siteKey && api) {
       say("Checking, then your download starts.");
       check()
         .catch((): Outcome => ({ failed: true }))
-        .then((o) => {
+        .then(async (o) => {
           if ("token" in o) {
-            say("Your download is starting.");
-            location.href = downloadUrl(api, ref, o.token);
+            const to = await installerUrl(o.token);
+            if (to) {
+              say("Your download is starting.");
+              location.href = to;
+              return;
+            }
+            say("Our download server didn't answer, so GitHub is opening instead.", {
+              href: releases,
+              label: "Open GitHub",
+            });
+            window.setTimeout(() => {
+              location.href = releases;
+            }, FALLBACK_DELAY_MS);
             return;
           }
           if ("cancelled" in o) {
@@ -204,9 +235,9 @@ if (siteKey && api) {
             return;
           }
           // The check failed or stalled: say so plainly, then open GitHub releases, which has every version.
-          say("The download check didn't finish, so GitHub releases is opening instead.", {
+          say("The download check didn't finish, so GitHub is opening instead.", {
             href: releases,
-            label: "Open GitHub releases",
+            label: "Open GitHub",
           });
           window.setTimeout(() => {
             location.href = releases || downloadUrl(api, ref);
