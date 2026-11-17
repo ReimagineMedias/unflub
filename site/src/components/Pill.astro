@@ -1,0 +1,15 @@
+---
+/** The correction capsule, drawn statically next to a fixed word (used for still frames). */
+interface Props {
+  from: string;
+  to: string;
+  undone?: boolean;
+  below?: boolean;
+  static?: boolean;
+}
+const { from, to, undone = false, below = false, static: still = true } = Astro.props;
+---
+
+<span class:list={["pill", still && "static show", below && "below"]} aria-hidden="true"
+  ><s>{from}</s><span class="arr">→</span><b>{to}</b>{undone ? <span class="done">undone</span> : <kbd>⌫ undo</kbd>}</span
+>
