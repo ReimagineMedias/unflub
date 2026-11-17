@@ -1,27 +1,32 @@
 //! `unflub`: headless runner for the Windows adapter.
 //!
 //! ```text
-//! unflub --demo [--exclude <exe>]...   three fixed rules (teh, adn, recieve); try it now
-//! unflub [--exclude <exe>]...          the real engine (until the core engine lands, it panics)
+//! unflub --demo [--exclude <exe>]... [--pill <style>]   three fixed rules (teh, adn, recieve); try it now
+//! unflub [--exclude <exe>]... [--pill <style>]          the real engine (until the core engine lands, it panics)
 //! ```
 //!
-//! Prints each correction and undo with the hook callback time. Ctrl+C unhooks, prints the
-//! hook latency histogram and exits.
+//! Prints each correction and undo with the hook callback time, and shows the correction pill
+//! at the caret. Ctrl+C unhooks, prints the hook latency histogram and exits.
 
 #[cfg_attr(not(windows), allow(dead_code))]
 mod demo;
 
-const USAGE: &str = "usage: unflub [--demo] [--exclude <exe>]...
+use unflub_windows::PillStyle;
+
+const USAGE: &str = "usage: unflub [--demo] [--exclude <exe>]... [--pill <style>]
 
   --demo           use three built-in rules (teh->the, adn->and, recieve->receive)
                    instead of the engine
   --exclude <exe>  never correct in this app (e.g. code.exe); repeatable
+  --pill <style>   how fixes are shown at the caret: underline-capsule (default),
+                   capsule, underline or off
   -h, --help       show this help";
 
 #[derive(Debug, Default, PartialEq)]
 struct Args {
     demo: bool,
     exclude: Vec<String>,
+    pill: PillStyle,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Option<Args>, String> {
@@ -33,6 +38,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Option<Args>, St
             "--exclude" => {
                 let exe = args.next().ok_or("--exclude needs an exe name")?;
                 out.exclude.push(exe.to_lowercase());
+            }
+            "--pill" => {
+                out.pill = args.next().ok_or("--pill needs a style")?.parse()?;
             }
             "-h" | "--help" => return Ok(None),
             other => return Err(format!("unknown argument: {other}")),
@@ -71,7 +79,8 @@ mod win {
 
     use unflub_core::{Config, Engine, SpellBackend};
     use unflub_windows::{
-        Corrector, Hook, HookEvent, HookOptions, InjectTiming, WindowsSpellBackend,
+        Correction, Corrector, Hook, HookEvent, HookOptions, InjectTiming, Overlay, OverlayHandle,
+        PillConfig, PillStyle, WindowsSpellBackend,
     };
     use windows::Win32::Foundation::{BOOL, TRUE};
     use windows::Win32::System::Console::{SetConsoleCtrlHandler, CTRL_CLOSE_EVENT};
@@ -97,9 +106,10 @@ mod win {
         let options = HookOptions {
             excluded_apps: args.exclude.clone(),
         };
+        let overlay = start_overlay(args.pill);
         if args.demo {
             println!("unflub demo: teh->the, adn->and, recieve->receive. Backspace right after a fix undoes it.");
-            drive(DemoCorrector::default(), options);
+            drive(DemoCorrector::default(), options, overlay);
         } else {
             let backend = match WindowsSpellBackend::new(None) {
                 Ok(b) => {
@@ -116,11 +126,31 @@ mod win {
                 excluded_apps: args.exclude,
                 ..Config::default()
             };
-            drive(Engine::new(config, backend), options);
+            drive(Engine::new(config, backend), options, overlay);
         }
     }
 
-    fn drive<C: Corrector + Send + 'static>(corrector: C, options: HookOptions) {
+    fn start_overlay(style: PillStyle) -> Option<OverlayHandle> {
+        if style == PillStyle::Off {
+            return None;
+        }
+        match Overlay::spawn(PillConfig {
+            style,
+            ..PillConfig::default()
+        }) {
+            Ok(o) => Some(o),
+            Err(e) => {
+                eprintln!("correction pill unavailable ({e}); continuing without it");
+                None
+            }
+        }
+    }
+
+    fn drive<C: Corrector + Send + 'static>(
+        corrector: C,
+        options: HookOptions,
+        overlay: Option<OverlayHandle>,
+    ) {
         let (hook, events) = match Hook::start(corrector, options) {
             Ok(h) => h,
             Err(e) => {
@@ -131,13 +161,22 @@ mod win {
         println!("hooked. Type anywhere; Ctrl+C here to stop.");
         loop {
             match events.recv_timeout(Duration::from_millis(100)) {
-                Ok(event) => print_event(&event),
+                Ok(event) => {
+                    // The hook already sent this event; the pill costs the hook nothing.
+                    if let (Some(o), Some(c)) = (&overlay, Correction::from_hook_event(&event)) {
+                        o.show(c);
+                    }
+                    print_event(&event);
+                }
                 Err(RecvTimeoutError::Timeout) if STOP.load(Ordering::SeqCst) => break,
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
         let report = hook.stop();
+        if let Some(o) = overlay {
+            o.shutdown();
+        }
         while let Ok(event) = events.try_recv() {
             print_event(&event);
         }
@@ -231,8 +270,15 @@ mod tests {
             Ok(Some(Args {
                 demo: true,
                 exclude: vec!["code.exe".into(), "x.exe".into()],
+                pill: PillStyle::UnderlineCapsule,
             }))
         );
+        assert_eq!(
+            parse(&["--pill", "capsule"]).map(|a| a.map(|a| a.pill)),
+            Ok(Some(PillStyle::Capsule))
+        );
+        assert!(parse(&["--pill"]).is_err());
+        assert!(parse(&["--pill", "sparkles"]).is_err());
         assert_eq!(parse(&["--help"]), Ok(None));
         assert!(parse(&["--exclude"]).is_err());
         assert!(parse(&["--bogus"]).is_err());

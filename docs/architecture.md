@@ -39,8 +39,8 @@ engine never calls slow APIs on this path.
 
 ## The Windows adapter
 
-`crates/unflub-windows` runs these threads (all but the injector in the COM multithreaded
-apartment):
+`crates/unflub-windows` runs these threads. All but the injector and the overlay are in the
+COM multithreaded apartment:
 
 | Thread | Does |
 |---|---|
@@ -48,6 +48,8 @@ apartment):
 | `unflub-inject` | `SendInput` for corrections and replayed keys, in hand-over order |
 | `unflub-uia` | Asks UI Automation whether the focused field is a password field |
 | `unflub-spell` | Slow `ComprehensiveCheck` lookups for the OS auto-replace cache, and adding learned words |
+| `unflub-overlay` | The correction pill window: finds the caret, draws the pill, runs its fades |
+| `unflub-caret` | Asks UI Automation where the caret is in browser and XAML fields, for the pill |
 
 - **Key translation.** `ToUnicodeEx` with flag `0x4` (Windows 10 1607+) reads what a key types
   in the foreground window's layout without changing the kernel's dead-key state, so accents
@@ -88,8 +90,32 @@ apartment):
 - **Elevated windows.** A normal process can't see keys typed into administrator windows or
   inject into them, so unflub does nothing there.
 
+### The pill
+
+After a fix or an undo the adapter shows a small overlay at the caret for about a second
+(`overlay.rs`, `caret.rs`). Styles: underline plus capsule (default), capsule, underline, off.
+
+- **No cost to typing.** The hook thread does nothing extra: whoever reads `HookEvent`s (or
+  `Engine::drain_events`) calls `OverlayHandle::show`, which pushes onto a channel and posts a
+  window message.
+- **Finding the caret.** 16 ms after the fix (so the app has drawn the new text), the overlay
+  reads the foreground thread's system caret (`GetGUIThreadInfo`), mapped to physical pixels
+  through the caret window's DPI context. If there is none and the focused window is a
+  browser, Electron, WPF or XAML host, it asks UI Automation on `unflub-caret` for the caret
+  range moved back over the word, which gives the word's exact bounds. With no answer within
+  64 ms the pill is skipped; we never guess. A system caret gives only the line, so the word's
+  width is estimated from the line height.
+- **The window.** A layered, click-through, no-activate, topmost tool window: never focused,
+  never in Alt+Tab or the taskbar. Each pill is drawn once with software Direct2D and
+  DirectWrite into a premultiplied DIB for `UpdateLayeredWindow`; fade frames only move the
+  window and change its alpha. Hidden, it holds no timer, bitmap or Direct2D object.
+- **Placement.** Above the line by default, flipped below when there is no room, clamped to the
+  monitor's work area, and scaled by that monitor's DPI.
+
 Try the hook before the engine lands: `cargo run --release --bin unflub -- --demo` fixes
-`teh`, `adn` and `recieve`, and prints each fix and the hook latency on exit.
+`teh`, `adn` and `recieve`, shows the pill (`--pill <style>` to change it), and prints each fix
+and the hook latency on exit. `cargo run -p unflub-windows --example pill_snapshot` renders
+each pill style offscreen to `.local/pill/*.png`.
 
 ## Deciding what's wrong and what's right
 
@@ -140,6 +166,9 @@ count as known words and are never corrected.
   bundled dictionary index alone takes about 15 MB.
 - **Pill**: drawn natively in a click-through, no-activate window, shown briefly after a fix.
   No web view stays resident.
+- **Core process** (hook, engine, tray): always running, target under 15 MB RAM idle.
+- **Pill**: drawn natively in a click-through, no-activate window on the core process's
+  `unflub-overlay` thread, shown briefly after a fix. No web view.
 - **Settings**: a Tauri window created on demand and destroyed when closed.
 
 ## Later layers

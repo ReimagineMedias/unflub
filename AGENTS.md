@@ -21,6 +21,12 @@ Repo is private until v0.1, then flipped public.
   `src/rank.rs` (`TUNING`) and `src/distance.rs`; after changing them run
   `cargo test --release -p unflub-core --test corpus -- --nocapture` (owner corpus 22/25, common typos 103/111) and
   `cargo run --release -p unflub-core --example bench`.
+- Pill (`overlay.rs`, `caret.rs`): `cargo run -p unflub-windows --example pill_snapshot` renders every style offscreen to
+  `.local/pill/*.png` without showing a window; check visuals there, never by running the hook. Fonts resolve to
+  Segoe UI Variable Text and Cascadia Mono on Windows 11. Software Direct2D renderer setup is ~2 ms warm (26 ms on
+  first DLL load), so it is dropped whenever the pill hides.
+- No caret position (pill skipped): terminals, games, canvas editors, and browser/XAML fields whose UIA provider has no
+  TextPattern. A Win32 caret gives only the line; the word width is estimated (0.37 x line height per letter).
 - Windows `ComprehensiveCheck` measured 2026-11-16 (Windows 11 26300, en-US): ~3 ms per typo, and its auto-replace list
   has `recieve`->`receive`, `becuase`->`because` but nothing for `teh`. `CORRECTIVE_ACTION_REPLACE` is rare; don't rely on it.
 - `unflub-windows` tests call the real `ISpellChecker` but never install hooks or inject input. Try the hook live with

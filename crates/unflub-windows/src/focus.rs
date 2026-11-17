@@ -152,6 +152,8 @@ impl FocusState {
 }
 
 #[cfg(windows)]
+pub(crate) use win::create_uia;
+#[cfg(windows)]
 pub use win::{focus_window, foreground, inspect_window, process_exe, PasswordProbe};
 
 #[cfg(windows)]
@@ -291,7 +293,8 @@ mod win {
         }
     }
 
-    fn create_uia() -> Result<(IUIAutomation, Vec<String>), String> {
+    /// A UIA client with short timeouts, for an MTA thread that owns it.
+    pub(crate) fn create_uia() -> Result<(IUIAutomation, Vec<String>), String> {
         // SAFETY: COM is initialised on this thread. CUIAutomation8 implements IUIAutomation2
         // (timeouts); plain CUIAutomation doesn't, so it is only the fallback.
         let uia: IUIAutomation = unsafe {
