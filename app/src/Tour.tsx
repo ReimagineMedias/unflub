@@ -153,7 +153,7 @@ export function Tour({ settings: s, info, update, onClose }: {
         <div className="actions">
           {step < STEPS && <button className="btn ghost" onClick={() => setStep(STEPS)}>{t("tour.skip")}</button>}
           {step < STEPS
-            ? <button className="btn" disabled={step === 1 && !fixed} onClick={() => setStep(step + 1)}>{t("tour.next")}</button>
+            ? <button className="btn" disabled={(step === 1 && !fixed) || (step === 2 && !undone)} onClick={() => setStep(step + 1)}>{t("tour.next")}</button>
             : <button className="btn" autoFocus onClick={done}>{t("tour.done")}</button>}
         </div>
       </div>
