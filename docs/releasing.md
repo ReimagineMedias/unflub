@@ -175,8 +175,8 @@ API, Access and VirusTotal ones as `release` environment secrets.
   signature, right before it installs. The tray says **Restart to update to vX**, and About shows
   the notes with **Restart now** and **Later**. It installs on Restart now or when unflub quits
   from the tray, never on its own. With the switch off, unflub only tells you.
-- Only copies installed by the setup or winget update themselves. Scoop, Store and portable
-  copies show how to update with their tool (`install-source` beside `unflub.exe`, see
+- Only copies installed by the setup update themselves. winget, Chocolatey, Scoop, Store and
+  portable copies show how to update with their tool (`install-source` beside `unflub.exe`, see
   `app/src-tauri/src/install.rs`).
 - The `DisableUpdates` machine policy (`HKLM\Software\Policies\RMGN\unflub`) turns all of this
   off. `DisableRemoteConfig` ignores the manifest's flags and message.
@@ -300,25 +300,31 @@ in Azure Key Vault, Tauri's docs use `relic` as the `signCommand` instead.
 
 ## Packages
 
-All three manifests are in `packaging/` at version 0.1.0 with placeholder hashes (all zeros).
-Fill the hashes from the published release's `SHA256SUMS.txt` before submitting anything. Their
-installer URLs are the GitHub Release assets,
-`https://github.com/ReimagineMedias/unflub/releases/download/v{version}/{file}` (stable URLs,
-which winget prefers). Each one tells unflub where it
-came from: winget passes `/SOURCE=winget` to the setup, Chocolatey `/SOURCE=chocolatey` (counted
-as the setup), and Scoop writes `install-source` itself (see "How the app updates").
+All three manifests are templates in `packaging/` at version 0.1.0 with placeholder hashes (all
+zeros). Never submit those: publishing a release runs `.github/workflows/publish-packages.yml`,
+which checks the release is public and stable with both setups and `SHA256SUMS.txt`, then writes
+every file with the version and real hashes (`scripts/package-manifests.mjs`, which fails on a
+missing hash) to the run's `package-manifests` artifact. Their installer URLs are the GitHub
+Release assets, `https://github.com/ReimagineMedias/unflub/releases/download/v{version}/{file}`
+(stable URLs, which winget prefers). Package managers download those directly, whatever the
+app's rollout percentage says.
+
+Each one tells unflub where it came from, and none of those copies updates itself: winget passes
+`/SOURCE=winget` to the setup and Chocolatey `/SOURCE=chocolatey`, and Scoop writes
+`install-source` itself. About then says "Update with winget/Chocolatey/Scoop" (see "How the app
+updates"). Only a copy from the setup (or an MSI) updates itself.
 
 ### winget
 
 The first version is submitted by hand; after that `publish-packages.yml` opens a pull request
 for every published release, once enabled.
 
-1. After v0.1.0 is published, put the two setup hashes into
-   `packaging/winget/0.1.0/RMGN.unflub.installer.yaml`.
-2. `winget validate --manifest packaging\winget\0.1.0` (no warnings once the hashes differ).
-3. Test in Windows Sandbox: `winget install --manifest packaging\winget\0.1.0`, then
-   `winget uninstall RMGN.unflub`.
-4. Submit with `wingetcreate submit packaging\winget\0.1.0`, or open a PR to
+1. After v0.1.0 is published, download the Publish packages run's `package-manifests` artifact
+   and use its `winget\0.1.0` folder (real hashes) below.
+2. `winget validate --manifest winget\0.1.0` (no warnings once the hashes differ).
+3. Test in Windows Sandbox: `winget install --manifest winget\0.1.0`, then
+   `winget uninstall RMGN.unflub`. About must say "Update with winget".
+4. Submit with `wingetcreate submit winget\0.1.0`, or open a PR to
    `microsoft/winget-pkgs` adding the three files under `manifests/r/RMGN/unflub/0.1.0/`.
 5. Once it is merged: fork `microsoft/winget-pkgs` to the `ReimagineMedias` account, add
    `WINGET_TOKEN`, and set the variable `PUBLISH_PACKAGES` to `true`.
@@ -347,12 +353,14 @@ Scoop installs from a bucket, which is a Git repository of manifests.
 
 Scoop extracts the setup instead of running it. The manifest writes `install-source` with
 `scoop`, so unflub never updates itself there and About says "Update with Scoop". Its
-uninstaller removes start at login.
+uninstaller removes start at login. Extraction skips the setup's WebView2 bootstrap, so the manifest
+notes the runtime (built into Windows 11; Windows 10 may need it), and `pre_install` fails if
+`unflub.exe` or `unflub-engine.exe` is missing from the extracted files.
 
 ### Chocolatey
 
-1. Put the x64 setup hash into `packaging/chocolatey/tools/chocolateyinstall.ps1`.
-2. `choco pack packaging\chocolatey\unflub.nuspec`
+1. Take the `chocolatey` folder from the `package-manifests` artifact (real hash filled in).
+2. `choco pack chocolatey\unflub.nuspec`
 3. `choco push unflub.0.1.0.nupkg --source https://push.chocolatey.org/ --api-key <key>`; the
    community repository moderates new packages by hand.
 

@@ -3,7 +3,7 @@
     "description": "Phone-style autocorrect for every text field.",
     "homepage": "https://unflub.rmgn.net",
     "license": "MIT",
-    "notes": "unflub knows it came from Scoop and leaves updating to you: scoop update unflub",
+    "notes": "Requires the Microsoft Edge WebView2 Runtime (built into Windows 11). Update with: scoop update unflub",
     "architecture": {
         "64bit": {
             "url": "https://github.com/ReimagineMedias/unflub/releases/download/v0.1.0/unflub_0.1.0_x64-setup.exe#/dl.7z",
@@ -15,6 +15,7 @@
         }
     },
     "pre_install": [
+        "foreach ($exe in 'unflub.exe', 'unflub-engine.exe') { if (!(Test-Path (Join-Path $dir $exe))) { throw ('Missing extracted payload: ' + $exe) } }",
         "Remove-Item (Join-Path $dir '$PLUGINSDIR'), (Join-Path $dir 'uninstall.exe') -Recurse -Force -ErrorAction SilentlyContinue",
         "# Tells unflub it came from Scoop, so it shows 'Update with Scoop' instead of updating itself.",
         "Set-Content -Path (Join-Path $dir 'install-source') -Value 'scoop' -NoNewline"

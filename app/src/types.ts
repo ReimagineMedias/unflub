@@ -81,7 +81,7 @@ export interface StatsView {
 }
 
 /** Mirrors `InstallSource` in src-tauri/src/install.rs. */
-export type InstallSource = "installer" | "winget" | "scoop" | "store" | "portable";
+export type InstallSource = "installer" | "winget" | "chocolatey" | "scoop" | "store" | "portable";
 
 /** Mirrors `AppInfo` in src-tauri/src/lib.rs and `Managed` in managed.rs. */
 export interface AppInfo {

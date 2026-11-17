@@ -197,7 +197,7 @@ export default function App() {
   const u = updateState;
   const pending = (u.state === "ready" || u.state === "available") && laterFor !== u.version ? u : null;
   const source = info?.installSource ?? "installer";
-  const selfUpdates = source === "installer" || source === "winget";
+  const selfUpdates = source === "installer";
   const mainMode = MAIN_MODES.find((m) => m.value === s.mode);
   const singleEngine = s.mode === "system-only" || s.mode === "bundled-only";
 
@@ -403,7 +403,7 @@ export default function App() {
                       {pending.critical && <em className="tag">{t("about.critical")}</em>}
                     </span>
                     <small>{
-                      !selfUpdates ? t(source === "scoop" ? "about.via.scoop" : source === "store" ? "about.via.store" : "about.via.portable")
+                      !selfUpdates ? t(source === "scoop" ? "about.via.scoop" : source === "winget" ? "about.via.winget" : source === "chocolatey" ? "about.via.chocolatey" : source === "store" ? "about.via.store" : "about.via.portable")
                       : t(pending.state === "ready" ? "about.ready.hint" : "about.available.hint")
                     }</small>
                     {pending.notes && (

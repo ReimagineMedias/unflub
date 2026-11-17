@@ -357,8 +357,9 @@ Releases; the only thing unflub posts is usage stats to api.rmgn.net (contract:
   and in the tray.
 - **Machine policy** in `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`) overrides the user's
   switch; the window shows "Managed by your organization".
-- **Who updates** depends on `install-source` beside `unflub.exe` (`install.rs`): the setup and
-  winget update themselves; Scoop, Store and portable copies are told to use their tool.
+- **Who updates** depends on `install-source` beside `unflub.exe` (`install.rs`): only the setup's
+  copies update themselves; winget, Chocolatey, Scoop and Store copies are told to use their
+  tool, and portable copies to download the new version.
 - **Settings file** `settings.json` has a `schemaVersion`; `migrations.rs` upgrades older files
   step by step and keeps a `.v<N>` copy. Fields from a newer unflub are kept and written back.
 

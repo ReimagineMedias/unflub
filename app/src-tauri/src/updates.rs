@@ -9,8 +9,8 @@
 //!   the computer. The first check runs about two minutes after launch, then every 24 hours
 //!   plus up to 90 random minutes, and also on "Check now". Never more than once an hour (or the
 //!   manifest's `min_check_interval_h`).
-//! - **Who updates.** Only copies from the setup or winget update themselves (`install.rs`);
-//!   Scoop, Store and portable copies are told to update with their tool. A machine policy
+//! - **Who updates.** Only copies from the setup update themselves (`install.rs`); winget,
+//!   Chocolatey, Scoop, Store and portable copies are told to update with their tool. A machine policy
 //!   (`managed.rs`) can turn update checks off entirely.
 //! - **Download.** With automatic updates on, a release build downloads the update in the
 //!   background, verifies it against the public key in `tauri.conf.json` and the SHA-256 and
@@ -495,6 +495,11 @@ fn restore_download(app: &AppHandle) {
     let Ok(text) = fs::read_to_string(updates.pending_path()) else {
         return;
     };
+    // Downloaded before a package manager took this copy over: it is that tool's to update.
+    if !app.state::<crate::AppInfo>().install_source.self_updates() {
+        updates.discard_download();
+        return;
+    }
     let restore = || -> Option<(Found, (PathBuf, [u8; 32]))> {
         let pending: PendingFile = serde_json::from_str(&text).ok()?;
         let update = updater(app, &pending.version)

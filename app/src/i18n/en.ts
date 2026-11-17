@@ -230,6 +230,8 @@ export const en = {
   "about.check.manual": "unflub checks once a day and tells you. Automatic updates are off.",
   "about.check.managed": "Updates are managed by your organization.",
   "about.via.scoop": "Update with Scoop: scoop update unflub",
+  "about.via.winget": "Update with winget: winget upgrade RMGN.unflub",
+  "about.via.chocolatey": "Update with Chocolatey: choco upgrade unflub",
   "about.via.store": "Update from the Microsoft Store.",
   "about.via.portable": "Download the new version from unflub.rmgn.net.",
   "about.via.download": "Get it",

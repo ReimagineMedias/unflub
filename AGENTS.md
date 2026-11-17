@@ -101,8 +101,8 @@ Repo is private until v0.1, then flipped public.
   GitHub Release assets or dl.rmgn.net (302 to them); redirects only to that GitHub path and GitHub's asset hosts
   (`links.rs`). Update requests carry only `User-Agent`; no install id. `X-First: week,month` goes only on the daily stats report (contract v2). `keys.rs` still holds a PLACEHOLDER
   key (verifies nothing); release CI fails until the real one from rmgn-api is in. `autoUpdate` downloads + verifies in the background to `%LOCALAPPDATA%\ca.rmgn.unflub\updates`
-  (SHA-256 re-checked before install); install only on Restart now or tray Quit. Only `install-source` = installer or
-  winget self-updates (`install.rs`). Release builds only.
+  (SHA-256 re-checked before install); install only on Restart now or tray Quit. Only `install-source` = installer
+  self-updates (`install.rs`); winget, chocolatey, scoop, store show "Update with ..." instead. Release builds only.
 - Privacy/network map is in `docs/architecture.md#network-and-privacy`. Usage stats (`usage.rs`) and crash reports
   (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON with a first-run choice; tests pin the
   payload keys to the contract allowlist. Manifest flags (`remote.rs`) may only switch things off (tested). Machine
