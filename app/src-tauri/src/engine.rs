@@ -17,7 +17,10 @@
 //!   in-process resume rebuilt too).
 //! - **Crashes** restart it with backoff: 1 s, doubling up to 5 min, back to 1 s once it has run
 //!   for a minute. A panic leaves a scrubbed marker that `crash.rs` turns into the usual
-//!   opt-in report.
+//!   opt-in report. An engine that can't install the keyboard hook (`Ready { hooked: false }`)
+//!   or never says it is ready within [`READY_TIMEOUT`] counts as a failed start: it is stopped
+//!   and started again with the same backoff, and the tray says so meanwhile
+//!   ([`Observed::HookUnavailable`]).
 //! - **Quit and updates** send `Shutdown` and wait for the process (killing it after 3 s); the
 //!   updater calls this before the installer runs, so `unflub-engine.exe` is never locked.
 //!
@@ -71,6 +74,31 @@ pub enum Observed {
     InputInterference {
         active: bool,
     },
+    /// The engine couldn't install the keyboard hook (or never got ready) and is retried with
+    /// backoff; `!active`: a later start hooked the keyboard.
+    HookUnavailable {
+        active: bool,
+    },
+}
+
+/// How long a started engine may take to report `Ready` before it counts as a failed start.
+pub const READY_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Is `Ready { hooked }` a failed start? Only when the engine was meant to hook the keyboard.
+fn hook_start_failed(expects_hook: bool, hooked: bool) -> bool {
+    expects_hook && !hooked
+}
+
+/// When the supervisor next has to act on its own: a restart after backoff, or a started
+/// engine's readiness deadline, whichever is first.
+fn next_wake(
+    next_start: Option<std::time::Instant>,
+    ready_by: Option<std::time::Instant>,
+) -> Option<std::time::Instant> {
+    match (next_start, ready_by) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 pub type Observer = Arc<dyn Fn(Observed) + Send + Sync>;
@@ -181,7 +209,9 @@ mod host {
     use unflub_engine::protocol::{FromEngine, ToEngine};
     use unflub_engine::{frame, session};
 
-    use super::{backoff, engine_settings, failures_after, Launch, Observed, Observer};
+    use super::{
+        backoff, engine_settings, failures_after, Launch, Observed, Observer, READY_TIMEOUT,
+    };
     use crate::remote::RemoteFlags;
     use crate::settings::Settings;
     use crate::undo_counts::UndoCounts;
@@ -200,6 +230,11 @@ mod host {
         Flags(RemoteFlags),
         /// The engine of this generation closed its pipe.
         Exited(u64),
+        /// The engine of this generation reported `Ready`.
+        Ready {
+            generation: u64,
+            hooked: bool,
+        },
         Shutdown,
     }
 
@@ -223,7 +258,13 @@ mod host {
             on_learned: impl FnMut(String) + Send + 'static,
         ) -> Self {
             let (tx, rx) = mpsc::channel();
+            // `--test-ipc` engines never hook, on purpose.
+            let expects_hook = launch
+                .as_ref()
+                .is_some_and(|l| !l.args.iter().any(|a| a == "--test-ipc"));
             let supervisor = Supervisor {
+                expects_hook,
+                hook_unavailable: false,
                 launch,
                 undo_counts,
                 settings,
@@ -282,10 +323,16 @@ mod host {
         generation: u64,
         started: Instant,
         reader: Option<JoinHandle<()>>,
+        /// It reported `Ready`.
+        ready: bool,
     }
 
     struct Supervisor {
         launch: Option<Launch>,
+        /// A started engine must hook the keyboard (false for `--test-ipc` test engines).
+        expects_hook: bool,
+        /// The last start couldn't hook the keyboard; told to the observer on every change.
+        hook_unavailable: bool,
         undo_counts: Arc<UndoCounts>,
         settings: Settings,
         flags: RemoteFlags,
@@ -305,12 +352,28 @@ mod host {
         fn run(mut self, rx: Receiver<Cmd>) {
             loop {
                 self.converge();
-                let cmd = match self.next_start {
+                // Wake for a pending restart, or for a started engine that hasn't said it's
+                // ready.
+                let ready_by = self
+                    .running
+                    .as_ref()
+                    .filter(|r| !r.ready)
+                    .map(|r| r.started + READY_TIMEOUT);
+                let wake = super::next_wake(self.next_start, ready_by);
+                let cmd = match wake {
                     Some(at) => {
                         match rx.recv_timeout(at.saturating_duration_since(Instant::now())) {
                             Ok(cmd) => cmd,
                             Err(RecvTimeoutError::Timeout) => {
-                                self.next_start = None;
+                                if self.next_start.is_some_and(|t| t <= Instant::now()) {
+                                    self.next_start = None;
+                                }
+                                if ready_by.is_some_and(|t| t <= Instant::now()) {
+                                    eprintln!(
+                                        "autocorrect: the engine never got ready; restarting it"
+                                    );
+                                    self.failed_start();
+                                }
                                 continue;
                             }
                             Err(RecvTimeoutError::Disconnected) => Cmd::Shutdown,
@@ -334,6 +397,7 @@ mod host {
                         self.configure();
                     }
                     Cmd::Exited(generation) => self.on_exit(generation),
+                    Cmd::Ready { generation, hooked } => self.on_ready(generation, hooked),
                     Cmd::Shutdown => break,
                 }
             }
@@ -343,9 +407,10 @@ mod host {
         /// Start or stop the engine to match the settings.
         fn converge(&mut self) {
             if !self.settings.enabled {
-                // Pause: no process, no hook.
+                // Pause: no process, no hook, and nothing to warn about.
                 self.stop();
                 self.next_start = None;
+                self.set_hook_unavailable(false);
                 return;
             }
             if self.running.is_some() || self.next_start.is_some() {
@@ -452,7 +517,9 @@ mod host {
                 std::thread::Builder::new()
                     .name("unflub-engine-io".into())
                     .spawn(move || {
-                        read_engine(&pipe, &observer, &learned, &words);
+                        read_engine(&pipe, &observer, &learned, &words, &|hooked| {
+                            let _ = tx.send(Cmd::Ready { generation, hooked });
+                        });
                         let _ = tx.send(Cmd::Exited(generation));
                     })?
             };
@@ -463,7 +530,44 @@ mod host {
                 generation,
                 started: Instant::now(),
                 reader: Some(reader),
+                ready: false,
             })
+        }
+
+        /// The engine says it is ready. Without the keyboard hook that is a failed start.
+        fn on_ready(&mut self, generation: u64, hooked: bool) {
+            let Some(running) = self.running.as_mut().filter(|r| r.generation == generation) else {
+                return;
+            };
+            running.ready = true;
+            if !super::hook_start_failed(self.expects_hook, hooked) {
+                self.set_hook_unavailable(false);
+                return;
+            }
+            eprintln!("autocorrect: the engine couldn't install the keyboard hook; retrying");
+            self.failed_start();
+        }
+
+        /// A start that didn't give us a working hook: stop it, say so, and try again after
+        /// the backoff (as for a crash).
+        fn failed_start(&mut self) {
+            let started = self.running.as_ref().map(|r| r.started);
+            self.stop();
+            self.set_hook_unavailable(true);
+            self.failures = failures_after(
+                self.failures,
+                started.map_or(Duration::ZERO, |s| s.elapsed()),
+            );
+            self.next_start = Some(Instant::now() + super::backoff(self.failures));
+        }
+
+        fn set_hook_unavailable(&mut self, unavailable: bool) {
+            if self.hook_unavailable != unavailable {
+                self.hook_unavailable = unavailable;
+                (self.observer)(Observed::HookUnavailable {
+                    active: unavailable,
+                });
+            }
         }
 
         /// The engine's pipe closed without our asking: count it and restart with backoff.
@@ -530,7 +634,13 @@ mod host {
     }
 
     /// Hand the engine's messages to the app until its pipe closes.
-    fn read_engine(pipe: &Pipe, observer: &Observer, learned: &Learned, words: &AtomicU64) {
+    fn read_engine(
+        pipe: &Pipe,
+        observer: &Observer,
+        learned: &Learned,
+        words: &AtomicU64,
+        ready: &dyn Fn(bool),
+    ) {
         loop {
             let body = match frame::read(&mut &*pipe) {
                 Ok(Some(body)) => body,
@@ -583,11 +693,7 @@ mod host {
                 FromEngine::InputInterference { active } => {
                     observer(Observed::InputInterference { active })
                 }
-                FromEngine::Ready { hooked } => {
-                    if !hooked {
-                        eprintln!("autocorrect: the engine couldn't install the keyboard hook");
-                    }
-                }
+                FromEngine::Ready { hooked } => ready(hooked),
                 FromEngine::Hello { .. } => {}
             }
         }
@@ -732,6 +838,28 @@ mod tests {
         let p = engine_settings(&Settings::default(), &flags, Vec::new()).pill;
         assert_eq!(p.style, protocol::PillStyle::Off);
         assert!(!p.uia_caret);
+    }
+
+    /// Review finding 7: an engine without its hook is a failed start, and the supervisor
+    /// wakes for whichever comes first, a restart or a readiness deadline.
+    #[test]
+    fn a_hookless_start_fails_and_readiness_has_a_deadline() {
+        assert!(hook_start_failed(true, false));
+        assert!(!hook_start_failed(true, true));
+        assert!(
+            !hook_start_failed(false, false),
+            "--test-ipc engines never hook"
+        );
+        let now = std::time::Instant::now();
+        let later = now + Duration::from_secs(5);
+        assert_eq!(next_wake(None, None), None);
+        assert_eq!(next_wake(Some(later), None), Some(later));
+        assert_eq!(next_wake(None, Some(now)), Some(now));
+        assert_eq!(next_wake(Some(later), Some(now)), Some(now));
+        assert!(
+            READY_TIMEOUT > Duration::from_secs(5),
+            "room for a cold dictionary build"
+        );
     }
 
     #[test]

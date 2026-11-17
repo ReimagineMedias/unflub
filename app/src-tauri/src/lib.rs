@@ -59,6 +59,8 @@ struct AppState {
     pending_learned: Mutex<Vec<String>>,
     /// The engine paused itself because another program interferes with keyboard input.
     interference: Mutex<Interference>,
+    /// The engine couldn't install the keyboard hook and is being retried with backoff.
+    hook_unavailable: std::sync::atomic::AtomicBool,
 }
 
 /// See [`AppState::interference`]. Each start is also counted in the anonymous usage stats as
@@ -436,6 +438,17 @@ fn observe(app: &AppHandle, event: Observed) {
             }
             set_interference(app, active);
         }
+        Observed::HookUnavailable { active } => {
+            if active {
+                // No field of its own in the contract's health group: a failed hook start is
+                // counted with the hook (re)installs it leads to.
+                usage.hook_reinstall();
+            }
+            app.state::<AppState>()
+                .hook_unavailable
+                .store(active, std::sync::atomic::Ordering::Relaxed);
+            refresh_tray(app, current_settings(app).enabled);
+        }
         Observed::EngineCrashed => {
             set_interference(app, false);
             usage.crash();
@@ -546,20 +559,27 @@ fn tray_image(enabled: bool) -> Image<'static> {
     Image::from_bytes(bytes).expect("bundled tray icon is a valid PNG")
 }
 
-fn tooltip(enabled: bool, interference: bool) -> &'static str {
-    match (enabled, interference) {
-        (true, false) => strings::TOOLTIP,
-        (true, true) => strings::TOOLTIP_INTERFERENCE,
-        (false, _) => strings::TOOLTIP_PAUSED,
+fn tooltip(enabled: bool, interference: bool, hook_unavailable: bool) -> &'static str {
+    match (enabled, interference, hook_unavailable) {
+        (false, _, _) => strings::TOOLTIP_PAUSED,
+        (true, _, true) => strings::TOOLTIP_HOOK_UNAVAILABLE,
+        (true, true, false) => strings::TOOLTIP_INTERFERENCE,
+        (true, false, false) => strings::TOOLTIP,
     }
 }
 
 fn refresh_tray(app: &AppHandle, enabled: bool) {
-    let interference = app.state::<AppState>().interference.lock().unwrap().active;
+    let state = app.state::<AppState>();
+    let interference = state.interference.lock().unwrap().active;
+    let hook_unavailable = state
+        .hook_unavailable
+        .load(std::sync::atomic::Ordering::Relaxed);
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        // Paused by itself looks paused.
-        let _ = tray.set_icon(Some(tray_image(enabled && !interference)));
-        let _ = tray.set_tooltip(Some(tooltip(enabled, interference)));
+        // Paused by itself, or not working yet, looks paused.
+        let _ = tray.set_icon(Some(tray_image(
+            enabled && !interference && !hook_unavailable,
+        )));
+        let _ = tray.set_tooltip(Some(tooltip(enabled, interference, hook_unavailable)));
     }
     if let Some(item) = app.state::<AppState>().toggle.lock().unwrap().as_ref() {
         let _ = item.set_checked(enabled);
@@ -692,7 +712,7 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
     let menu = tray_menu(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_image(enabled))
-        .tooltip(tooltip(enabled, false))
+        .tooltip(tooltip(enabled, false, false))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -819,6 +839,7 @@ pub fn run() {
                 engine: Mutex::new(None),
                 pending_learned: Mutex::new(Vec::new()),
                 interference: Mutex::default(),
+                hook_unavailable: Default::default(),
             });
             let handle = app.handle();
             let learner = handle.clone();
@@ -933,10 +954,17 @@ mod tests {
 
     #[test]
     fn the_tray_says_when_unflub_paused_itself() {
-        assert_eq!(tooltip(true, false), strings::TOOLTIP);
-        assert_eq!(tooltip(true, true), strings::TOOLTIP_INTERFERENCE);
+        assert_eq!(tooltip(true, false, false), strings::TOOLTIP);
+        assert_eq!(tooltip(true, true, false), strings::TOOLTIP_INTERFERENCE);
+        // Review finding 7: a hook that couldn't be installed shows, until it works.
+        assert_eq!(
+            tooltip(true, false, true),
+            strings::TOOLTIP_HOOK_UNAVAILABLE
+        );
+        assert_eq!(tooltip(true, true, true), strings::TOOLTIP_HOOK_UNAVAILABLE);
         // The user's pause wins.
-        assert_eq!(tooltip(false, true), strings::TOOLTIP_PAUSED);
+        assert_eq!(tooltip(false, true, false), strings::TOOLTIP_PAUSED);
+        assert_eq!(tooltip(false, false, true), strings::TOOLTIP_PAUSED);
     }
 
     #[test]
