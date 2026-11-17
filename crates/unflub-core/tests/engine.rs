@@ -747,3 +747,46 @@ fn technical_words_found_by_the_quality_corpus() {
     let text = "a truthy or falsy value, crypto keys, implementors ";
     assert_eq!(t.type_str(text), text);
 }
+
+/// Owner live test: Ctrl+Backspace leaves the caret at a word start, so the next word counts.
+#[test]
+fn ctrl_backspace_leaves_a_word_start() {
+    // After a whole word and its space.
+    let mut t = brb();
+    t.type_str("ok wrong ");
+    t.key(Key::DeleteWordLeft);
+    assert_eq!(t.text, "ok ");
+    assert_eq!(t.type_str("brb "), "ok be right back ");
+    // Typos too.
+    let mut t = Typist::bundled();
+    t.type_str("ok wrong ");
+    t.key(Key::DeleteWordLeft);
+    assert_eq!(t.type_str("teh "), "ok the ");
+    // Mid-word: the half-typed word goes, the next one is fixed.
+    let mut t = Typist::bundled();
+    t.type_str("ok wro");
+    t.key(Key::DeleteWordLeft);
+    assert_eq!(t.text, "ok ");
+    assert_eq!(t.type_str("teh "), "ok the ");
+    // Right after a click (a reset), Ctrl+Backspace still means a word start.
+    let mut t = brb();
+    t.key(Key::Reset);
+    t.key(Key::DeleteWordLeft);
+    assert_eq!(t.type_str("brb "), "be right back ");
+}
+
+/// Ctrl+Backspace isn't an undo, and with a Backspace held the adapter sends that first.
+#[test]
+fn ctrl_backspace_never_undoes() {
+    let mut t = mode(UndoMode::Once, 2);
+    t.type_str("ok teh ");
+    assert_eq!(t.press(Key::DeleteWordLeft), Action::Pass);
+    let mut t = mode(UndoMode::Twice, 2);
+    t.type_str("ok teh ");
+    assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
+    assert_eq!(t.press(Key::DeleteWordLeft), Action::Pass);
+    assert_eq!(
+        t.text, "ok ",
+        "the held Backspace went first, then the word"
+    );
+}

@@ -42,7 +42,7 @@ impl Gate {
         }
         match key {
             Key::Char(_) | Key::Backspace => GateDecision::Drop,
-            Key::Boundary(_) | Key::Reset => {
+            Key::Boundary(_) | Key::Reset | Key::DeleteWordLeft => {
                 self.suppressing = false;
                 GateDecision::ResetOnly
             }

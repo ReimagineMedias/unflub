@@ -40,6 +40,10 @@ pub enum Key {
     Boundary(char),
     /// Backspace with no modifiers.
     Backspace,
+    /// Ctrl+Backspace: the app deleted back to a word start. Exactly what it deleted varies by
+    /// app (a word, its trailing spaces, a run of punctuation), so the text before the caret is
+    /// unknown, but the caret now sits at a word start: the next word counts as fully seen.
+    DeleteWordLeft,
     /// Anything that moves the caret or makes our view of the text stale: arrows, Home/End,
     /// mouse clicks, focus changes, shortcuts with Ctrl/Alt/Win, IME composition.
     Reset,
@@ -314,6 +318,7 @@ impl Engine {
         }
         match key {
             Key::Reset => self.session.reset(),
+            Key::DeleteWordLeft => self.session.reset_at_word_start(),
             Key::Backspace => match (self.config.undo_mode, undo) {
                 (UndoMode::Off, _) | (_, None) => self.session.pop(),
                 (UndoMode::Once, Some(w)) => return self.undo(w.fix),

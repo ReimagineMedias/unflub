@@ -35,7 +35,9 @@ app stay the same.
    opening bracket or quote, the hook passes `caret_at_word_start(generation)` to the engine
    before the next key. It counts only for the reset it was asked about and only until the
    first word's boundary; a late, stale or unknown answer keeps the default. So the first word
-   in an empty prompt box (`brb` in a chat or an AI agent's input) is fixed too.
+   in an empty prompt box (`brb` in a chat or an AI agent's input) is fixed too. Ctrl+Backspace
+   (`Key::DeleteWordLeft`) is the other exception: apps differ in exactly what it deletes, but
+   the caret ends at a word start, so the next word is fully seen. Ctrl+Delete stays a reset.
 3. On a boundary key (space, punctuation, Enter) the engine decides whether the word is wrong
    and what it should be. If it is confident, it returns `Action::Replace`.
 4. The adapter swallows the boundary key and hands backspaces plus the fixed word and the

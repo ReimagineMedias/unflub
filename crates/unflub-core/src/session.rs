@@ -60,6 +60,12 @@ impl Session {
         self.generation += 1;
     }
 
+    /// Forget everything but that the caret is at a word start (after Ctrl+Backspace).
+    pub fn reset_at_word_start(&mut self) {
+        self.reset();
+        self.front_ws = true;
+    }
+
     /// The adapter found that the text before the caret ended at a word boundary when this
     /// session started (empty field, or whitespace before the caret). Taken only while nothing
     /// but the first word has been typed: then that word counts as fully observed. Returns

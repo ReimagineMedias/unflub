@@ -49,6 +49,18 @@ impl Typist {
                     self.text.pop();
                 }
                 Key::Reset => {}
+                // Like Windows edit controls: spaces left of the caret, then the word.
+                Key::DeleteWordLeft => {
+                    while self.text.ends_with(char::is_whitespace) {
+                        self.text.pop();
+                    }
+                    while self
+                        .text
+                        .ends_with(|c: char| c.is_alphanumeric() || c == '\'')
+                    {
+                        self.text.pop();
+                    }
+                }
             },
             Action::Replace(r) | Action::Undo(r) => {
                 for _ in 0..r.delete {
