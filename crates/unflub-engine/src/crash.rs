@@ -19,6 +19,7 @@ use std::path::PathBuf;
 pub const WITHHELD: &str = "panic message withheld: unflub-engine handles typed text";
 
 /// The engine's exit code after a panic (the same as Rust's for an unwinding panic).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const PANIC_EXIT: u32 = 101;
 
 pub fn install(path: Option<PathBuf>) {

@@ -76,6 +76,7 @@ impl UndoCounts {
     }
 
     /// Changes on every [`Self::clear`].
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::Relaxed)
     }
@@ -110,6 +111,7 @@ impl UndoCounts {
     }
 
     /// `(typo, fix, times)` for the engine.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn snapshot(&self) -> Vec<(String, String, u32)> {
         self.counts
             .lock()
