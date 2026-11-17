@@ -18,7 +18,8 @@
 //! - Keys typed into elevated (administrator) windows are invisible to a non-elevated hook,
 //!   and injection into them is blocked by UIPI. unflub does nothing there.
 
-use unflub_core::{Action, Context, Engine, Key};
+/// Re-exported so callers can name the hook's trait bound without depending on core directly.
+pub use unflub_core::Corrector;
 
 pub mod focus;
 pub mod inject;
@@ -35,15 +36,3 @@ pub mod spell;
 pub use hook::{Hook, HookEvent, HookOptions, HookReport};
 #[cfg(windows)]
 pub use spell::WindowsSpellBackend;
-
-/// Anything that turns keys into actions. The hook is generic over this so it can be driven by
-/// the real [`Engine`] or by a test double.
-pub trait Corrector {
-    fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action;
-}
-
-impl Corrector for Engine {
-    fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action {
-        Engine::on_key(self, key, ctx)
-    }
-}

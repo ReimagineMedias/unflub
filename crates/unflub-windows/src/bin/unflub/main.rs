@@ -109,7 +109,7 @@ mod win {
                     None
                 }
             };
-            println!("unflub: starting the engine (use --demo until the core engine PR lands)");
+            println!("unflub: engine ready. Type anywhere; Backspace right after a fix undoes it. Ctrl+C to stop.");
             let config = Config {
                 excluded_apps: args.exclude,
                 ..Config::default()
