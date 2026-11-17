@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import Hero from "../components/Hero.astro";
+import CloseUp from "../components/CloseUp.astro";
 import Everywhere from "../components/Everywhere.astro";
 import Undo from "../components/Undo.astro";
 import Speed from "../components/Speed.astro";
@@ -15,14 +16,19 @@ import "../styles/scenes.css";
 
 <Base
   title="unflub: free phone-style autocorrect for every app on Windows"
-  description="unflub fixes typos the moment you finish a word, in any app on your computer. Free, open source and offline: nothing you type leaves your machine."
+  description="unflub fixes typos the moment you finish a word, in any app on your computer. Free and open source, and nothing you type leaves your computer."
   schema={[website, softwareApplication, faqPage]}
 >
   <Hero />
-  <Everywhere />
-  <Undo />
-  <Speed />
-  <Privacy />
+  <CloseUp />
+  <!-- Night: the page sinks to near-black for the product story, then daylight returns for settings and questions. -->
+  <span class="dusk" aria-hidden="true"></span>
+  <div class="story night">
+    <Everywhere />
+    <Undo />
+    <Speed />
+    <Privacy />
+  </div>
   <Settings />
   <Compare />
   <Faq />

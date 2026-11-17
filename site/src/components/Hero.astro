@@ -21,62 +21,69 @@ const chats = [
     </h1>
     <p class="lead">
       Phone-style autocorrect for every text box on your computer. unflub fixes a typo the moment you finish the word, in any app.
-      Free and open source. Nothing you type leaves your computer.
     </p>
     <div class="cta-row">
       <DownloadButton />
       <a class="btn btn-quiet" href={SITE.repo}>View on GitHub</a>
     </div>
-    <p class="small fine">Windows 10 and 11. Mac and Linux next.</p>
+    <p class="small fine">Windows 10 and 11. Mac and Linux next. Free and open source, with no paid tier.</p>
   </div>
 
-  <div class="stage wrap">
-    <Window
-      title="Chat"
-      class="chat"
-      label="A chat app. A message is typed with typos, and unflub fixes each one as the word ends: teh becomes the, with a small capsule above the word offering undo."
-      data-hero
-    >
-      <aside class="side">
-        <div class="search">Search</div>
-        <ul>
-          {
-            chats.map((c) => (
-              <li class:list={{ active: c.active }}>
-                <span class="av">{c.initials}</span>
-                <span class="meta">
-                  <b>{c.name}</b>
-                  <span>{c.line}</span>
-                </span>
-              </li>
-            ))
-          }
-        </ul>
-      </aside>
-      <div class="main">
-        <div class="head">
-          <b>Friday dinner</b>
-          <span>Maya, Theo and you</span>
-        </div>
-        <div class="log">
-          <div class="track">
-            <div class="msg them"><span class="av">M</span><p><span class="who">Maya</span>Dinner Friday? I found a dumpling place downtown.</p></div>
-            <div class="msg me"><p>Yes please.</p></div>
-            <div class="msg them"><span class="av">M</span><p><span class="who">Maya</span>Table for three at 7. Who's in?</p></div>
-            <div class="msg them"><span class="av">T</span><p><span class="who">Theo</span>In. Starving already.</p></div>
-          </div>
-        </div>
-        <div class="composer">
-          <div class="field" data-placeholder="Message Friday dinner">
-            <span class="ink">Running late, <span class="fx lit">the<Pill from="teh" to="the" /></span> <span class="caret"></span></span>
-            <span class="pill" aria-hidden="true"></span>
-          </div>
-          <span class="send" aria-hidden="true">
-            <svg viewBox="0 0 20 20"><path d="M3.5 10h12m0 0-5-5m5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-          </span>
-        </div>
+  <div class="wrap">
+    <div class="studio">
+      <div class="object" aria-hidden="true">
+        <span class="studio-pill"><s>teh</s><span class="arr">→</span><b>the</b><kbd>⌫ undo</kbd></span>
+        <span class="contact"></span>
       </div>
-    </Window>
+      <div class="studio-chat">
+        <Window
+          title="Chat"
+          class="chat"
+          label="A chat app. A message is typed with typos, and unflub fixes each one as the word ends: teh becomes the, with a small capsule above the word offering undo."
+          data-hero
+        >
+          <aside class="side">
+            <div class="search">Search</div>
+            <ul>
+              {
+                chats.map((c) => (
+                  <li class:list={{ active: c.active }}>
+                    <span class="av">{c.initials}</span>
+                    <span class="meta">
+                      <b>{c.name}</b>
+                      <span>{c.line}</span>
+                    </span>
+                  </li>
+                ))
+              }
+            </ul>
+          </aside>
+          <div class="main">
+            <div class="head">
+              <b>Friday dinner</b>
+              <span>Maya, Theo and you</span>
+            </div>
+            <div class="log">
+              <div class="track">
+                <div class="msg them"><span class="av">M</span><p><span class="who">Maya</span>Dinner Friday? I found a dumpling place downtown.</p></div>
+                <div class="msg me"><p>Yes please.</p></div>
+                <div class="msg them"><span class="av">M</span><p><span class="who">Maya</span>Table for three at 7. Who's in?</p></div>
+                <div class="msg them"><span class="av">T</span><p><span class="who">Theo</span>In. Starving already.</p></div>
+              </div>
+            </div>
+            <div class="composer">
+              <div class="field" data-placeholder="Message Friday dinner">
+                <span class="ink">Running late, <span class="fx lit">the<Pill from="teh" to="the" /></span> <span class="caret"></span></span>
+                <span class="pill" aria-hidden="true"></span>
+              </div>
+              <span class="send" aria-hidden="true">
+                <svg viewBox="0 0 20 20"><path d="M3.5 10h12m0 0-5-5m5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+              </span>
+            </div>
+          </div>
+        </Window>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -86,7 +93,7 @@ const chats = [
 
 <style>
   .hero {
-    padding-top: clamp(24px, 2.2vw, 32px);
+    padding-top: calc(var(--header) + clamp(16px, 4vh, 48px));
     overflow: clip;
   }
 
@@ -94,7 +101,7 @@ const chats = [
     display: grid;
     justify-items: center;
     text-align: center;
-    gap: 20px;
+    gap: clamp(14px, 2.4vh, 22px);
   }
 
   h1 span {
@@ -123,9 +130,65 @@ const chats = [
     }
   }
 
-  .lead {
-    max-width: 38em;
-    font-size: 1.25rem;
+  .copy .lead {
+    max-width: 34em;
+  }
+
+  .cta-row {
+    justify-content: center;
+  }
+
+  .fine {
+    margin-top: -4px;
+  }
+
+  /* A studio card: key light from above, falling off toward the floor. The capsule floats over the window. */
+  .studio {
+    position: relative;
+    margin-top: clamp(24px, 4.5vh, 44px);
+    padding: clamp(48px, 8vh, 72px) clamp(14px, 5vw, 64px) 0;
+    border-radius: clamp(24px, 3vw, 40px);
+    overflow: clip;
+    background:
+      radial-gradient(70% 55% at 50% 0%, #ffffff 0%, rgba(255, 255, 255, 0) 70%),
+      linear-gradient(var(--surface), #eee9e7);
+  }
+
+  .object {
+    position: absolute;
+    z-index: 2;
+    top: clamp(14px, 2.6vh, 24px);
+    left: 50%;
+    translate: -50% 0;
+    display: grid;
+    justify-items: center;
+  }
+
+  .object .studio-pill {
+    font-size: clamp(15px, min(1.8vw, 2.9vh), 26px);
+  }
+
+  .contact {
+    width: 110%;
+    height: 22px;
+    margin-top: 18px;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(45, 25, 22, 0.26), rgba(45, 25, 22, 0));
+  }
+
+  .studio-chat {
+    max-width: 1040px;
+    margin-inline: auto;
+  }
+
+  .studio-chat :global(.chat) {
+    height: clamp(300px, 50vh, 430px);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    box-shadow:
+      0 0 0 1px rgba(45, 25, 22, 0.06),
+      0 -2px 30px -8px rgba(45, 25, 22, 0.12),
+      0 30px 60px -20px rgba(45, 25, 22, 0.25);
   }
 
   /* The scene reads at share size: slightly larger than a real chat app. */
@@ -133,57 +196,50 @@ const chats = [
     font-size: 16px;
   }
 
-  @media (max-width: 600px) {
-    .lead {
-      font-size: 1.0625rem;
-    }
-  }
-
-  .cta-row {
-    justify-content: center;
-    margin-top: 6px;
-  }
-
-  .fine {
-    margin-top: -6px;
-  }
-
-  .stage {
-    margin-top: clamp(24px, 1.7vw, 24px);
-    padding-bottom: clamp(72px, 12vw, 160px);
-    perspective: 1600px;
-  }
-
   @supports (animation-timeline: view()) {
     @media (prefers-reduced-motion: no-preference) {
-      /* At rest on load; grows to full size over the first scroll, transform only.
-         The timeline sits in its own, more specific rule: the minifier would otherwise fold it into
-         the animation shorthand, which browsers reject. */
-      .stage :global(.chat) {
-        animation: settle linear both;
-        transform-origin: 50% 0%;
+      .object .studio-pill {
+        animation: lift linear both;
       }
 
-      .hero .stage :global(.chat) {
+      .contact {
+        animation: shadow-lift linear both;
+      }
+
+      .studio-chat {
+        animation: rise linear both;
+      }
+
+      /* Separate rule so the timeline is not folded into the shorthand. */
+      .studio .object .studio-pill,
+      .studio .object .contact,
+      .studio .studio-chat {
         animation-timeline: scroll(root);
-        animation-range: 0px 360px;
+        animation-range: 0px 520px;
       }
     }
   }
 
-  @keyframes settle {
+  @keyframes lift {
+    to {
+      transform: translateY(-24px) scale(1.06);
+    }
+  }
+
+  @keyframes shadow-lift {
+    to {
+      transform: scale(0.78);
+      opacity: 0.45;
+    }
+  }
+
+  @keyframes rise {
     from {
-      transform: scale(0.95);
+      transform: translateY(36px) scale(0.97);
     }
     to {
       transform: none;
     }
-  }
-
-  .stage :global(.chat) {
-    height: 410px;
-    max-width: 1080px;
-    margin-inline: auto;
   }
 
   .side {
@@ -378,8 +434,8 @@ const chats = [
   }
 
   @media (max-width: 760px) {
-    .stage :global(.chat) {
-      height: 460px;
+    .studio-chat :global(.chat) {
+      height: 440px;
     }
 
     .side {

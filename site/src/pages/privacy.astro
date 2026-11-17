@@ -5,13 +5,13 @@ import { SITE } from "../data/site";
 
 <Subpage
   title="Privacy: nothing you type leaves your computer"
-  description="Nothing you type leaves your computer. unflub counts how it's used, never what you write, and you can switch that off in one click."
+  description="Nothing you type leaves your computer. What unflub shares, with no ID attached, and how to turn it off: a daily update check, usage counts and crash reports."
   crumb="Privacy"
 >
   <h1>Nothing you type leaves your computer.</h1>
   <p class="lead">
-    unflub counts how it's used, never what you write, and you can switch that off in one click. This page lists everything it
-    sends.
+    You choose everything unflub does. No hidden settings. The code is public and free for anyone to read. Here is exactly what is
+    shared.
   </p>
 
   <h2>What you type</h2>
@@ -20,23 +20,9 @@ import { SITE } from "../data/site";
     <li>
       unflub holds the word you are typing, and the one before it for context, in memory. It never writes what you type to disk.
     </li>
+    <li>The words you misspell, and what they were fixed to, are never collected.</li>
     <li>
       Password fields are always skipped. Terminals and password managers are skipped by default, and you can add any other app.
-    </li>
-    <li>There's no account and no advertising ID. We don't sell or share data, and unflub shows no ads.</li>
-  </ul>
-
-  <h2>On by default, off in one click</h2>
-  <p>
-    These help us find bugs and see which settings people use. One switch on the General page in Settings turns off both.
-  </p>
-  <ul>
-    <li>
-      <strong>Usage stats.</strong> Counts, such as corrections per day, how often a fix gets undone, which settings are on and
-      how long a check takes. Never a word you typed.
-    </li>
-    <li>
-      <strong>Crash reports.</strong> If unflub crashes, it sends where in the code it failed. Any text is scrubbed out first.
     </li>
   </ul>
 
@@ -45,25 +31,36 @@ import { SITE } from "../data/site";
   <ul>
     <li>the unflub version, such as {SITE.version}</li>
     <li>your Windows version and processor type, x64 or ARM</li>
+    <li>three yes or no flags: whether this is the first check today, this week and this month</li>
+  </ul>
+  <p>
+    The flags let us count how many people use unflub each day, week and month. There is no ID, so nothing ties one check to
+    the next or to you. Turn off Automatic updates on the About page in Settings and unflub stops checking.
+  </p>
+
+  <h2>Usage stats and crash reports</h2>
+  <p>
+    On first run, unflub asks whether to share these. They are on unless you say no, and one switch in Settings turns them off
+    any time.
+  </p>
+  <ul>
     <li>
-      a random install ID, made when you install unflub. It isn't based on your name, your account, your hardware or anything
-      you type. It lets us count how many computers run unflub without counting one twice.
+      <strong>Usage stats.</strong> Anonymous counts, such as corrections per day, how often a fix gets undone, which settings are
+      on and how long a check takes. Never a word you typed.
+    </li>
+    <li>
+      <strong>Crash reports.</strong> If unflub crashes, it sends where in the code it failed. Any text is scrubbed out first.
     </li>
   </ul>
-  <p>Turn off Automatic updates on the About page in Settings and unflub stops checking.</p>
-
-  <h2>Off unless you turn it on: Help improve corrections</h2>
-  <p>
-    If you switch this on, unflub shares anonymous typo and fix pairs, like <em>teh</em> to <em>the</em>. It only sends pairs
-    where both words are common dictionary words, never names or numbers. We keep a pair only once at least 5 different installs
-    have sent it, so a slip that only you make is never stored.
-  </p>
 
   <h2>Your Stats page stays home</h2>
   <p>
     The Stats page in the app shows your corrections this week, the words you get wrong most and how many keystrokes unflub
     saved you. It is worked out and kept on your computer, and none of it is sent.
   </p>
+
+  <h2>No account, no ads</h2>
+  <p>There is no account and no advertising ID. We don't sell or share data, and unflub shows no ads.</p>
 
   <h2>Your settings</h2>
   <p>
@@ -73,8 +70,8 @@ import { SITE } from "../data/site";
 
   <h2>Check for yourself</h2>
   <p>
-    unflub is open source, so you do not have to take our word for any of this. <a href={SITE.repo}>Read the code on GitHub</a>,
-    or <a href={SITE.issues}>open an issue</a> if you have a question.
+    The code is public, so you do not have to take our word for any of this. <a href={SITE.repo}>Read it on GitHub</a>, or
+    <a href={SITE.issues}>open an issue</a> if you have a question.
   </p>
 
   <p class="small updated">Last updated November 2026. unflub is an <a href={SITE.org.url}>RMGN</a> product.</p>

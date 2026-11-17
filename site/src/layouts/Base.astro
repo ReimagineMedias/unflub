@@ -83,8 +83,7 @@ const graph = [organization, ...(breadcrumb ? [breadcrumb] : []), ...schema];
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <meta name="theme-color" content="#f2e6e3" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#2d1916" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" />
     <link rel="sitemap" href="/sitemap-index.xml" />
 
     {graph.map((g) => <script type="application/ld+json" set:html={JSON.stringify(g)} />)}

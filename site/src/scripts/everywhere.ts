@@ -1,21 +1,21 @@
-import { Clock, Typer, parseScript, reducedMotion } from "./typer";
+import { Clock, Typer, parseScript } from "./typer";
+import { motion, pinProgress, scrollDriven } from "./scroll";
 
-/** "Everywhere you type": the step in the middle of the screen picks the window, which replays its fix. */
+/** "Everywhere you type": one app window types at a time. With scroll timelines the rail is pinned and the scroll
+    position picks the card; otherwise the card in the middle of the screen does. */
 const section = document.querySelector<HTMLElement>("#everywhere");
-const stage = section?.querySelector<HTMLElement>("[data-ew-stage]");
 
-if (section && stage) {
-  const steps = [...section.querySelectorAll<HTMLElement>("[data-step]")];
-  const wins = [...stage.querySelectorAll<HTMLElement>("[data-ctx]")];
-  const motion = !reducedMotion();
-  const clock = new Clock(stage);
-  const typers = wins.map((w) => {
-    const field = w.querySelector<HTMLElement>(".field[data-script]");
+if (section) {
+  const figures = [...section.querySelectorAll<HTMLElement>("[data-app]")];
+  const names = [...section.querySelectorAll<HTMLButtonElement>("[data-goto]")];
+  const clock = new Clock(section);
+  const typers = figures.map((f) => {
+    const field = f.querySelector<HTMLElement>(".field[data-script]");
     return field
       ? new Typer(field, clock, { position: field.dataset["pill"] === "below" ? "below" : "above", pace: 0.9 })
       : null;
   });
-  let active = 0;
+  let current = -1;
   let controller: AbortController | null = null;
 
   const play = async (i: number): Promise<void> => {
@@ -26,40 +26,41 @@ if (section && stage) {
     controller = c;
     try {
       typer.clear();
-      await clock.wait(450, c.signal);
+      await clock.wait(380, c.signal);
       await typer.play(parseScript(typer.field.dataset["script"] ?? ""), c.signal);
     } catch {
-      // Interrupted by another step; that step takes over.
+      // Another card took over.
     }
   };
 
-  const activate = (i: number): void => {
-    if (i === active) return;
-    active = i;
-    steps.forEach((s, n) => s.classList.toggle("is-active", n === i));
-    wins.forEach((w, n) => w.classList.toggle("is-active", n === i));
+  const show = (i: number): void => {
+    if (i === current) return;
+    current = i;
+    figures.forEach((f, n) => f.classList.toggle("is-active", n === i));
+    names.forEach((b, n) => b.classList.toggle("on", n === i));
     void play(i);
   };
 
-  section.classList.add("live");
-  // On narrow screens the window sits on top, so read the step from the lower part of the screen.
-  const narrow = window.matchMedia("(max-width: 900px)").matches;
-  const io = new IntersectionObserver(
-    (entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting) activate(Number((e.target as HTMLElement).dataset["step"]));
-      }
-    },
-    { rootMargin: narrow ? "-68% 0px -24% 0px" : "-46% 0px -46% 0px" },
-  );
-  for (const s of steps) io.observe(s);
+  // Matches the `slide` keyframes: each card holds for 12% of the pin, each move takes 10%.
+  const holds = [6, 28, 50, 72, 94];
+  if (scrollDriven) {
+    pinProgress(section, (p) => show(Math.max(0, Math.min(figures.length - 1, Math.floor((p * 100 + 5) / 22)))));
+  } else {
+    show(0);
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) if (e.isIntersecting) show(figures.indexOf(e.target as HTMLElement));
+      },
+      { rootMargin: "-45% 0px -45% 0px" },
+    );
+    for (const f of figures) io.observe(f);
+  }
 
-  // The first window plays once it comes into view.
-  const first = new IntersectionObserver((entries) => {
-    if (entries.some((e) => e.isIntersecting)) {
-      first.disconnect();
-      if (active === 0) void play(0);
-    }
-  });
-  first.observe(stage);
+  for (const b of names) {
+    b.addEventListener("click", () => {
+      const i = Number(b.dataset["goto"]);
+      const span = section.offsetHeight - window.innerHeight;
+      window.scrollTo({ top: section.offsetTop + (span * (holds[i] ?? 0)) / 100 });
+    });
+  }
 }

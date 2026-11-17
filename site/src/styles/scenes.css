@@ -31,27 +31,8 @@
     0 64px 120px -48px rgba(45, 25, 22, 0.32);
 }
 
-@media (prefers-color-scheme: dark) {
-  .win {
-    --win: #1f1c1b;
-    --win-chrome: #262322;
-    --win-side: #232020;
-    --win-ink: #eeeae8;
-    --win-muted: #a59d9a;
-    --win-line: rgba(255, 255, 255, 0.08);
-    --win-field: #2c2827;
-    --win-me: #eeeae8;
-    --win-me-ink: #1f1c1b;
-    --win-them: #2e2a29;
-    --win-code: #1b1918;
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.08),
-      0 24px 48px -16px rgba(0, 0, 0, 0.5),
-      0 64px 120px -48px rgba(0, 0, 0, 0.6);
-  }
-}
-
-.tone-deep .win {
+.tone-deep .win,
+.night .win {
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.08),
     0 24px 48px -16px rgba(0, 0, 0, 0.45),
@@ -240,14 +221,6 @@
   font-weight: 600;
 }
 
-@media (prefers-color-scheme: dark) {
-  .pill {
-    box-shadow:
-      0 1px 4px 1px rgba(0, 0, 0, 0.35),
-      0 0 0 1px rgba(242, 230, 227, 0.14);
-  }
-}
-
 /* Static frame (no script, or reduced motion): the pill hangs off the fixed word itself. */
 .pill.static {
   left: -0.84em;
@@ -262,25 +235,40 @@
   bottom: auto;
 }
 
-/* A pill sitting on the page itself (not in an app window) uses the app's dark-theme capsule at night,
-   so it stays visible on espresso. */
-@media (prefers-color-scheme: dark) {
-  .loose .pill {
-    background: var(--paper);
-    color: var(--espresso);
-  }
+/* The capsule as a studio object: the same capsule, lit from above, with a soft drop shadow. Size it with font-size. */
+.studio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42em;
+  padding: 0.5em 0.9em;
+  border-radius: 999px;
+  color: var(--paper);
+  font: 400 1em/1.3 var(--ui);
+  letter-spacing: 0;
+  white-space: nowrap;
+  background: linear-gradient(180deg, #4a2c27 0%, #2d1916 46%, #241310 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+    0 1px 2px rgba(45, 25, 22, 0.3),
+    0 14px 24px -10px rgba(45, 25, 22, 0.45);
+}
 
-  .loose .pill s,
-  .loose .pill .arr {
-    color: rgba(45, 25, 22, 0.55);
-  }
+.studio-pill s,
+.studio-pill .arr {
+  color: rgba(242, 230, 227, 0.55);
+  text-decoration-thickness: 1px;
+}
 
-  .loose .pill kbd {
-    color: var(--brown);
-    background: rgba(121, 69, 58, 0.16);
-  }
+.studio-pill b {
+  font-weight: 600;
+}
 
-  .loose .fx::after {
-    background: var(--rose-on-dark);
-  }
+.studio-pill kbd {
+  margin-left: 0.25em;
+  padding: 0.09em 0.45em;
+  border-radius: 0.3em;
+  color: var(--keycap);
+  background: rgba(224, 165, 149, 0.16);
+  font: 500 0.917em/1.36 var(--mono);
 }

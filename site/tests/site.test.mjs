@@ -177,3 +177,13 @@ test("wrangler config serves dist on the custom domain", () => {
   assert.equal(cfg.assets.not_found_handling, "404-page");
   assert.deepEqual(cfg.routes, [{ pattern: "unflub.rmgn.ca", custom_domain: true }]);
 });
+
+test("privacy copy matches what the app sends", () => {
+  // The update check carries no ID, and typo pairs are never collected (owner, 2026-11-17).
+  for (const [path, doc] of pages) {
+    const text = doc.querySelector("body")?.text ?? "";
+    assert.doesNotMatch(text, /random ID|install ID|typo and fix pairs|Help improve corrections/i, `${path} has outdated privacy copy`);
+  }
+  const privacy = pages.get("/privacy/").querySelector("main")?.text ?? "";
+  assert.match(privacy, /Nothing you type leaves your computer/);
+});

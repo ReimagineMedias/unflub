@@ -1,4 +1,6 @@
-/* unflub.rmgn.ca. Brand tokens match desktop-app/app/src/styles.css (theme "unflub"). */
+/* unflub.rmgn.ca. Brand tokens match desktop-app/app/src/styles.css (theme "unflub").
+   The site is day (pure white) with one night stretch on the home page (.night), never an in-between ground.
+   Type and scenes scale with both viewport width and height, so a 1280x720 laptop is not "zoomed in". */
 
 /* Metric-matched fallback so the swap to Manrope does not move the page. */
 @font-face {
@@ -23,8 +25,9 @@
   /* Scenes depict Windows apps, so they use the system face, like the native pill. */
   --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
 
-  --ground: var(--paper);
-  --surface: #fbf5f3;
+  --ground: #ffffff;
+  --surface: #f5f2f1;
+  --night: #0b0807;
   --raised: #ffffff;
   --ink: var(--espresso);
   --muted: var(--brown);
@@ -38,26 +41,24 @@
 
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --page: min(1240px, 100% - 2 * var(--gutter));
+  --page: min(1200px, 100% - 2 * var(--gutter));
   --gutter: clamp(20px, 5vw, 56px);
-  --header: 56px;
+  /* Space the floating nav takes at the top. */
+  --header: 80px;
 
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ground: var(--espresso);
-    --surface: #3a231f;
-    --raised: #452b26;
-    --ink: var(--paper);
-    --muted: #c9a59c;
-    --accent: var(--rose-on-dark);
-    --line: rgba(242, 230, 227, 0.12);
-    --hover: rgba(242, 230, 227, 0.06);
-    --deep: #1f110f;
-    --focus: var(--rose-on-dark);
-  }
+/* The night stretch: near-black ground (a fixed layer fades in behind it), blush text, the lighter rose. */
+.night {
+  --ink: var(--paper);
+  --muted: #b8a19b;
+  --accent: var(--rose-on-dark);
+  --line: rgba(242, 230, 227, 0.12);
+  --hover: rgba(242, 230, 227, 0.06);
+  --surface: #161110;
+  --focus: var(--rose-on-dark);
+  color: var(--ink);
 }
 
 /* Dark chapters: espresso ground, blush text, the lighter rose. */
@@ -186,27 +187,27 @@ code {
 
 /* Type scale: display, chapter, section, lead, body, small. */
 .display {
-  font-size: clamp(3.25rem, 6.2vw, 6.25rem);
+  font-size: clamp(2.6rem, min(6.2vw, 9.6vh), 6.25rem);
   line-height: 0.92;
   font-weight: 780;
   letter-spacing: -0.055em;
 }
 
 .chapter {
-  font-size: clamp(2.6rem, 7.4vw, 6.25rem);
+  font-size: clamp(2.4rem, min(6.2vw, 10vh), 5.5rem);
   line-height: 0.96;
   font-weight: 760;
   letter-spacing: -0.05em;
 }
 
 .section-title {
-  font-size: clamp(2rem, 4.6vw, 3.75rem);
+  font-size: clamp(2rem, min(4.2vw, 7vh), 3.5rem);
   line-height: 1;
   letter-spacing: -0.045em;
 }
 
 .lead {
-  font-size: clamp(1.1875rem, 1.9vw, 1.5rem);
+  font-size: clamp(1.0625rem, min(1.45vw, 2.4vh), 1.3125rem);
   line-height: 1.45;
   font-weight: 500;
   color: var(--muted);
@@ -227,8 +228,8 @@ code {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-height: 52px;
-  padding: 0 26px;
+  min-height: clamp(44px, 6.4vh, 52px);
+  padding: 0 clamp(20px, 2vw, 26px);
   border-radius: 999px;
   border: 0;
   background: var(--btn-bg);
@@ -284,7 +285,7 @@ code {
 
 /* Sections */
 .chapter-block {
-  padding-block: clamp(96px, 16vw, 200px);
+  padding-block: clamp(80px, min(12vw, 18vh), 180px);
 }
 
 .section-head {
@@ -306,11 +307,11 @@ code {
 .prose {
   width: min(720px, 100% - 2 * var(--gutter));
   margin-inline: auto;
-  padding-block: clamp(40px, 8vw, 96px) clamp(80px, 12vw, 140px);
+  padding-block: calc(var(--header) + clamp(24px, 5vw, 64px)) clamp(80px, 12vw, 140px);
 }
 
 .prose h1 {
-  font-size: clamp(2.5rem, 6.4vw, 4.5rem);
+  font-size: clamp(2.5rem, min(6vw, 10vh), 4.25rem);
   line-height: 1;
   letter-spacing: -0.05em;
   margin-bottom: 24px;
@@ -390,4 +391,73 @@ code {
 .prose a.btn {
   color: var(--btn-ink);
   text-decoration: none;
+}
+
+/* The night stretch on the home page. A fixed near-black layer sits behind the content and fades in as .story
+   arrives, then out as it leaves. Opacity only. Without scroll timelines, scripts/night.ts toggles .is-night. */
+html {
+  timeline-scope: --story;
+}
+
+/* The story also paints its own night, fading in and out at its edges, so its text always sits on dark ground,
+   even where the fixed layer cannot fade (no scroll timelines, no script). */
+.story {
+  view-timeline: --story block;
+  background: linear-gradient(
+    rgba(11, 8, 7, 0),
+    var(--night) 40vh,
+    var(--night) calc(100% - 40vh),
+    rgba(11, 8, 7, 0)
+  );
+}
+
+.dusk {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--night);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+
+html.is-night .dusk {
+  opacity: 1;
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .dusk {
+      transition: none;
+      animation:
+        nightfall linear both,
+        daybreak linear forwards;
+    }
+
+    /* Separate rule so the timeline is not folded into the shorthand. */
+    body .dusk {
+      animation-timeline: --story, --story;
+      animation-range:
+        entry 15% entry 55%,
+        exit 25% exit 60%;
+    }
+  }
+}
+
+@keyframes nightfall {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes daybreak {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }

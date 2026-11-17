@@ -21,10 +21,13 @@ Repo is private until v0.1, then flipped public.
   Scripts:Edit and rmgn.ca Workers Routes:Edit + DNS:Edit only) and `CLOUDFLARE_ACCOUNT_ID`. Deploys with the lockfile's
   wrangler (`npx --no-install`), no third-party deploy action; workflow actions are SHA-pinned. Performance figures live in `site/src/data/performance.ts`; keep them in step with
   docs/performance.md. Scripts must stay external files (CSP is `script-src 'self'`; a test enforces it).
-- Site privacy copy (owner, 2026-11-17): "Nothing you type leaves your computer. unflub counts how it's used, never what
-  you write, and you can switch that off in one click." On by default (one switch off): usage counts and scrubbed crash
-  reports, plus the daily update check (version, Windows version + architecture, random install ID). Off unless turned on:
-  "Help improve corrections" (typo/fix pairs, common words only, kept once 5+ installs send the same pair). The app's Stats
-  page is local only. Never imply tracking, ads or data selling. Sponsor/star links come from `SITE.sponsor` and `SITE.repo`
-  in `site/src/data/site.ts`. The FAQ performance answer reads `performance.ts`.
+- Site privacy copy (owner, 2026-11-17): "Nothing you type leaves your computer." The update check sends app version,
+  Windows version + architecture and anonymous first-of-day/week/month flags, no ID. Anonymous usage stats and crash
+  reports are on by default with a first-run choice. Typo pairs are not collected. The app's Stats page is local only.
+  Details live on /privacy; the home section stays one short statement. A test rejects the old ID/typo-pair wording.
+  Sponsor/star links come from `SITE.sponsor` and `SITE.repo` in `site/src/data/site.ts`.
+- Site design (owner, 2026-11-17): white day page, studio-lit capsule and grey cards, espresso pill nav; the home page
+  sinks to near-black for `.story` (Everywhere, Undo, Speed, Privacy) via a fixed `.dusk` layer on a `--story` view
+  timeline, and the nav pill inverts with it. `.story` also paints its own night so text never sits on white. Size type
+  and scenes by width and height (`min(vw, vh)` in clamps); check 1280x720 and 1280x800, not just 1440x900.
 - In Git Bash, `--flag=/path`-style args get rewritten to Windows paths (MSYS); pass names, not leading-slash paths.

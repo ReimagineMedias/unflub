@@ -26,127 +26,124 @@ const steps = [
 ];
 ---
 
-<section id="everywhere" class="ew chapter-block" aria-labelledby="ew-title">
-  <div class="wrap">
-    <header class="section-head">
-      <h2 id="ew-title" class="chapter">Everywhere you type.</h2>
-      <p class="lead">
-        If it takes text, unflub fixes it. Chat, email, the search bar, the prompt box. And it knows when to stay out of the
-        way.
-      </p>
+<section id="everywhere" class="rail" aria-labelledby="ew-title">
+  <div class="view">
+    <header class="wrap head">
+      <h2 id="ew-title" class="section-title">Everywhere you type.</h2>
+      <p class="lead">If it takes text, unflub fixes it. Chat, email, the search bar, the prompt box. And it knows when to stay out of the way.</p>
     </header>
-
-    <div class="grid">
-      <div class="stage-wrap">
-        <div class="stage" data-ew-stage>
-          <Window
-            title="Team chat"
-            class="ctx is-active"
-            data-ctx="0"
-            label="A team chat. The word shoudl is typed and fixed to should."
-          >
-            <div class="tc">
-              <div class="tc-head"><b># launch</b><span>12 members</span></div>
-              <div class="tc-msgs">
-                <p><b>Priya</b>Build is green on staging.</p>
-                <p><b>Jon</b>Nice. Anything left before we ship?</p>
-              </div>
-              <div class="tc-compose">
-                <div class="field" data-script="Pushing the fix now, {shoudl|should} be live in ten.">
-                  <span class="ink">Pushing the fix now, <span class="fx lit">should<Pill from="shoudl" to="should" /></span> be live in ten.</span>
-                  <span class="pill" aria-hidden="true"></span>
-                </div>
-              </div>
+    <div class="track">
+  <div class="cards">
+    <figure class="app" data-app="0">
+      <Window
+        title="Team chat"
+        class="ctx"
+        data-ctx="0"
+        label="A team chat. The word shoudl is typed and fixed to should."
+      >
+        <div class="tc">
+          <div class="tc-head"><b># launch</b><span>12 members</span></div>
+          <div class="tc-msgs">
+            <p><b>Priya</b>Build is green on staging.</p>
+            <p><b>Jon</b>Nice. Anything left before we ship?</p>
+          </div>
+          <div class="tc-compose">
+            <div class="field" data-script="Pushing the fix now, {shoudl|should} be live in ten.">
+              <span class="ink">Pushing the fix now, <span class="fx lit">should<Pill from="shoudl" to="should" /></span> be live in ten.</span>
+              <span class="pill" aria-hidden="true"></span>
             </div>
-          </Window>
-
-          <Window title="New message" class="ctx" data-ctx="1" label="An email. The word attatched is typed and fixed to attached.">
-            <div class="mail">
-              <div class="mail-row"><span>To</span>sam@example.com</div>
-              <div class="mail-row"><span>Subject</span>Notes from today</div>
-              <div class="mail-body">
-                <p class="mail-hi">Hi Sam,</p>
-                <div class="field" data-script="{Attatched|Attached} are the notes from today's call. Talk soon!">
-                  <span class="ink"><span class="fx lit">Attached<Pill from="Attatched" to="Attached" /></span> are the notes from today's call.</span>
-                  <span class="pill" aria-hidden="true"></span>
-                </div>
-              </div>
-              <div class="mail-send">Send</div>
-            </div>
-          </Window>
-
-          <Window title="Browser" class="ctx" data-ctx="2" label="A browser. A search for resturants is fixed to restaurants.">
-            <div class="br">
-              <div class="br-bar">
-                <span class="br-nav" aria-hidden="true"
-                  ><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"></path></svg><svg viewBox="0 0 16 16"
-                    ><path d="m6 3 5 5-5 5"></path></svg
-                  ></span
-                >
-                <div class="br-url">
-                  <div class="field" data-script="best {resturants|restaurants} near me" data-pill="below" data-placeholder="Search or enter address">
-                    <span class="ink">best <span class="fx lit">restaurants<Pill from="resturants" to="restaurants" below /></span> near me</span>
-                    <span class="pill" aria-hidden="true"></span>
-                  </div>
-                </div>
-              </div>
-              <div class="br-page" aria-hidden="true">
-                <i style="width: 38%"></i><i style="width: 72%"></i><i style="width: 64%"></i><i style="width: 30%; margin-top: 18px"></i><i
-                  style="width: 76%"></i
-                ><i style="width: 58%"></i>
-              </div>
-            </div>
-          </Window>
-
-          <Window title="Assistant" class="ctx" data-ctx="3" label="An AI assistant prompt box. The word artcle is typed and fixed to article.">
-            <div class="ai">
-              <p class="ai-hello">What can I help with?</p>
-              <div class="ai-box">
-                <div class="field" data-script="Summarize this {artcle|article} in three short bullet points" data-placeholder="Ask anything…">
-                  <span class="ink">Summarize this <span class="fx lit">article<Pill from="artcle" to="article" /></span> in three short bullet points</span>
-                  <span class="pill" aria-hidden="true"></span>
-                </div>
-                <div class="ai-tools" aria-hidden="true">
-                  <span>+</span><span class="ai-go"
-                    ><svg viewBox="0 0 16 16"><path d="M8 13V3m0 0L4 7m4-4 4 4"></path></svg></span
-                  >
-                </div>
-              </div>
-            </div>
-          </Window>
-
-          <Window
-            title="Editor"
-            class="ctx"
-            data-ctx="4"
-            label="A code editor. In a comment, teh is fixed to the, while useState and src/main.rs are left exactly as typed."
-          >
-            <div class="ed">
-              <div class="ed-tabs"><span>counter.tsx</span></div>
-              <ol class="ed-code">
-                <li><i class="k">import</i>{" { useState } "}<i class="k">from</i>{" "}<i class="s">"react"</i>;</li>
-                <li></li>
-                <li><i class="k">export function</i>{" "}<i class="f">Counter</i>{"() {"}</li>
-                <li>{"  "}<i class="k">const</i>{" [count, setCount] = "}<i class="f">useState</i>(0);</li>
-                <li class="ed-live">{"  "}<span class="field" data-script="// {teh|the} parser lives in src/main.rs, useState stays"><span class="ink">{"// "}<span class="fx lit">the<Pill from="teh" to="the" /></span>{" parser lives in src/main.rs, useState stays"}</span><span class="pill" aria-hidden="true"></span></span></li>
-                <li>{"  "}<i class="k">return</i>{" <button>{count}</button>;"}</li>
-                <li>{"}"}</li>
-              </ol>
-            </div>
-          </Window>
+          </div>
         </div>
-      </div>
-
-      <ol class="steps">
-        {
-          steps.map((s, i) => (
-            <li class:list={["step", i === 0 && "is-active"]} data-step={i}>
-              <h3>{s.name}</h3>
-              <p>{s.text}</p>
-            </li>
-          ))
-        }
-      </ol>
+      </Window>
+      <figcaption><b>{steps[0]!.name}</b><span>{steps[0]!.text}</span></figcaption>
+    </figure>
+    <figure class="app" data-app="1">
+      <Window title="New message" class="ctx" data-ctx="1" label="An email. The word attatched is typed and fixed to attached.">
+        <div class="mail">
+          <div class="mail-row"><span>To</span>sam@example.com</div>
+          <div class="mail-row"><span>Subject</span>Notes from today</div>
+          <div class="mail-body">
+            <p class="mail-hi">Hi Sam,</p>
+            <div class="field" data-script="{Attatched|Attached} are the notes from today's call. Talk soon!">
+              <span class="ink"><span class="fx lit">Attached<Pill from="Attatched" to="Attached" /></span> are the notes from today's call.</span>
+              <span class="pill" aria-hidden="true"></span>
+            </div>
+          </div>
+          <div class="mail-send">Send</div>
+        </div>
+      </Window>
+      <figcaption><b>{steps[1]!.name}</b><span>{steps[1]!.text}</span></figcaption>
+    </figure>
+    <figure class="app" data-app="2">
+      <Window title="Browser" class="ctx" data-ctx="2" label="A browser. A search for resturants is fixed to restaurants.">
+        <div class="br">
+          <div class="br-bar">
+            <span class="br-nav" aria-hidden="true"
+              ><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"></path></svg><svg viewBox="0 0 16 16"
+                ><path d="m6 3 5 5-5 5"></path></svg
+              ></span
+            >
+            <div class="br-url">
+              <div class="field" data-script="best {resturants|restaurants} near me" data-pill="below" data-placeholder="Search or enter address">
+                <span class="ink">best <span class="fx lit">restaurants<Pill from="resturants" to="restaurants" below /></span> near me</span>
+                <span class="pill" aria-hidden="true"></span>
+              </div>
+            </div>
+          </div>
+          <div class="br-page" aria-hidden="true">
+            <i style="width: 38%"></i><i style="width: 72%"></i><i style="width: 64%"></i><i style="width: 30%; margin-top: 18px"></i><i
+              style="width: 76%"></i
+            ><i style="width: 58%"></i>
+          </div>
+        </div>
+      </Window>
+      <figcaption><b>{steps[2]!.name}</b><span>{steps[2]!.text}</span></figcaption>
+    </figure>
+    <figure class="app" data-app="3">
+      <Window title="Assistant" class="ctx" data-ctx="3" label="An AI assistant prompt box. The word artcle is typed and fixed to article.">
+        <div class="ai">
+          <p class="ai-hello">What can I help with?</p>
+          <div class="ai-box">
+            <div class="field" data-script="Summarize this {artcle|article} in three short bullet points" data-placeholder="Ask anything…">
+              <span class="ink">Summarize this <span class="fx lit">article<Pill from="artcle" to="article" /></span> in three short bullet points</span>
+              <span class="pill" aria-hidden="true"></span>
+            </div>
+            <div class="ai-tools" aria-hidden="true">
+              <span>+</span><span class="ai-go"
+                ><svg viewBox="0 0 16 16"><path d="M8 13V3m0 0L4 7m4-4 4 4"></path></svg></span
+              >
+            </div>
+          </div>
+        </div>
+      </Window>
+      <figcaption><b>{steps[3]!.name}</b><span>{steps[3]!.text}</span></figcaption>
+    </figure>
+    <figure class="app" data-app="4">
+      <Window
+        title="Editor"
+        class="ctx"
+        data-ctx="4"
+        label="A code editor. In a comment, teh is fixed to the, while useState and src/main.rs are left exactly as typed."
+      >
+        <div class="ed">
+          <div class="ed-tabs"><span>counter.tsx</span></div>
+          <ol class="ed-code">
+            <li><i class="k">import</i>{" { useState } "}<i class="k">from</i>{" "}<i class="s">"react"</i>;</li>
+            <li></li>
+            <li><i class="k">export function</i>{" "}<i class="f">Counter</i>{"() {"}</li>
+            <li>{"  "}<i class="k">const</i>{" [count, setCount] = "}<i class="f">useState</i>(0);</li>
+            <li class="ed-live">{"  "}<span class="field" data-script="// {teh|the} parser lives in src/main.rs, useState stays"><span class="ink">{"// "}<span class="fx lit">the<Pill from="teh" to="the" /></span>{" parser lives in src/main.rs, useState stays"}</span><span class="pill" aria-hidden="true"></span></span></li>
+            <li>{"  "}<i class="k">return</i>{" <button>{count}</button>;"}</li>
+            <li>{"}"}</li>
+          </ol>
+        </div>
+      </Window>
+      <figcaption><b>{steps[4]!.name}</b><span>{steps[4]!.text}</span></figcaption>
+    </figure>
+  </div>
+    </div>
+    <div class="names" role="group" aria-label="Jump to an app">
+      {steps.map((s, i) => <button type="button" data-goto={i} class:list={{ on: i === 0 }}>{s.name}</button>)}
     </div>
   </div>
 </section>
@@ -156,119 +153,180 @@ const steps = [
 </script>
 
 <style>
-  .grid {
+  /* Apps on dark studio cards. With scroll timelines the rail pins and slides card to card (hold, move, hold);
+     otherwise the cards simply stack. */
+  .rail {
+    --w: min(920px, 82vw, 130vh);
+    --gap: clamp(16px, 3vw, 40px);
+    padding-block: clamp(80px, 12vh, 140px);
+  }
+
+  .view {
     display: grid;
-    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-    gap: clamp(32px, 6vw, 96px);
-    align-items: start;
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(28px, 5vh, 48px);
   }
 
-  .stage-wrap {
-    position: sticky;
-    top: calc(var(--header) + (100svh - var(--header) - var(--stage-h)) / 2);
-    --stage-h: min(500px, 64svh);
-    z-index: 2;
+  .head {
+    display: grid;
+    gap: 14px;
   }
 
-  .stage {
-    position: relative;
-    height: var(--stage-h);
+  .cards {
+    display: grid;
+    gap: var(--gap);
+    width: var(--page);
+    margin-inline: auto;
   }
 
-  .stage :global(.ctx) {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    visibility: hidden;
-    transform: translateY(16px) scale(0.975);
-    transition:
-      opacity 0.5s var(--ease-out),
-      transform 0.7s var(--ease-out),
-      visibility 0s linear 0.5s;
+  .app {
+    margin: 0;
+    padding: clamp(18px, 4vh, 44px) clamp(14px, 4vw, 52px) clamp(16px, 3vh, 28px);
+    border-radius: clamp(22px, 3vw, 34px);
+    background:
+      radial-gradient(80% 60% at 50% 0%, rgba(242, 230, 227, 0.1), rgba(242, 230, 227, 0) 70%),
+      var(--surface);
+    box-shadow: inset 0 0 0 1px rgba(242, 230, 227, 0.06);
   }
 
-  .stage :global(.ctx.is-active) {
-    opacity: 1;
-    visibility: visible;
-    transform: none;
-    transition:
-      opacity 0.5s var(--ease-out),
-      transform 0.7s var(--ease-out),
-      visibility 0s;
+  .app :global(.win) {
+    height: clamp(240px, 46vh, 430px);
   }
 
-  .stage :global(.field) {
+  .app :global(.field) {
     --pill-size: 12.5px;
   }
 
-  .steps {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  .step {
-    min-height: 72svh;
+  figcaption {
     display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 12px;
-    transition: opacity 0.4s ease;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+    align-items: baseline;
+    margin-top: clamp(12px, 2.4vh, 22px);
   }
 
-  .step:first-child {
-    min-height: 56svh;
-    justify-content: flex-start;
-    padding-top: 12svh;
+  figcaption b {
+    font-size: 1.25rem;
+    letter-spacing: -0.03em;
   }
 
-  .step:last-child {
-    min-height: 60svh;
-  }
-
-  /* Inactive steps step back in colour, not opacity, so they keep AA contrast. */
-  .step h3,
-  .step p {
-    transition: color 0.4s ease;
-  }
-
-  :global(.ew.live) .step:not(.is-active) h3,
-  :global(.ew.live) .step:not(.is-active) p {
+  figcaption span {
     color: var(--muted);
   }
 
-  :global(.ew.live) .step.is-active p {
-    color: var(--ink);
+  .names {
+    display: none;
   }
 
-  /* The active step wears the brand's caret. */
-  .step h3::before {
-    content: "";
-    display: block;
-    width: 3px;
-    height: 26px;
-    margin-bottom: 14px;
-    border-radius: 2px;
-    background: var(--accent);
-    opacity: 0;
-    transition: opacity 0.4s ease;
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .rail {
+        height: 620vh;
+        padding: 0;
+        view-timeline: --rail block;
+      }
+
+      .view {
+        position: sticky;
+        top: 0;
+        height: 100svh;
+        overflow: clip;
+        align-content: center;
+        gap: clamp(14px, 3vh, 32px);
+        padding-top: calc(var(--header) - 16px);
+      }
+
+      .head .lead {
+        display: none;
+      }
+
+      .cards {
+        display: flex;
+        width: max-content;
+        margin: 0;
+        padding-inline: calc((100vw - var(--w)) / 2);
+        animation: slide linear both;
+      }
+
+      .track .cards {
+        animation-timeline: --rail;
+        animation-range: contain 0% contain 100%;
+      }
+
+      .app {
+        width: var(--w);
+        flex: none;
+        /* Waiting cards step back into the dark. Brightness, not opacity, so the text keeps its real contrast. */
+        filter: brightness(0.42);
+        transform: scale(0.94);
+        transition:
+          filter 0.5s var(--ease-out),
+          transform 0.7s var(--ease-out);
+      }
+
+      .app:global(.is-active) {
+        filter: none;
+        transform: none;
+      }
+
+      .names {
+        display: flex;
+        justify-content: center;
+        gap: 4px;
+        width: max-content;
+        max-width: 100%;
+        margin-inline: auto;
+        padding: 5px;
+        border-radius: 999px;
+        background: rgba(242, 230, 227, 0.08);
+      }
+
+      .names button {
+        padding: 8px 16px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: #cdb9b3;
+        font: 600 0.875rem/1 var(--font);
+        cursor: pointer;
+        transition:
+          background-color 0.3s ease,
+          color 0.3s ease;
+      }
+
+      .names button:global(.on) {
+        background: var(--paper);
+        color: var(--espresso);
+      }
+    }
   }
 
-  :global(.ew.live) .step.is-active h3::before {
-    opacity: 1;
-  }
-
-  .step h3 {
-    font-size: clamp(1.75rem, 3vw, 2.5rem);
-    letter-spacing: -0.04em;
-    line-height: 1.05;
-  }
-
-  .step p {
-    font-size: clamp(1.0625rem, 1.5vw, 1.25rem);
-    color: var(--muted);
-    max-width: 26em;
-    line-height: 1.5;
+  /* Hold, move, hold: 12% holds, 10% moves. scripts/everywhere.ts uses the same split. */
+  @keyframes slide {
+    0%,
+    12% {
+      transform: translateX(0);
+      animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+    }
+    22%,
+    34% {
+      transform: translateX(calc(-1 * (var(--w) + var(--gap))));
+      animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+    }
+    44%,
+    56% {
+      transform: translateX(calc(-2 * (var(--w) + var(--gap))));
+      animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+    }
+    66%,
+    78% {
+      transform: translateX(calc(-3 * (var(--w) + var(--gap))));
+      animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+    }
+    88%,
+    100% {
+      transform: translateX(calc(-4 * (var(--w) + var(--gap))));
+    }
   }
 
   /* Team chat */
@@ -524,50 +582,38 @@ const steps = [
     color: #3f6596;
   }
 
-  @media (prefers-color-scheme: dark) {
-    .ed-code .k {
-      color: #d39bc7;
-    }
-
-    .ed-code .s {
-      color: #9cc79e;
-    }
-
-    .ed-code .f {
-      color: #92b4e3;
-    }
-  }
-
   .ed-live {
     white-space: pre-wrap;
     background: color-mix(in srgb, var(--win-ink) 4%, transparent);
   }
 
   .ed-live .field {
-    color: color-mix(in srgb, var(--win-ink) 62%, var(--win-code));
+    color: color-mix(in srgb, var(--win-ink) 72%, var(--win-code));
     white-space: pre-wrap;
   }
 
-  @media (max-width: 900px) {
-    .grid {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0;
+  @media (max-width: 760px) {
+    .ed-code {
+      font-size: 12px;
     }
 
-    .stage-wrap {
-      --stage-h: min(360px, 46svh);
-      top: var(--header);
-      padding-block: 8px 20px;
-      background: var(--ground);
-    }
-
-    .step {
-      min-height: 52svh;
-    }
-
-    .step:first-child {
-      min-height: 40svh;
+    .mail-body {
       padding-top: 24px;
+    }
+
+    .br-page {
+      padding: 32px 20px;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .rail {
+      --w: 86vw;
+    }
+
+    .names button {
+      padding: 8px 10px;
+      font-size: 0.8125rem;
     }
 
     .ed-code {
