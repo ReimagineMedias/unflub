@@ -115,6 +115,28 @@ cd app; npm run tauri build -- --config src-tauri/tauri.release.conf.json
 Without `--config src-tauri/tauri.release.conf.json`, `npm run tauri build` makes plain
 installers and needs no key.
 
+## Workflow security
+
+- Every action in `.github/workflows/` is pinned to a full commit SHA, with its version as a
+  trailing comment (`uses: actions/checkout@<sha> # v7.0.1`). A moved or hijacked tag can't change
+  what runs next to the signing keys. `dtolnay/rust-toolchain` has no release tags, so it is pinned
+  to its `stable` branch commit with `toolchain: stable` set explicitly.
+- `.github/dependabot.yml` checks weekly and opens PRs that bump each SHA and its comment
+  together, plus Cargo and npm (`/app`, `/site`) dependencies. Review action bumps like code.
+- To pin a new action, resolve the tag to a commit (an annotated tag points at a tag object first):
+
+  ```sh
+  gh api repos/OWNER/REPO/git/ref/tags/TAG --jq '.object.type + " " + .object.sha'
+  # if the type is "tag":
+  gh api repos/OWNER/REPO/git/tags/SHA --jq .object.sha
+  ```
+
+- Permissions are least privilege: every workflow defaults to `contents: read`, and only the
+  release job that creates the draft gets `contents: write`. `publish-packages.yml` uses its own
+  `WINGET_TOKEN` for the winget-pkgs fork. That action installs `komac` through
+  `cargo-bins/cargo-binstall@main` internally, which we can't pin from here; it never sees the
+  updater or code signing secrets.
+
 ## Windows code signing
 
 The installers are not code-signed yet. What that means for users:
