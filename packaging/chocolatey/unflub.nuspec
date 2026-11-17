@@ -5,12 +5,12 @@
     <id>unflub</id>
     <version>0.1.0</version>
     <packageSourceUrl>https://github.com/ReimagineMedias/unflub/tree/main/packaging/chocolatey</packageSourceUrl>
-    <owners>RMGN</owners>
+    <owners>Reimagine Media (RMGN)</owners>
     <title>unflub</title>
-    <authors>RMGN</authors>
+    <authors>Reimagine Media (RMGN)</authors>
     <projectUrl>https://unflub.rmgn.ca</projectUrl>
     <iconUrl>https://raw.githubusercontent.com/ReimagineMedias/unflub/main/app/src-tauri/icons/128x128.png</iconUrl>
-    <copyright>© 2026 RMGN</copyright>
+    <copyright>© 2026 Matias Suxo</copyright>
     <licenseUrl>https://github.com/ReimagineMedias/unflub/blob/main/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <projectSourceUrl>https://github.com/ReimagineMedias/unflub</projectSourceUrl>
@@ -20,7 +20,7 @@
     <description><![CDATA[unflub fixes a typo the moment you finish the word, in any app: chat, browser, editor.
 Press Backspace right after a fix to put your word back, and unflub remembers.
 
-It lives in the tray and needs no account. Nothing you type is stored or sent anywhere.
+It lives in the tray and needs no account. Nothing you type leaves your computer.
 
 This package runs the per-user installer, so unflub is installed for the account that runs
 Chocolatey. Uninstalling removes start at login; settings stay in `%APPDATA%\ca.rmgn.unflub`.
