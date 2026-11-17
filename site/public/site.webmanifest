@@ -1,0 +1,14 @@
+{
+  "name": "unflub",
+  "short_name": "unflub",
+  "description": "Phone-style autocorrect for every text box on your computer.",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#f2e6e3",
+  "theme_color": "#2d1916",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
