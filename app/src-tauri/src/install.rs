@@ -99,11 +99,10 @@ fn login_allowed_in(
                     .any(|pf| same_path(dir, &pf.join("unflub")))
         }
         InstallSource::Scoop => {
-            let parts: Vec<String> = dir
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
-                .collect();
-            parts.ends_with(&["apps".into(), "unflub".into(), "current".into()])
+            // Compared as text so the Windows separators hold on every host the tests run on.
+            let dir = dir.to_string_lossy().replace('/', "\\").to_lowercase();
+            dir.trim_end_matches('\\')
+                .ends_with(r"\apps\unflub\current")
         }
         InstallSource::Store | InstallSource::Portable => false,
     }
