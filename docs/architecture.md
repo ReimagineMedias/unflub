@@ -33,6 +33,38 @@ app stay the same.
 The hook budget is **1 ms per key, worst case**. Anything slower would add input lag, so the
 engine never calls slow APIs on this path.
 
+## The Windows adapter
+
+`crates/unflub-windows` runs three threads, all in the COM multithreaded apartment:
+
+| Thread | Does |
+|---|---|
+| `unflub-hook` | `WH_KEYBOARD_LL` and `WH_MOUSE_LL` hooks, focus WinEvents, calls the engine, `SendInput` |
+| `unflub-uia` | Asks UI Automation whether the newly focused field is a password field |
+| `unflub-spell` | Slow `ComprehensiveCheck` lookups that fill the OS auto-replace cache |
+
+- **Key translation.** `ToUnicodeEx` with flag `0x4` (Windows 10 1607+) reads what a key types
+  in the foreground window's layout without changing the kernel's dead-key state, so accents
+  keep working in the user's app. We can't see what a dead key composes with, so the key after
+  a dead key resets the word instead of guessing.
+- **Injection.** One `SendInput` per action: backspaces, then the text as Unicode packets
+  (`
+` and `	` as real Enter and Tab), all tagged so our hook skips them. Input injected by
+  other programs (dictation tools, macro tools) resets the word. If Ctrl, Alt or Win is held
+  when a fix is due, we don't inject (Ctrl+Backspace would delete a word); the key goes through
+  and the word resets. If `SendInput` is blocked, the key goes through untouched.
+- **Context.** On focus changes the hook caches the foreground exe name and checks for classic
+  `ES_PASSWORD` edit boxes. UI Automation's `IsPassword` covers everything else; it can block on
+  hung apps, so it runs on its own thread with short UIA timeouts, and a field counts as secure
+  until its answer arrives.
+- **Spell checker.** `Check` runs on the hook thread (it is fast). The OS auto-replace lookup
+  only reads a cache; misses are looked up in the background and used next time.
+- **Elevated windows.** A normal process can't see keys typed into administrator windows or
+  inject into them, so unflub does nothing there.
+
+Try the hook before the engine lands: `cargo run --release --bin unflub -- --demo` fixes
+`teh`, `adn` and `recieve`, and prints each fix and the hook latency on exit.
+
 ## Deciding what's wrong and what's right
 
 We measured the Windows spell checker (`ISpellChecker`, the engine that draws red underlines in

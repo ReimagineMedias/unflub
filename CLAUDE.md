@@ -21,3 +21,8 @@ Repo is private until v0.1, then flipped public.
   `src/rank.rs` (`TUNING`) and `src/distance.rs`; after changing them run
   `cargo test --release -p unflub-core --test corpus -- --nocapture` (owner corpus 22/25, common typos 103/111) and
   `cargo run --release -p unflub-core --example bench`.
+- Windows `ComprehensiveCheck` measured 2026-11-16 (Windows 11 26300, en-US): ~3 ms per typo, and its auto-replace list
+  has `recieve`->`receive`, `becuase`->`because` but nothing for `teh`. `CORRECTIVE_ACTION_REPLACE` is rare; don't rely on it.
+- `unflub-windows` tests call the real `ISpellChecker` but never install hooks or inject input. Try the hook live with
+  `cargo run --release --bin unflub -- --demo` (rules teh/adn/recieve). Never run it in automation on a machine someone
+  is typing on.
