@@ -102,7 +102,15 @@ COM multithreaded apartment:
   costs CPU and memory in Chrome and Electron apps. That is why we only ask when focus may
   have moved; a burst of focus events costs one query.
 - **Other skips.** Keyboard layouts for Chinese, Japanese and Korean (IME input) and apps on
-  the exclude list are treated like secure fields.
+  the exclude list are treated like secure fields. So are, whatever the exclude list says
+  (`policy::never_correct`): virtual machine consoles and VNC viewers (VMware, VirtualBox,
+  Hyper-V's VMConnect, QEMU), which forward scan codes and drop our Unicode text, so a fix
+  would delete the word and type nothing; terminals and SSH clients beyond the default exclude
+  list (PuTTY, KiTTY, MobaXterm, Tabby, Hyper, ConEmu, Termius, Warp and others), where a
+  password prompt can't be detected; and xterm.js terminals inside other apps (VS Code's
+  terminal), found by their UIA class `xterm-helper-textarea`. A fix made in any terminal,
+  including the default-excluded consoles a user takes off the list, never records its words
+  on the local Stats page (`policy::keep_words`).
 - **Spell checker.** `Check` runs on the hook thread (it is fast). The OS auto-replace lookup
   only reads a cache; misses are looked up in the background and used next time. Learning a
   word writes the user's dictionary, so it also happens in the background.

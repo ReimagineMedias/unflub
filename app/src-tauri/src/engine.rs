@@ -50,6 +50,8 @@ pub enum Observed {
         inject: Duration,
         /// The pill was asked to show it.
         pill: bool,
+        /// The local Stats page may keep the words (not in terminals).
+        keep_word: bool,
     },
     Undone {
         original: String,
@@ -499,7 +501,9 @@ mod host {
                     decide_us,
                     inject_us,
                     pill,
+                    keep_word,
                 } => observer(Observed::Corrected {
+                    keep_word,
                     original,
                     corrected,
                     user_rule,

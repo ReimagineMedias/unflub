@@ -365,10 +365,20 @@ mod win {
             }
             // SAFETY: valid interface used on the MTA thread that created it.
             let answer = unsafe {
-                match uia.GetFocusedElement().and_then(|e| e.CurrentIsPassword()) {
-                    Ok(b) if b.as_bool() => Secure::Secure,
-                    Ok(_) => Secure::NotSecure,
-                    Err(_) => Secure::Unknown,
+                let focused = uia.GetFocusedElement();
+                let password = focused.as_ref().map(|e| e.CurrentIsPassword());
+                // A terminal inside an ordinary app (VS Code's xterm.js) may be at a password
+                // prompt we can't see: secure too.
+                let terminal = focused
+                    .as_ref()
+                    .ok()
+                    .and_then(|e| e.CurrentClassName().ok())
+                    .is_some_and(|c| crate::policy::is_terminal_input_class(&c.to_string()));
+                match password {
+                    _ if terminal => Secure::Secure,
+                    Ok(Ok(b)) if b.as_bool() => Secure::Secure,
+                    Ok(Ok(_)) => Secure::NotSecure,
+                    _ => Secure::Unknown,
                 }
             };
             slot.publish(req.generation, answer);

@@ -58,6 +58,11 @@ pub enum FromEngine {
         inject_us: u64,
         /// The pill was asked to show it.
         pill: bool,
+        /// The local Stats page may keep this typo and fix. False in terminals, where the word
+        /// may be a password typed at a prompt (`unflub_windows::policy::keep_words`), and
+        /// when missing.
+        #[serde(default)]
+        keep_word: bool,
     },
     Undone {
         original: String,
@@ -193,6 +198,7 @@ mod tests {
                 decide_us: 90,
                 inject_us: 400,
                 pill: true,
+                keep_word: true,
             },
             FromEngine::Undone {
                 original: "teh".into(),

@@ -1174,11 +1174,12 @@ impl State {
         }
     }
 
+    /// The user excluded the focused app, or unflub never corrects there (VM consoles,
+    /// terminals: [`crate::policy::never_correct`]).
     fn excluded(&self) -> bool {
-        self.focus
-            .app
-            .as_ref()
-            .is_some_and(|app| self.excluded.iter().any(|e| e == app))
+        self.focus.app.as_ref().is_some_and(|app| {
+            self.excluded.iter().any(|e| e == app) || crate::policy::never_correct(app).is_some()
+        })
     }
 
     /// Feed one key to the corrector, catching panics so a bug can't take the keyboard down.

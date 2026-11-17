@@ -383,13 +383,14 @@ fn observe(app: &AppHandle, event: Observed) {
             decide,
             inject,
             pill,
+            keep_word,
         } => {
             let settings = current_settings(app);
             usage.correction(decide, inject, pill);
             app.state::<Stats>().correction(
                 &original,
                 &corrected,
-                settings.stats_keep_words && !user_rule,
+                keep_word_in_stats(settings.stats_keep_words, user_rule, keep_word),
             );
         }
         Observed::Undone {
@@ -410,6 +411,12 @@ fn observe(app: &AppHandle, event: Observed) {
             crash::take_engine_report(app);
         }
     }
+}
+
+/// Does the Stats page keep a fix's typo and word? Only with "Keep a list" on, never for the
+/// user's own shortcuts, and never where the engine says the word may be a password (terminals).
+fn keep_word_in_stats(keep_words_setting: bool, user_rule: bool, engine_allows: bool) -> bool {
+    keep_words_setting && !user_rule && engine_allows
 }
 
 /// The directory after `--perf-idle`, if given.
@@ -852,6 +859,15 @@ mod tests {
         let mut from_window = vec!["rmgn".to_string()];
         merge_learned(&mut from_window, &learned);
         assert_eq!(from_window, ["rmgn", "unflub", "Teh"]);
+    }
+
+    /// Review S4: words fixed in a terminal never reach stats.json.
+    #[test]
+    fn terminal_words_never_reach_the_stats_page() {
+        assert!(keep_word_in_stats(true, false, true));
+        assert!(!keep_word_in_stats(true, false, false), "terminal");
+        assert!(!keep_word_in_stats(true, true, true), "shortcut");
+        assert!(!keep_word_in_stats(false, false, true), "setting off");
     }
 
     #[test]

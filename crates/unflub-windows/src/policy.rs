@@ -84,6 +84,94 @@ pub fn injection_veto(
     }
 }
 
+/// Virtual machine consoles and remote viewers that forward scan codes to the guest. Our fixes
+/// type text as Unicode packets, which they drop: the Backspaces would arrive and the fixed
+/// word wouldn't. Never corrected, whatever the exclude list says (review S3).
+pub const SCANCODE_CONSOLES: &[&str] = &[
+    "vmware.exe",
+    "vmware-vmx.exe",
+    "vmplayer.exe",
+    "vmrc.exe",
+    "virtualboxvm.exe",
+    "vboxsdl.exe",
+    "vmconnect.exe",
+    "qemu-system-x86_64.exe",
+    "qemu-system-x86_64w.exe",
+    "qemu-system-aarch64.exe",
+    "qemu-system-aarch64w.exe",
+    "vncviewer.exe",
+    "tvnviewer.exe",
+    "uvnc_viewer.exe",
+];
+
+/// Terminals and SSH clients the default exclude list doesn't have. A password prompt there
+/// can't be detected (it is just text after Enter), so they are never corrected (review S4).
+/// The usual Windows consoles are in the user's exclude list instead (see
+/// [`is_terminal_app`]).
+pub const TERMINAL_APPS: &[&str] = &[
+    "putty.exe",
+    "kitty.exe",
+    "kitty_portable.exe",
+    "mobaxterm.exe",
+    "tabby.exe",
+    "hyper.exe",
+    "conemu.exe",
+    "conemu64.exe",
+    "cmder.exe",
+    "termius.exe",
+    "warp.exe",
+    "securecrt.exe",
+    "xshell.exe",
+    "terminus.exe",
+    "ssh.exe",
+    "bash.exe",
+];
+
+/// Consoles the app's default exclude list holds. Users may take them off that list; fixes
+/// there still never record their words (see [`keep_words`]).
+const DEFAULT_EXCLUDED_TERMINALS: &[&str] = &[
+    "windowsterminal.exe",
+    "openconsole.exe",
+    "conhost.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "wsl.exe",
+    "mintty.exe",
+    "wezterm-gui.exe",
+    "alacritty.exe",
+];
+
+/// Why unflub never corrects in `app` (a lowercased exe name), if it doesn't.
+pub fn never_correct(app: &str) -> Option<&'static str> {
+    if SCANCODE_CONSOLES.contains(&app) {
+        Some("virtual machine or remote console")
+    } else if TERMINAL_APPS.contains(&app) {
+        Some("terminal")
+    } else {
+        None
+    }
+}
+
+/// A terminal or SSH client, where a password prompt is plausible.
+pub fn is_terminal_app(app: &str) -> bool {
+    TERMINAL_APPS.contains(&app) || DEFAULT_EXCLUDED_TERMINALS.contains(&app)
+}
+
+/// May the local Stats page keep the words of a fix made in `app`? Never for terminals (the
+/// "word" may be a password typed at a prompt) or when the app is unknown.
+pub fn keep_words(app: Option<&str>) -> bool {
+    app.is_some_and(|a| !is_terminal_app(a))
+}
+
+/// A UI Automation class name of a terminal's input inside an otherwise ordinary app: xterm.js,
+/// the terminal in VS Code, Cursor, Hyper and other Electron apps. Treated as a secure field.
+pub fn is_terminal_input_class(class: &str) -> bool {
+    class
+        .split_whitespace()
+        .any(|c| c == "xterm-helper-textarea")
+}
+
 /// Primary-language ids of layouts that normally come with an IME (Chinese, Japanese, Korean).
 /// Keys there are IME composition input, not the text that ends up in the field.
 pub fn is_ime_language(langid: u16) -> bool {
@@ -122,6 +210,62 @@ impl SwallowTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review S3 and S4: VM consoles and terminals are never corrected, and terminal fixes
+    /// never keep their words.
+    #[test]
+    fn vm_consoles_and_terminals_are_never_corrected() {
+        for app in [
+            "vmware.exe",
+            "virtualboxvm.exe",
+            "vmconnect.exe",
+            "vncviewer.exe",
+        ] {
+            assert_eq!(
+                never_correct(app),
+                Some("virtual machine or remote console")
+            );
+        }
+        for app in [
+            "putty.exe",
+            "kitty.exe",
+            "mobaxterm.exe",
+            "tabby.exe",
+            "conemu64.exe",
+        ] {
+            assert_eq!(never_correct(app), Some("terminal"), "{app}");
+            assert!(!keep_words(Some(app)));
+        }
+        // The default-excluded consoles stay the user's choice, but keep no words.
+        for app in ["windowsterminal.exe", "cmd.exe", "pwsh.exe", "mintty.exe"] {
+            assert_eq!(never_correct(app), None, "{app}");
+            assert!(!keep_words(Some(app)), "{app}");
+        }
+        for app in ["notepad.exe", "slack.exe", "code.exe", "mstsc.exe"] {
+            assert_eq!(never_correct(app), None, "{app}");
+            assert!(keep_words(Some(app)), "{app}");
+        }
+        assert!(!keep_words(None), "unknown app keeps no words");
+    }
+
+    #[test]
+    fn xterm_inputs_are_terminals() {
+        assert!(is_terminal_input_class("xterm-helper-textarea"));
+        assert!(is_terminal_input_class("foo xterm-helper-textarea"));
+        assert!(!is_terminal_input_class(
+            "inputarea monaco-mouse-cursor-text"
+        ));
+        assert!(!is_terminal_input_class(""));
+    }
+
+    /// The list here must match the app's default exclude list (app/src-tauri/src/settings.rs).
+    #[test]
+    fn default_excluded_terminals_match_the_app() {
+        let settings = include_str!("../../../app/src-tauri/src/settings.rs");
+        for app in DEFAULT_EXCLUDED_TERMINALS {
+            assert!(settings.contains(&format!("\"{app}\"")), "{app}");
+        }
+    }
 
     #[test]
     fn gate_feeds_normally() {
