@@ -43,7 +43,10 @@ fn engine_for(settings: &Settings) -> Engine {
     }
     config.enabled = true;
     config.excluded_apps.clear();
-    config.undo_learns = true;
+    // The practice box teaches the plain gesture and remembers at once; it has no pill timer
+    // to hold a Backspace with.
+    config.undo_mode = unflub_core::UndoMode::Once;
+    config.learn_after_undos = 1;
     let mut engine = Engine::new(config, None);
     // Start as if the box began at a line start, so the first word counts.
     engine.on_key(Key::Boundary('\n'), &Context::default());
@@ -86,7 +89,8 @@ impl Tour {
         // Learned words stay in this engine; the real dictionary never hears about them.
         engine.drain_events();
         match action {
-            Action::Pass => TourAction::Pass,
+            // Not in Once mode, which the box uses.
+            Action::Pass | Action::HoldBackspace(_) => TourAction::Pass,
             Action::Replace(r) => TourAction::Replace {
                 delete: r.delete,
                 insert: r.insert,

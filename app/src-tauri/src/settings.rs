@@ -5,7 +5,18 @@ use std::{fs, io, path::PathBuf};
 
 /// The settings file's format. Bump it and add a step to `migrations.rs` whenever a change needs
 /// more than serde defaults (a renamed field, a changed meaning, a value to fill in).
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
+
+/// What Backspace right after a fix does. Mirrors `unflub_core::UndoMode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum UndoMode {
+    /// The first Backspace asks "Undo?", the second undoes.
+    #[default]
+    Twice,
+    Once,
+    Off,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -117,7 +128,10 @@ pub struct Settings {
     pub confidence: f32,
     pub min_word_len: usize,
     pub skip_code: bool,
-    pub undo_learns: bool,
+    /// How Backspace undoes a fix (schema v2; replaced `undoLearns`).
+    pub undo_mode: UndoMode,
+    /// A typo is never fixed again after this many undos of the same fix, 1 to 5; 0 never.
+    pub learn_after_undos: u8,
     pub excluded_apps: Vec<String>,
     pub personal_words: Vec<String>,
     pub user_rules: Vec<(String, String)>,
@@ -129,6 +143,9 @@ pub struct Settings {
     pub appearance: Appearance,
     /// BCP 47 tag for the system spell checker, like `en-US`.
     pub language: String,
+    /// Use the English dictionary's fixes even when `language` isn't English (off: only the
+    /// OS checker's own fixes there). Not in the settings window yet; settings.json only.
+    pub english_for_other_languages: bool,
     /// Fields this version doesn't know, from a newer unflub. Kept and written back, so running
     /// an older version for a while doesn't wipe them.
     #[serde(flatten)]
@@ -154,7 +171,8 @@ impl Default for Settings {
             confidence: core.confidence,
             min_word_len: core.min_word_len,
             skip_code: core.skip_code,
-            undo_learns: core.undo_learns,
+            undo_mode: UndoMode::Twice,
+            learn_after_undos: core.learn_after_undos,
             excluded_apps: DEFAULT_EXCLUDED_APPS
                 .iter()
                 .map(|s| s.to_string())
@@ -168,6 +186,7 @@ impl Default for Settings {
             theme: Theme::Unflub,
             appearance: Appearance::Auto,
             language: core.language,
+            english_for_other_languages: core.english_for_other_languages,
             extra: serde_json::Map::new(),
         }
     }
@@ -180,6 +199,7 @@ impl Settings {
         self.pill_opacity = self.pill_opacity.clamp(0.3, 1.0);
         self.pill_duration_ms = self.pill_duration_ms.clamp(300, 5000);
         self.min_word_len = self.min_word_len.clamp(1, 12);
+        self.learn_after_undos = self.learn_after_undos.min(5);
         for app in &mut self.excluded_apps {
             *app = app.trim().to_lowercase();
         }
@@ -206,8 +226,19 @@ impl Settings {
             excluded_apps: self.excluded_apps.clone(),
             personal_words: self.personal_words.clone(),
             user_rules: self.user_rules.clone(),
-            undo_learns: self.undo_learns,
+            undo_mode: match self.undo_mode {
+                UndoMode::Twice => unflub_core::UndoMode::Twice,
+                UndoMode::Once => unflub_core::UndoMode::Once,
+                UndoMode::Off => unflub_core::UndoMode::Off,
+            },
+            learn_after_undos: self.learn_after_undos,
+            // Filled in from the app's own counts (`undo_counts.rs`) on the way to the engine.
+            undo_counts: Vec::new(),
+            undo_counts_epoch: 0,
+            // The pill's time on screen is the double-Backspace window.
+            undo_window_ms: self.pill_duration_ms,
             language: self.language.clone(),
+            english_for_other_languages: self.english_for_other_languages,
         }
     }
 }
@@ -349,11 +380,14 @@ mod tests {
             confidence: 0.25,
             min_word_len: 4,
             skip_code: false,
-            undo_learns: false,
+            undo_mode: UndoMode::Once,
+            learn_after_undos: 3,
+            pill_duration_ms: 2000,
             excluded_apps: vec!["code.exe".into()],
             personal_words: vec!["rmgn".into()],
             user_rules: vec![("omw".into(), "on my way".into())],
             language: "en-GB".into(),
+            english_for_other_languages: true,
             ..Settings::default()
         };
         assert_eq!(
@@ -367,8 +401,13 @@ mod tests {
                 excluded_apps: vec!["code.exe".into()],
                 personal_words: vec!["rmgn".into()],
                 user_rules: vec![("omw".into(), "on my way".into())],
-                undo_learns: false,
+                undo_mode: unflub_core::UndoMode::Once,
+                learn_after_undos: 3,
+                undo_counts: Vec::new(),
+                undo_counts_epoch: 0,
+                undo_window_ms: 2000,
                 language: "en-GB".into(),
+                english_for_other_languages: true,
             }
         );
         // Defaults agree with the engine's, apart from the apps the app excludes.

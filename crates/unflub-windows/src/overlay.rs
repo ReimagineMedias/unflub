@@ -127,6 +127,10 @@ pub struct PillConfig {
     pub keycap: Rgba,
     /// The underline.
     pub accent: Rgba,
+    /// The "Undo?" pill while a first Backspace is held: its background and underline.
+    pub alert: Rgba,
+    /// Text on [`PillConfig::alert`], picked for contrast.
+    pub alert_text: Rgba,
     /// Ask UI Automation for the caret in browser and XAML fields. Off: the pill shows only
     /// where the system caret is known.
     pub uia_caret: bool,
@@ -153,12 +157,41 @@ impl Default for PillConfig {
             text: Rgba::hex(0xF2E6E3),
             keycap: Rgba::hex(0xE0A595),
             accent: Rgba::hex(0xB06A5C),
+            alert: Rgba::hex(0xC0392B),
+            alert_text: Rgba::hex(0xFFFFFF),
             uia_caret: true,
         }
     }
 }
 
+/// The colours one pill is drawn with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrawColours {
+    pub background: Rgba,
+    pub text: Rgba,
+    pub keycap: Rgba,
+    pub accent: Rgba,
+}
+
 impl PillConfig {
+    /// The theme's colours, or the alert colours while an undo is pending.
+    pub fn colours_for(&self, correction: &Correction) -> DrawColours {
+        match correction.kind {
+            CorrectionKind::UndoPending => DrawColours {
+                background: self.alert,
+                text: self.alert_text,
+                keycap: self.alert_text,
+                accent: self.alert,
+            },
+            _ => DrawColours {
+                background: self.background,
+                text: self.text,
+                keycap: self.keycap,
+                accent: self.accent,
+            },
+        }
+    }
+
     /// Bring every number into its allowed range.
     pub fn clamped(mut self) -> Self {
         self.opacity = if self.opacity.is_nan() {
@@ -175,6 +208,8 @@ impl PillConfig {
 pub enum CorrectionKind {
     /// A word was replaced. The pill offers Backspace to undo.
     Fixed,
+    /// A first Backspace is held: one more undoes the fix. Drawn in the alert colour.
+    UndoPending,
     /// The user undid a fix. The pill confirms it.
     Undone,
 }
@@ -190,6 +225,9 @@ pub struct Correction {
     /// Characters typed after the word in this action (the boundary), so the caret sits that far
     /// past the word.
     pub trailing: usize,
+    /// Backspace can undo it: the pill shows the hint. False after Enter or Tab (see
+    /// [`unflub_core::undoable_boundary`]) and for an undo.
+    pub undoable: bool,
 }
 
 impl Correction {
@@ -204,6 +242,11 @@ impl Correction {
             original: r.original.clone(),
             corrected: r.corrected.clone(),
             trailing,
+            undoable: r
+                .insert
+                .chars()
+                .last()
+                .is_none_or(unflub_core::undoable_boundary),
         }
     }
 
@@ -218,6 +261,16 @@ impl Correction {
             original: r.original.clone(),
             corrected: r.corrected.clone(),
             trailing,
+            undoable: false,
+        }
+    }
+
+    /// A first Backspace is held after `r` (the fix): the pill asks "Undo?".
+    pub fn undo_pending(r: &Replacement) -> Self {
+        Self {
+            kind: CorrectionKind::UndoPending,
+            undoable: false,
+            ..Self::fixed(r)
         }
     }
 
@@ -236,6 +289,7 @@ impl Correction {
         match event {
             crate::HookEvent::Corrected { replacement, .. } => Some(Self::fixed(replacement)),
             crate::HookEvent::Undone { replacement, .. } => Some(Self::undone(replacement)),
+            crate::HookEvent::UndoPending { replacement } => Some(Self::undo_pending(replacement)),
             _ => None,
         }
     }
@@ -243,7 +297,7 @@ impl Correction {
     /// The word now in the field, which the underline marks.
     pub fn word(&self) -> &str {
         match self.kind {
-            CorrectionKind::Fixed => &self.corrected,
+            CorrectionKind::Fixed | CorrectionKind::UndoPending => &self.corrected,
             CorrectionKind::Undone => &self.original,
         }
     }
@@ -251,17 +305,25 @@ impl Correction {
     /// Struck through in the capsule.
     pub fn before(&self) -> &str {
         match self.kind {
-            CorrectionKind::Fixed => &self.original,
+            CorrectionKind::Fixed | CorrectionKind::UndoPending => &self.original,
             CorrectionKind::Undone => &self.corrected,
         }
     }
 
-    /// The keycap (or, after an undo, plain) label at the end of the capsule.
+    /// The keycap (or, after an undo, plain) label at the end of the capsule. Empty for a fix
+    /// that can't be undone.
     pub fn label(&self) -> &'static str {
         match self.kind {
-            CorrectionKind::Fixed => "\u{232B} undo",
-            CorrectionKind::Undone => "undone",
+            CorrectionKind::Fixed if self.undoable => "\u{232B} undo",
+            CorrectionKind::Fixed => "",
+            CorrectionKind::UndoPending => "Undo?",
+            CorrectionKind::Undone => "Undone",
         }
+    }
+
+    /// The label is drawn as a keycap (the undo hint).
+    pub fn keycap(&self) -> bool {
+        self.kind == CorrectionKind::Fixed && self.undoable
     }
 }
 
@@ -524,6 +586,18 @@ pub struct Frame {
     pub rise: f32,
 }
 
+/// How long a pill for `correction` stays up. "Undo?" holds until it is answered (a second
+/// Backspace, another key, a click): the hook ends it, never a timer.
+pub fn pill_duration_ms(correction: &Correction, config: &PillConfig) -> u32 {
+    match correction.kind {
+        CorrectionKind::UndoPending => UNTIL_ANSWERED_MS,
+        _ => config.duration_ms,
+    }
+}
+
+/// "Until answered": a day, so the animation code needs no special case.
+pub const UNTIL_ANSWERED_MS: u32 = 24 * 60 * 60 * 1000;
+
 /// The frame `elapsed_ms` after the pill appeared, or `None` once it is gone.
 /// Fade and rise in over [`FADE_IN_MS`] (ease-out), hold, fade out over [`FADE_OUT_MS`].
 pub fn frame_at(elapsed_ms: u32, duration_ms: u32) -> Option<Frame> {
@@ -646,6 +720,7 @@ mod win {
 
     enum Command {
         Show(Correction),
+        Hide,
         Config(PillConfig),
         Shutdown,
     }
@@ -695,6 +770,11 @@ mod win {
         /// Show the pill for a correction. Replaces whatever is showing.
         pub fn show(&self, correction: Correction) {
             self.send(Command::Show(correction));
+        }
+
+        /// Hide whatever is showing (a held Backspace was sent on or dropped).
+        pub fn hide(&self) {
+            self.send(Command::Hide);
         }
 
         /// Apply new settings (from the next frame on).
@@ -882,6 +962,8 @@ mod win {
         origin: POINT,
         scale: f32,
         shown: Instant,
+        /// Time on screen including the fades ([`pill_duration_ms`]); shortened to fade out now.
+        duration: u32,
     }
 
     struct Pill {
@@ -903,6 +985,7 @@ mod win {
             while let Ok(command) = self.commands.try_recv() {
                 match command {
                     Command::Show(correction) => self.start_locating(correction),
+                    Command::Hide => self.fade_out(),
                     Command::Config(config) => {
                         self.config = config;
                         if config_is_off(&self.config) {
@@ -999,7 +1082,7 @@ mod win {
             let renderer = self.renderer.as_ref().expect("renderer just created");
             let scale = dpi / 96.0;
             let texts = renderer.texts(correction)?;
-            let layout = capsule_layout(&texts.metrics, correction.kind == CorrectionKind::Fixed);
+            let layout = capsule_layout(&texts.metrics, correction.keycap());
             let (top, bottom, word) = anchor(spot, correction);
             let Some(placement) = place(
                 self.config.style,
@@ -1028,7 +1111,8 @@ mod win {
                 None => now,
             };
             let elapsed = elapsed_ms(shown, now);
-            let frame = frame_at(elapsed, self.config.duration_ms).unwrap_or(Frame {
+            let duration = pill_duration_ms(correction, &self.config);
+            let frame = frame_at(elapsed, duration).unwrap_or(Frame {
                 alpha: 0.0,
                 rise: 0.0,
             });
@@ -1070,8 +1154,9 @@ mod win {
                 origin,
                 scale,
                 shown,
+                duration,
             });
-            match next_tick_ms(elapsed, self.config.duration_ms) {
+            match next_tick_ms(elapsed, duration) {
                 Some(ms) => self.set_timer(TIMER_ANIM, ms),
                 None => self.hide(),
             }
@@ -1084,7 +1169,7 @@ mod win {
                 return;
             };
             let elapsed = elapsed_ms(v.shown, Instant::now());
-            let duration = self.config.duration_ms;
+            let duration = v.duration;
             let Some(frame) = frame_at(elapsed, duration) else {
                 self.hide();
                 return;
@@ -1132,6 +1217,22 @@ mod win {
                     let _ = ShowWindow(self.hwnd, SW_HIDE);
                 }
             }
+        }
+
+        /// Start fading out now (the "Undo?" pill was answered by another key or a click).
+        fn fade_out(&mut self) {
+            self.locating = None;
+            self.kill_timer(TIMER_LOCATE);
+            let Some(v) = self.visible.as_mut() else {
+                return;
+            };
+            let elapsed = elapsed_ms(v.shown, Instant::now()).max(FADE_IN_MS);
+            v.duration = (elapsed + FADE_OUT_MS).max(MIN_DURATION_MS);
+            // Keep the timing consistent: a short pill restarts its fade from full opacity.
+            v.shown = Instant::now()
+                .checked_sub(Duration::from_millis(u64::from(v.duration - FADE_OUT_MS)))
+                .unwrap_or_else(Instant::now);
+            self.set_timer(TIMER_ANIM, FRAME_MS);
         }
 
         fn cancel(&mut self) {
@@ -1385,11 +1486,12 @@ mod win {
             let bitmap = Bitmap::new(placement.window.width(), placement.window.height())?;
             let to_dip = 96.0 / dpi;
             let rt: ID2D1RenderTarget = self.begin(&bitmap, dpi)?;
+            let colours = config.colours_for(correction);
             // SAFETY: drawing between BeginDraw (in `begin`) and EndDraw on a bound target.
             unsafe {
                 if let Some(u) = placement.underline {
                     let u = u.scaled(to_dip);
-                    let brush = brush(&rt, config.accent, 1.0)?;
+                    let brush = brush(&rt, colours.accent, 1.0)?;
                     rt.FillRoundedRectangle(&rounded(u, u.h / 2.0), &brush);
                 }
                 if let Some(cap) = placement.capsule {
@@ -1409,15 +1511,15 @@ mod win {
                     }
                     rt.FillRoundedRectangle(
                         &rounded(cap, radius),
-                        &brush(&rt, config.background, 1.0)?,
+                        &brush(&rt, colours.background, 1.0)?,
                     );
                     let at = |x: f32, y: f32| D2D_POINT_2F {
                         x: cap.x + x,
                         y: cap.y + y,
                     };
-                    let faint = brush(&rt, config.text, 0.55)?;
-                    let text = brush(&rt, config.text, 1.0)?;
-                    let keycap = brush(&rt, config.keycap, 1.0)?;
+                    let faint = brush(&rt, colours.text, 0.55)?;
+                    let text = brush(&rt, colours.text, 1.0)?;
+                    let keycap = brush(&rt, colours.keycap, 1.0)?;
                     let opts = D2D1_DRAW_TEXT_OPTIONS_NONE;
                     rt.DrawTextLayout(
                         at(layout.before_x, layout.text_y),
@@ -1432,13 +1534,13 @@ mod win {
                         opts,
                     );
                     rt.DrawTextLayout(at(layout.word_x, layout.text_y), &texts.word, &text, opts);
-                    if correction.kind == CorrectionKind::Fixed {
+                    if correction.keycap() {
                         let key = BoxF {
                             x: cap.x + layout.key.x,
                             y: cap.y + layout.key.y,
                             ..layout.key
                         };
-                        let fill = brush(&rt, config.keycap, 0.16)?;
+                        let fill = brush(&rt, colours.keycap, 0.16)?;
                         rt.FillRoundedRectangle(&rounded(key, dip::KEY_RADIUS), &fill);
                     }
                     rt.DrawTextLayout(
@@ -1631,7 +1733,7 @@ mod win {
             word: None,
         };
         let texts = r.texts(correction).map_err(|e| e.to_string())?;
-        let layout = capsule_layout(&texts.metrics, correction.kind == CorrectionKind::Fixed);
+        let layout = capsule_layout(&texts.metrics, correction.keycap());
         let (top, bottom, word) = anchor(&spot, correction);
         let work = Rect {
             left: 0,
@@ -1794,6 +1896,62 @@ mod tests {
         }
     }
 
+    /// Owner live test: "Undo?" never times out; every other pill keeps its duration.
+    #[test]
+    fn undo_pending_pill_holds_until_answered() {
+        let r = replacement(3, "the ", "teh", "the");
+        let config = PillConfig::default();
+        let pending = Correction::undo_pending(&r);
+        assert_eq!(pill_duration_ms(&pending, &config), UNTIL_ANSWERED_MS);
+        // An hour in, it is still fully visible and the next tick is far away.
+        let hour = 60 * 60 * 1000;
+        assert_eq!(
+            frame_at(hour, UNTIL_ANSWERED_MS).map(|f| f.alpha),
+            Some(1.0)
+        );
+        assert!(next_tick_ms(hour, UNTIL_ANSWERED_MS).unwrap() > hour);
+        for c in [Correction::fixed(&r), Correction::undone(&r)] {
+            assert_eq!(pill_duration_ms(&c, &config), config.duration_ms);
+        }
+    }
+
+    /// The held-Backspace pill: the same words as the fix, "Undo?", in the alert colours.
+    #[test]
+    fn undo_pending_pill_asks_in_the_alert_colour() {
+        let r = replacement(3, "the ", "teh", "the");
+        let pending = Correction::undo_pending(&r);
+        assert_eq!(pending.kind, CorrectionKind::UndoPending);
+        assert_eq!((pending.word(), pending.before()), ("the", "teh"));
+        assert_eq!((pending.label(), pending.keycap()), ("Undo?", false));
+        assert_eq!(pending.trailing, 1);
+        let config = PillConfig::default();
+        let c = config.colours_for(&pending);
+        assert_eq!(
+            (c.background, c.accent, c.text),
+            (config.alert, config.alert, config.alert_text)
+        );
+        let fixed = config.colours_for(&Correction::fixed(&r));
+        assert_eq!(
+            (fixed.background, fixed.text),
+            (config.background, config.text)
+        );
+        assert_eq!(Correction::undone(&r).label(), "Undone");
+    }
+
+    /// Review blocker B2: no undo hint after Enter or Tab, where Backspace doesn't undo.
+    #[test]
+    fn no_undo_hint_after_enter_or_tab() {
+        for insert in ["the\n", "the\t"] {
+            let fix = Correction::fixed(&replacement(3, insert, "teh", "the"));
+            assert!(!fix.undoable && !fix.keycap(), "{insert:?}");
+            assert_eq!(fix.label(), "");
+        }
+        let fix = Correction::fixed(&replacement(3, "the.", "teh", "the"));
+        assert!(fix.undoable && fix.keycap());
+        let undo = Correction::undone(&replacement(4, "teh.", "teh", "the"));
+        assert!(!undo.keycap());
+    }
+
     #[test]
     fn corrections_know_what_follows_the_word() {
         let fix = Correction::from_event(&Event::Corrected(replacement(3, "the ", "teh", "the")))
@@ -1806,7 +1964,7 @@ mod tests {
             (undo.word(), undo.before(), undo.trailing),
             ("teh", "the", 0)
         );
-        assert_eq!(undo.label(), "undone");
+        assert_eq!(undo.label(), "Undone");
         assert_eq!(Correction::from_event(&Event::Learned("x".into())), None);
         // Non-ASCII counts characters, not bytes.
         let fix = Correction::fixed(&replacement(4, "café.", "cafe", "café"));

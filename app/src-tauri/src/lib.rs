@@ -1,8 +1,10 @@
 mod crash;
 mod engine;
 mod install;
+mod keys;
 mod links;
 mod managed;
+mod manifest;
 mod migrations;
 mod net;
 mod remote;
@@ -11,6 +13,7 @@ mod stats;
 mod strings;
 mod system;
 mod tour;
+mod undo_counts;
 mod updates;
 mod usage;
 
@@ -39,6 +42,11 @@ const TRAY_ID: &str = "main";
 const BACKGROUND_ARG: &str = "--background";
 /// Asks an open settings window to switch page.
 const OPEN_PAGE_EVENT: &str = "open-page";
+/// `--perf-idle <dir>`: for perf/idle.ps1. Settings and data live in `<dir>`, every network
+/// feature is off as if by machine policy, no other copy of unflub is contacted (no single
+/// instance), no window opens, nothing registers at login, and the engine runs `--dry-run`
+/// (its hook only watches: nothing is injected or swallowed).
+const PERF_IDLE_ARG: &str = "--perf-idle";
 
 struct AppState {
     store: Store,
@@ -49,7 +57,23 @@ struct AppState {
     /// Words learned by undo since the settings window last saved. The window may still hold
     /// settings from before they were learned, so its next save gets them merged back in.
     pending_learned: Mutex<Vec<String>>,
+    /// The engine paused itself because another program interferes with keyboard input.
+    interference: Mutex<Interference>,
+    /// The engine couldn't install the keyboard hook and is being retried with backoff.
+    hook_unavailable: std::sync::atomic::AtomicBool,
 }
+
+/// See [`AppState::interference`]. Each start is also counted in the anonymous usage stats as
+/// `health.self_pauses`.
+#[derive(Debug, Default)]
+struct Interference {
+    active: bool,
+    /// Times it started since unflub started.
+    times: u64,
+}
+
+/// Emitted with `true`/`false` when the engine pauses itself or resumes.
+const INTERFERENCE_EVENT: &str = "input-interference";
 
 /// Facts about this copy of unflub, fixed at startup.
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -77,7 +101,7 @@ struct SystemLook {
 struct SendPreview {
     /// The daily usage stats, or `None` while that switch is off.
     stats: Option<String>,
-    /// The update check's headers, as they would go out now.
+    /// The headers on update requests (manifest and release files), as they would go out now.
     headers: Vec<(String, String)>,
     /// Crash reports can be sent from this build.
     crash_reports_available: bool,
@@ -173,7 +197,7 @@ fn send_preview(app: AppHandle) -> SendPreview {
     let stats = settings
         .share_usage_stats
         .then(|| pretty(&app.state::<Usage>().payload(&settings, &version)));
-    let headers = updates::api_headers(&app)
+    let headers = updates::request_headers(&app)
         .into_iter()
         .map(|(k, v)| {
             (
@@ -189,12 +213,9 @@ fn send_preview(app: AppHandle) -> SendPreview {
     }
 }
 
-/// `x-os-version` as `X-OS-Version`, for reading.
+/// `user-agent` as `User-Agent`, for reading.
 fn canonical_header(name: &str) -> String {
     match name {
-        "x-os-version" => net::OS_VERSION_HEADER.into(),
-        "x-rollout-bucket" => net::ROLLOUT_BUCKET_HEADER.into(),
-        "x-first" => net::FIRST_HEADER.into(),
         "user-agent" => "User-Agent".into(),
         other => other.into(),
     }
@@ -205,8 +226,10 @@ fn tour_reset(app: AppHandle) {
     app.state::<tour::Tour>().reset(&current_settings(&app));
 }
 
+/// Async so it runs on a runtime worker, not the main thread: a panic in the practice engine
+/// then keeps only its location (`crash.rs` keeps messages from `main`).
 #[tauri::command]
-fn tour_key(app: AppHandle, key: String) -> tour::TourAction {
+async fn tour_key(app: AppHandle, key: String) -> tour::TourAction {
     app.state::<tour::Tour>().key(&current_settings(&app), &key)
 }
 
@@ -228,6 +251,12 @@ fn stats_view(app: AppHandle) -> StatsView {
 fn clear_stats(app: AppHandle) -> StatsView {
     let stats = app.state::<Stats>();
     stats.clear();
+    // The undo counts are typed words too: gone from disk here, and from the running engine
+    // with the next settings it gets (a new epoch).
+    app.state::<Arc<undo_counts::UndoCounts>>().clear();
+    if let Some(engine) = app.state::<AppState>().engine.lock().unwrap().as_ref() {
+        engine.apply(&current_settings(&app));
+    }
     stats.view()
 }
 
@@ -242,6 +271,32 @@ fn answer_crash_report(app: AppHandle, answer: crash::Answer) {
 }
 
 #[tauri::command]
+fn input_interference(app: AppHandle) -> bool {
+    app.state::<AppState>().interference.lock().unwrap().active
+}
+
+/// The engine paused itself (`active`) or works again: tray, settings window.
+fn set_interference(app: &AppHandle, active: bool) {
+    let state = app.state::<AppState>();
+    {
+        let mut i = state.interference.lock().unwrap();
+        if i.active == active {
+            return;
+        }
+        i.active = active;
+        if active {
+            i.times += 1;
+            eprintln!(
+                "autocorrect: paused itself, another program is interfering with keyboard input ({} times)",
+                i.times
+            );
+        }
+    }
+    refresh_tray(app, current_settings(app).enabled);
+    let _ = app.emit(INTERFERENCE_EVENT, active);
+}
+
+#[tauri::command]
 fn remote_message(app: AppHandle) -> Option<RemoteMessage> {
     app.state::<Remote>().message()
 }
@@ -250,6 +305,7 @@ fn remote_message(app: AppHandle) -> Option<RemoteMessage> {
 fn dismiss_message(app: AppHandle, id: String) {
     app.state::<Remote>().dismiss(&id);
     let _ = app.emit(remote::MESSAGE_EVENT, Option::<RemoteMessage>::None);
+    refresh_tray_menu(&app);
 }
 
 fn current_settings(app: &AppHandle) -> Settings {
@@ -275,6 +331,10 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
         sync_autostart(app, next.start_at_login);
     }
     if prev.enabled != next.enabled {
+        if !next.enabled {
+            // Pausing ends the engine, and with it the interference.
+            set_interference(app, false);
+        }
         refresh_tray(app, next.enabled);
         refresh_window_icon(app, next.enabled);
     }
@@ -286,6 +346,14 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
     if prev.stats_keep_words && !next.stats_keep_words {
         app.state::<Stats>().forget_words();
     }
+    let counts = app.state::<Arc<undo_counts::UndoCounts>>();
+    if prev.stats_keep_words != next.stats_keep_words {
+        counts.set_persist(next.stats_keep_words);
+    }
+    if prev.learn_after_undos > 0 && next.learn_after_undos == 0 {
+        // Learning off: the counts have no use left (the engine forgets its own below).
+        counts.clear();
+    }
     if let Some(engine) = state.engine.lock().unwrap().as_ref() {
         engine.apply(&next);
     }
@@ -293,17 +361,20 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
     Ok(next)
 }
 
-/// The remote config changed: pass its flags on and show its message.
+/// The manifest's flags or message changed: pass the flags on and show the message.
 fn apply_remote(app: &AppHandle) {
     let remote = app.state::<Remote>();
     if let Some(engine) = app.state::<AppState>().engine.lock().unwrap().as_ref() {
         engine.set_flags(remote.flags());
     }
     let _ = app.emit(remote::MESSAGE_EVENT, remote.message());
+    refresh_tray_menu(app);
 }
 
 /// Undoing a fix taught the engine `word`: keep it in the personal dictionary for next time.
 fn learn_word(app: &AppHandle, word: String) {
+    // Learned: its undo count has done its job.
+    app.state::<Arc<undo_counts::UndoCounts>>().forget(&word);
     let state = app.state::<AppState>();
     merge_learned(
         &mut state.pending_learned.lock().unwrap(),
@@ -332,26 +403,78 @@ fn observe(app: &AppHandle, event: Observed) {
             decide,
             inject,
             pill,
+            keep_word,
         } => {
             let settings = current_settings(app);
             usage.correction(decide, inject, pill);
             app.state::<Stats>().correction(
                 &original,
                 &corrected,
-                settings.stats_keep_words && !user_rule,
+                keep_word_in_stats(settings.stats_keep_words, user_rule, keep_word),
             );
         }
         Observed::Undone {
             original,
             corrected,
-            ..
+            user_rule,
+            keep_word,
         } => {
             usage.undo();
             app.state::<Stats>().undo(&original, &corrected);
+            if records_undo(
+                current_settings(app).learn_after_undos,
+                user_rule,
+                keep_word,
+            ) {
+                app.state::<Arc<undo_counts::UndoCounts>>()
+                    .record(&original, &corrected);
+            }
         }
         Observed::CorrectorPanicked => usage.crash(),
         Observed::HookReinstalled => usage.hook_reinstall(),
+        Observed::InputInterference { active } => {
+            if active {
+                usage.self_pause();
+            }
+            set_interference(app, active);
+        }
+        Observed::HookUnavailable { active } => {
+            if active {
+                // No field of its own in the contract's health group: a failed hook start is
+                // counted with the hook (re)installs it leads to.
+                usage.hook_reinstall();
+            }
+            app.state::<AppState>()
+                .hook_unavailable
+                .store(active, std::sync::atomic::Ordering::Relaxed);
+            refresh_tray(app, current_settings(app).enabled);
+        }
+        Observed::EngineCrashed => {
+            set_interference(app, false);
+            usage.crash();
+            // A panic left a marker for the opt-in crash report; other exits leave none.
+            crash::take_engine_report(app);
+        }
     }
+}
+
+/// Is an undone pair counted toward learning? Only while learning is on, never for the user's
+/// own shortcuts, and never where the engine says the word may be a password (terminals).
+fn records_undo(learn_after_undos: u8, user_rule: bool, engine_allows: bool) -> bool {
+    learn_after_undos > 0 && !user_rule && engine_allows
+}
+
+/// Does the Stats page keep a fix's typo and word? Only with "Keep a list" on, never for the
+/// user's own shortcuts, and never where the engine says the word may be a password (terminals).
+fn keep_word_in_stats(keep_words_setting: bool, user_rule: bool, engine_allows: bool) -> bool {
+    keep_words_setting && !user_rule && engine_allows
+}
+
+/// The directory after `--perf-idle`, if given.
+fn perf_idle_dir(args: impl IntoIterator<Item = String>) -> Option<std::path::PathBuf> {
+    let mut args = args.into_iter();
+    args.find(|a| a == PERF_IDLE_ARG)?;
+    args.next().filter(|d| !d.is_empty()).map(Into::into)
 }
 
 /// Unhook and stop the engine. Safe to call more than once.
@@ -436,18 +559,27 @@ fn tray_image(enabled: bool) -> Image<'static> {
     Image::from_bytes(bytes).expect("bundled tray icon is a valid PNG")
 }
 
-fn tooltip(enabled: bool) -> &'static str {
-    if enabled {
-        strings::TOOLTIP
-    } else {
-        strings::TOOLTIP_PAUSED
+fn tooltip(enabled: bool, interference: bool, hook_unavailable: bool) -> &'static str {
+    match (enabled, interference, hook_unavailable) {
+        (false, _, _) => strings::TOOLTIP_PAUSED,
+        (true, _, true) => strings::TOOLTIP_HOOK_UNAVAILABLE,
+        (true, true, false) => strings::TOOLTIP_INTERFERENCE,
+        (true, false, false) => strings::TOOLTIP,
     }
 }
 
 fn refresh_tray(app: &AppHandle, enabled: bool) {
+    let state = app.state::<AppState>();
+    let interference = state.interference.lock().unwrap().active;
+    let hook_unavailable = state
+        .hook_unavailable
+        .load(std::sync::atomic::Ordering::Relaxed);
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_icon(Some(tray_image(enabled)));
-        let _ = tray.set_tooltip(Some(tooltip(enabled)));
+        // Paused by itself, or not working yet, looks paused.
+        let _ = tray.set_icon(Some(tray_image(
+            enabled && !interference && !hook_unavailable,
+        )));
+        let _ = tray.set_tooltip(Some(tooltip(enabled, interference, hook_unavailable)));
     }
     if let Some(item) = app.state::<AppState>().toggle.lock().unwrap().as_ref() {
         let _ = item.set_checked(enabled);
@@ -538,6 +670,9 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     if app.state::<Crashes>().pending() {
         menu = menu.text("crash", strings::MENU_CRASH);
     }
+    if let Some(message) = app.state::<Remote>().message() {
+        menu = menu.text("message", strings::menu_message(&message.text));
+    }
     let menu = menu
         .text("settings", strings::MENU_SETTINGS)
         .text("tour", strings::MENU_TOUR)
@@ -577,7 +712,7 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
     let menu = tray_menu(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_image(enabled))
-        .tooltip(tooltip(enabled))
+        .tooltip(tooltip(enabled, false, false))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -598,7 +733,7 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
                 }
                 _ => open_settings(app, Some("about")),
             },
-            "crash" => open_settings(app, Some("about")),
+            "crash" | "message" => open_settings(app, Some("about")),
             "tour" => open_settings(app, Some("tour")),
             "support" => open_url(app, links::SPONSOR_URL),
             "star" => open_url(app, links::REPO_URL),
@@ -621,26 +756,47 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+    let perf_idle = perf_idle_dir(std::env::args());
+    let mut builder = tauri::Builder::default();
+    if perf_idle.is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             open_settings(app, None)
-        }))
+        }));
+    }
+    let app = builder
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![BACKGROUND_ARG]),
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
-            let config_dir = app.path().app_config_dir()?;
-            let data_dir = app.path().app_data_dir()?;
-            let local_dir = app.path().app_local_data_dir()?;
+        .setup(move |app| {
+            let (config_dir, data_dir, local_dir) = match &perf_idle {
+                Some(dir) => (dir.clone(), dir.clone(), dir.clone()),
+                None => (
+                    app.path().app_config_dir()?,
+                    app.path().app_data_dir()?,
+                    app.path().app_local_data_dir()?,
+                ),
+            };
             let version = app.package_info().version.to_string();
             let install_source = InstallSource::detect();
-            let info = AppInfo {
-                install_source,
-                managed: Managed::read(),
-                login_allowed: install::login_allowed(install_source),
+            let info = match perf_idle {
+                Some(_) => AppInfo {
+                    install_source,
+                    managed: Managed {
+                        disable_updates: true,
+                        disable_usage_stats: true,
+                        disable_crash_reports: true,
+                        disable_remote_config: true,
+                    },
+                    login_allowed: false,
+                },
+                None => AppInfo {
+                    install_source,
+                    managed: Managed::read(),
+                    login_allowed: install::login_allowed(install_source),
+                },
             };
             app.manage(info);
             // First, so a panic anywhere after this leaves a report.
@@ -648,14 +804,17 @@ pub fn run() {
                 crash::install(&data_dir, &version, info.managed.disable_crash_reports);
             app.manage(crashes);
             app.manage(Updates::new(config_dir.clone(), local_dir));
-            app.manage(Remote::new(
-                data_dir.clone(),
-                info.managed.disable_remote_config,
-            ));
             app.manage(net::Rollout::new(config_dir.clone()));
             let store = Store::new(config_dir);
             let first_run = !store.exists();
             let settings = store.load();
+            app.manage(Remote::new(
+                data_dir.clone(),
+                info.managed.disable_remote_config,
+                settings.channel.as_str(),
+                app.package_info().version.clone(),
+                app.state::<net::Rollout>().bucket(&version),
+            ));
             let usage = Usage::new(
                 data_dir.clone(),
                 info.managed.effective(settings.clone()).share_usage_stats,
@@ -664,6 +823,11 @@ pub fn run() {
                 usage.crash();
             }
             app.manage(usage);
+            let counts = Arc::new(undo_counts::UndoCounts::new(
+                &data_dir,
+                settings.stats_keep_words,
+            ));
+            app.manage(counts.clone());
             app.manage(Stats::new(data_dir));
             app.manage(tour::Tour::default());
             let enabled = settings.enabled;
@@ -674,12 +838,20 @@ pub fn run() {
                 toggle: Mutex::new(None),
                 engine: Mutex::new(None),
                 pending_learned: Mutex::new(Vec::new()),
+                interference: Mutex::default(),
+                hook_unavailable: Default::default(),
             });
             let handle = app.handle();
             let learner = handle.clone();
             let observer_app = handle.clone();
             let observer: engine::Observer = Arc::new(move |event| observe(&observer_app, event));
+            let launch = engine::Launch::beside_app(
+                app.state::<Crashes>().engine_marker(),
+                perf_idle.is_some(),
+            );
             let engine = EngineHost::start(
+                launch,
+                counts,
                 settings.clone(),
                 app.state::<Remote>().flags(),
                 app.state::<Stats>().words_checked.clone(),
@@ -694,18 +866,24 @@ pub fn run() {
             } else {
                 sync_login_truth(handle);
             }
+            // The engine may have crashed while unflub was closing.
+            if crash::take_engine_report(handle) {
+                app.state::<Usage>().crash();
+            }
             crash::after_start(handle);
             if !cfg!(debug_assertions) {
                 let remote_app = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    updates::refresh_remote(&remote_app).await;
+                    if let Err(e) = updates::refresh_remote(&remote_app).await {
+                        eprintln!("manifest: {e}");
+                    }
                 });
             }
             updates::spawn_background(handle.clone());
             usage::spawn(handle.clone());
             let background = std::env::args().any(|a| a == BACKGROUND_ARG);
             let welcome = !current_settings(handle).onboarded;
-            if first_run || welcome || !background {
+            if perf_idle.is_none() && (first_run || welcome || !background) {
                 open_settings(handle, None);
             }
             Ok(())
@@ -727,7 +905,8 @@ pub fn run() {
             crash_report_pending,
             answer_crash_report,
             remote_message,
-            dismiss_message
+            dismiss_message,
+            input_interference
         ])
         .build(tauri::generate_context!())
         .expect("error while building unflub");
@@ -753,6 +932,50 @@ mod tests {
         let mut from_window = vec!["rmgn".to_string()];
         merge_learned(&mut from_window, &learned);
         assert_eq!(from_window, ["rmgn", "unflub", "Teh"]);
+    }
+
+    /// Review S4: words fixed in a terminal never reach stats.json.
+    #[test]
+    fn terminal_words_never_reach_the_stats_page() {
+        assert!(keep_word_in_stats(true, false, true));
+        assert!(!keep_word_in_stats(true, false, false), "terminal");
+        assert!(!keep_word_in_stats(true, true, true), "shortcut");
+        assert!(!keep_word_in_stats(false, false, true), "setting off");
+    }
+
+    /// Review finding 5: undone pairs are only counted when learning will use them.
+    #[test]
+    fn undo_pairs_are_recorded_only_for_learning() {
+        assert!(records_undo(2, false, true));
+        assert!(!records_undo(0, false, true), "learning off");
+        assert!(!records_undo(2, true, true), "shortcut");
+        assert!(!records_undo(2, false, false), "terminal or unknown app");
+    }
+
+    #[test]
+    fn the_tray_says_when_unflub_paused_itself() {
+        assert_eq!(tooltip(true, false, false), strings::TOOLTIP);
+        assert_eq!(tooltip(true, true, false), strings::TOOLTIP_INTERFERENCE);
+        // Review finding 7: a hook that couldn't be installed shows, until it works.
+        assert_eq!(
+            tooltip(true, false, true),
+            strings::TOOLTIP_HOOK_UNAVAILABLE
+        );
+        assert_eq!(tooltip(true, true, true), strings::TOOLTIP_HOOK_UNAVAILABLE);
+        // The user's pause wins.
+        assert_eq!(tooltip(false, true, false), strings::TOOLTIP_PAUSED);
+        assert_eq!(tooltip(false, false, true), strings::TOOLTIP_PAUSED);
+    }
+
+    #[test]
+    fn perf_idle_takes_a_directory() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            perf_idle_dir(args(&["unflub.exe", "--perf-idle", "C:/tmp/x"])),
+            Some("C:/tmp/x".into())
+        );
+        assert_eq!(perf_idle_dir(args(&["unflub.exe", "--perf-idle"])), None);
+        assert_eq!(perf_idle_dir(args(&["unflub.exe", "--background"])), None);
     }
 
     #[test]

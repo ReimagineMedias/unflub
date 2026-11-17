@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/unflub-core", "crates/unflub-windows", "app/src-tauri"]
+members = ["crates/unflub-core", "crates/unflub-windows", "crates/unflub-engine", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,7 @@ rust-version = "1.85"
 [workspace.dependencies]
 unflub-core = { path = "crates/unflub-core" }
 unflub-windows = { path = "crates/unflub-windows" }
+unflub-engine = { path = "crates/unflub-engine" }
 serde = { version = "1", features = ["derive"] }
 
 [profile.release]

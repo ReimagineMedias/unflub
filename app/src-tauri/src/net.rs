@@ -1,21 +1,19 @@
-//! What requests to api.rmgn.ca carry, and the HTTP client for the calls the updater doesn't
-//! make itself (remote config, usage stats). Contract: `D:\Code\rmgn-api\docs\unflub-contract.md`.
+//! What requests carry, and the HTTP client for the calls the updater doesn't make itself (the
+//! manifest, usage stats).
 //!
-//! There is no install ID. The update check and remote config carry the app and OS versions, a
-//! rollout bucket from 0 to 99 drawn at random for each installed version (so it links nothing
-//! from one release to the next), and `X-First`: which UTC periods (day, ISO week, month) this is
-//! the first update check in. Usage stats carry no identity headers at all.
+//! There is no install ID and nothing identifying in any request. The manifest and the release
+//! files on dl.rmgn.net are static downloads with only `User-Agent: unflub/{version}`; the
+//! rollout bucket from 0 to 99 (drawn at random for each installed version, so it links nothing
+//! from one release to the next) never leaves the computer: the app compares it with the
+//! manifest's rollout itself. Usage stats to api.rmgn.net carry no identity headers, only
+//! `X-First: week,month` on the first report of an ISO week or month ([`first_report`]).
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use std::{fs, path::PathBuf, time::Duration};
 
-pub const OS_VERSION_HEADER: &str = "X-OS-Version";
-pub const ROLLOUT_BUCKET_HEADER: &str = "X-Rollout-Bucket";
-pub const FIRST_HEADER: &str = "X-First";
-
 pub type Headers = Vec<(HeaderName, HeaderValue)>;
 
-/// `{{target}}` in the contract: the OS family.
+/// `{target}` in the manifest's platform keys and the release files: the OS family.
 pub fn target() -> &'static str {
     match std::env::consts::OS {
         "macos" => "darwin",
@@ -64,22 +62,26 @@ impl Rollout {
     }
 }
 
-/// Which UTC periods `now` starts compared with the last update check at `last` (Unix
-/// seconds): `day`, `week` (ISO week, Monday 00:00 UTC) and `month`. All three when there was
-/// none.
-pub fn first_periods(last: Option<u64>, now: u64) -> Vec<&'static str> {
+/// What every request to dl.rmgn.net carries: `User-Agent: unflub/{version}`, nothing else.
+pub fn headers(version: &str) -> Headers {
+    HeaderValue::from_str(&user_agent(version))
+        .map(|v| vec![(USER_AGENT, v)])
+        .unwrap_or_default()
+}
+
+/// Which periods a stats report at `now` is the first of, given the last accepted report at
+/// `last` (Unix seconds): `week` (ISO week, Monday 00:00 UTC) and `month` (UTC calendar month).
+/// Both when there was none.
+pub fn first_report(last: Option<u64>, now: u64) -> Vec<&'static str> {
     let date = |secs: u64| {
         time::OffsetDateTime::from_unix_timestamp(secs as i64)
             .map(|t| t.date())
             .ok()
     };
     let (Some(last), Some(today)) = (last.and_then(date), date(now)) else {
-        return vec!["day", "week", "month"];
+        return vec!["week", "month"];
     };
-    let mut first = Vec::with_capacity(3);
-    if today != last {
-        first.push("day");
-    }
+    let mut first = Vec::with_capacity(2);
     let (y1, w1, _) = last.to_iso_week_date();
     let (y2, w2, _) = today.to_iso_week_date();
     if (y1, w1) != (y2, w2) {
@@ -91,32 +93,13 @@ pub fn first_periods(last: Option<u64>, now: u64) -> Vec<&'static str> {
     first
 }
 
-/// `User-Agent` and `X-OS-Version`.
-pub fn base_headers(version: &str, os_version: &str) -> Headers {
-    let mut headers = Vec::with_capacity(4);
-    if let Ok(v) = HeaderValue::from_str(&user_agent(version)) {
-        headers.push((USER_AGENT, v));
-    }
-    if let Ok(v) = HeaderValue::from_str(os_version) {
-        headers.push((HeaderName::from_static("x-os-version"), v));
-    }
-    headers
-}
-
-/// The update check's and remote config's headers: the base ones, the rollout bucket, and
-/// `X-First` (left out when empty).
-pub fn update_headers(version: &str, os_version: &str, bucket: u8, first: &[&str]) -> Headers {
-    let mut headers = base_headers(version, os_version);
-    headers.push((
-        HeaderName::from_static("x-rollout-bucket"),
-        HeaderValue::from(u16::from(bucket.min(99))),
-    ));
-    if !first.is_empty() {
-        if let Ok(v) = HeaderValue::from_str(&first.join(",")) {
-            headers.push((HeaderName::from_static("x-first"), v));
-        }
-    }
-    headers
+/// `X-First: week,month` for a stats report, or nothing when the list is empty.
+pub fn first_header(first: &[&str]) -> Headers {
+    HeaderValue::from_str(&first.join(","))
+        .ok()
+        .filter(|_| !first.is_empty())
+        .map(|v| vec![(HeaderName::from_static("x-first"), v)])
+        .unwrap_or_default()
 }
 
 /// A client with `headers` on every request. It refuses plain-http URLs and redirects.
@@ -148,20 +131,37 @@ mod tests {
     }
 
     #[test]
-    fn update_headers_follow_the_contract() {
-        let headers = update_headers("0.2.0", "10.0.26300", 42, &["day", "month"]);
+    fn headers_carry_only_the_version() {
+        let headers = headers("0.2.0");
         assert_eq!(get(&headers, "user-agent").as_deref(), Some("unflub/0.2.0"));
-        assert_eq!(
-            get(&headers, OS_VERSION_HEADER).as_deref(),
-            Some("10.0.26300")
+        assert_eq!(headers.len(), 1);
+    }
+
+    #[test]
+    fn first_report_by_utc_calendar() {
+        // 2026-11-17 (a Tuesday) 12:00 UTC.
+        let tue = 1_794_916_800;
+        let h = 3600;
+        assert_eq!(first_report(None, tue), ["week", "month"]);
+        assert!(first_report(Some(tue - h), tue).is_empty(), "same day");
+        assert!(
+            first_report(Some(tue - 24 * h), tue).is_empty(),
+            "Monday, same week"
         );
-        assert_eq!(get(&headers, ROLLOUT_BUCKET_HEADER).as_deref(), Some("42"));
-        assert_eq!(get(&headers, FIRST_HEADER).as_deref(), Some("day,month"));
-        assert_eq!(headers.len(), 4);
-        // Nothing that could tell installs apart.
-        assert!(headers.iter().all(|(k, _)| !k.as_str().contains("install")));
-        let quiet = update_headers("0.2.0", "10.0.26300", 0, &[]);
-        assert_eq!(get(&quiet, FIRST_HEADER), None);
+        assert_eq!(
+            first_report(Some(tue - 36 * h - 1), tue),
+            ["week"],
+            "Sunday 23:59:59"
+        );
+        assert_eq!(
+            first_report(Some(tue - 20 * 24 * h), tue),
+            ["week", "month"]
+        );
+        assert_eq!(
+            get(&first_header(&["week", "month"]), "x-first").as_deref(),
+            Some("week,month")
+        );
+        assert!(first_header(&[]).is_empty());
     }
 
     #[test]
@@ -182,33 +182,6 @@ mod tests {
         fs::write(dir.join("rollout-bucket"), "0.2.0 250").unwrap();
         assert!(rollout.bucket("0.2.0") < 100);
         let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn first_periods_by_utc_calendar() {
-        // 2026-11-17 (a Tuesday) 12:00 UTC.
-        let tue = 1_794_916_800;
-        let h = 3600;
-        assert_eq!(first_periods(None, tue), ["day", "week", "month"]);
-        assert!(first_periods(Some(tue - h), tue).is_empty(), "same day");
-        assert!(
-            first_periods(Some(tue - 12 * h), tue).is_empty(),
-            "midnight UTC"
-        );
-        assert_eq!(
-            first_periods(Some(tue - 12 * h - 1), tue),
-            ["day"],
-            "Monday 23:59:59"
-        );
-        assert_eq!(
-            first_periods(Some(tue - 3 * 24 * h), tue),
-            ["day", "week"],
-            "last Saturday"
-        );
-        assert_eq!(
-            first_periods(Some(tue - 20 * 24 * h), tue),
-            ["day", "week", "month"]
-        );
     }
 
     /// Refused before any connection is made.

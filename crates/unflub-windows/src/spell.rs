@@ -10,6 +10,10 @@
 //! on a misspelling takes 5-100 ms, so [`SpellBackend::auto_replacement`] only reads a cache
 //! and queues misses for the background thread; the answer is used the next time the word
 //! comes up.
+//!
+//! unflub never writes to the Windows dictionary (`ISpellChecker::Add`): that list is shared by
+//! every app on the computer, so a typo the user once undid would stop being underlined
+//! everywhere. Words learned by undo live only in unflub's own settings and engine.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -32,12 +36,10 @@ const CACHE_LIMIT: usize = 4096;
 /// Pending background lookups. Extra requests are dropped (and retried next time).
 const QUEUE_LIMIT: usize = 64;
 
-/// Work for the `unflub-spell` thread: everything slow or touching disk.
+/// Work for the `unflub-spell` thread: everything slow.
 enum Job {
     /// `ComprehensiveCheck` the word and cache the answer.
     Lookup(String),
-    /// `ISpellChecker::Add` (writes the user's dictionary file).
-    Learn(String),
 }
 
 #[derive(Default)]
@@ -178,32 +180,10 @@ impl WindowsSpellBackend {
         &self.language
     }
 
-    /// A handle that teaches this checker words from any thread, through the same background
-    /// thread as [`SpellBackend::learn`]. Use it where the backend itself is out of reach
-    /// (it lives inside the engine on the hook thread).
-    pub fn learner(&self) -> SpellLearner {
-        SpellLearner {
-            jobs: self.jobs.clone(),
-        }
-    }
-
     /// Blocking `ComprehensiveCheck` lookup, bypassing the cache. Slow; never call it on the
     /// hook path. For diagnostics and tests.
     pub fn auto_replacement_blocking(&self, word: &str) -> Option<String> {
         comprehensive_replacement(&self.checker, word)
-    }
-}
-
-/// Adds words to the user's Windows dictionary on the `unflub-spell` thread. Never blocks.
-/// Keeps that thread alive while any clone exists.
-#[derive(Clone)]
-pub struct SpellLearner {
-    jobs: Sender<Job>,
-}
-
-impl SpellLearner {
-    pub fn learn(&self, word: &str) {
-        let _ = self.jobs.send(Job::Learn(word.to_owned()));
     }
 }
 
@@ -213,19 +193,7 @@ fn lookup_worker(language: &str, rx: Receiver<Job>, cache: Arc<Mutex<Cache>>) {
         unsafe { factory()?.CreateSpellChecker(&HSTRING::from(language)) }
     });
     while let Ok(job) = rx.recv() {
-        let word = match job {
-            Job::Lookup(word) => word,
-            Job::Learn(word) => {
-                if let Ok(c) = &checker {
-                    // SAFETY: valid interface on this MTA thread.
-                    let _ = unsafe { c.Add(&HSTRING::from(word.as_str())) };
-                }
-                if let Ok(mut cache) = cache.lock() {
-                    cache.answers.remove(&word);
-                }
-                continue;
-            }
-        };
+        let Job::Lookup(word) = job;
         let answer = checker
             .as_ref()
             .ok()
@@ -270,18 +238,36 @@ impl SpellBackend for WindowsSpellBackend {
         }
         None
     }
-
-    /// `ISpellChecker::Add` adds to the user's Windows dictionary for this language. That
-    /// writes a file, so it runs on the background thread, never on the hook thread.
-    fn learn(&self, word: &str) {
-        let _ = self.jobs.send(Job::Learn(word.to_owned()));
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    /// unflub never writes to the Windows dictionary, which every app shares: no source file in
+    /// the workspace calls `ISpellChecker::Add` (the needle is built here so this file doesn't
+    /// contain it).
+    #[test]
+    fn nothing_calls_ispellchecker_add() {
+        let needle = format!(".{}(", "Add");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut stack = vec![root.join("crates"), root.join("app/src-tauri/src")];
+        let mut checked = 0;
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    checked += 1;
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    assert!(!text.contains(&needle), "{} calls {needle}", path.display());
+                }
+            }
+        }
+        assert!(checked > 20, "walked the workspace ({checked} files)");
+    }
 
     fn backend() -> Option<WindowsSpellBackend> {
         match WindowsSpellBackend::new(Some("en-US")) {

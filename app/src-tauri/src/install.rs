@@ -2,13 +2,15 @@
 //!
 //! The setup and the package managers leave a one-line `install-source` file beside
 //! `unflub.exe`: the NSIS setup writes `installer`, or what `/SOURCE=` says (the winget
-//! manifest passes `/SOURCE=winget`); the Scoop manifest writes `scoop`. Without the file:
-//! an MSIX package is `store`, an MSI or NSIS install is `installer` (its uninstaller is
-//! beside it, or it lives under Program Files), and anything else is `portable`.
+//! manifest passes `/SOURCE=winget`, the Chocolatey package `/SOURCE=chocolatey`); the Scoop
+//! manifest writes `scoop`. Without the file: an MSIX package is `store`, an MSI or NSIS install
+//! is `installer` (its uninstaller is beside it, or it lives under Program Files), and anything
+//! else is `portable`.
 //!
-//! Only `installer` and `winget` copies update themselves. The others show "Update with …"
-//! and leave it to their tool: Scoop and the Store replace files they own, and a portable copy
-//! has no installer to run.
+//! Only `installer` copies update themselves. The others show "Update with …" and leave it to
+//! their tool: winget, Chocolatey, Scoop and the Store track the version they installed and
+//! would be confused by a copy that changed under them, and a portable copy has no installer
+//! to run.
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -20,6 +22,7 @@ pub const MARKER: &str = "install-source";
 pub enum InstallSource {
     Installer,
     Winget,
+    Chocolatey,
     Scoop,
     Store,
     Portable,
@@ -28,8 +31,9 @@ pub enum InstallSource {
 impl InstallSource {
     fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "installer" | "setup" | "msi" | "chocolatey" => Some(Self::Installer),
+            "installer" | "setup" | "msi" => Some(Self::Installer),
             "winget" => Some(Self::Winget),
+            "chocolatey" | "choco" => Some(Self::Chocolatey),
             "scoop" => Some(Self::Scoop),
             "store" => Some(Self::Store),
             "portable" => Some(Self::Portable),
@@ -39,7 +43,7 @@ impl InstallSource {
 
     /// unflub may download and run its own installer.
     pub fn self_updates(self) -> bool {
-        matches!(self, Self::Installer | Self::Winget)
+        matches!(self, Self::Installer)
     }
 
     /// Where this copy of unflub came from.
@@ -92,7 +96,7 @@ fn login_allowed_in(
     program_files: &[PathBuf],
 ) -> bool {
     match source {
-        InstallSource::Installer | InstallSource::Winget => {
+        InstallSource::Installer | InstallSource::Winget | InstallSource::Chocolatey => {
             local_appdata.is_some_and(|l| same_path(dir, &l.join("unflub")))
                 || program_files
                     .iter()
@@ -163,7 +167,7 @@ mod tests {
             ("scoop\n", InstallSource::Scoop),
             ("winget", InstallSource::Winget),
             (" Installer ", InstallSource::Installer),
-            ("chocolatey", InstallSource::Installer),
+            ("chocolatey", InstallSource::Chocolatey),
             ("portable", InstallSource::Portable),
         ] {
             let dir = temp("marker");
@@ -193,8 +197,10 @@ mod tests {
     #[test]
     fn who_updates() {
         assert!(InstallSource::Installer.self_updates());
-        assert!(InstallSource::Winget.self_updates());
+        // Package managers own their copies (review: packaging).
         for s in [
+            InstallSource::Winget,
+            InstallSource::Chocolatey,
             InstallSource::Scoop,
             InstallSource::Store,
             InstallSource::Portable,
@@ -213,6 +219,7 @@ mod tests {
         assert!(ok(r"C:\Users\a\AppData\Local\unflub", Installer));
         assert!(ok(r"c:\users\A\appdata\local\UNFLUB\", Winget));
         assert!(ok(r"C:\Program Files\unflub", Installer));
+        assert!(ok(r"C:\Users\a\AppData\Local\unflub", Chocolatey));
         // Dev and release builds in a checkout, even if something calls them "installer".
         assert!(!ok(
             r"D:\Code\unflub-wt\api-updates\target\release",

@@ -203,7 +203,14 @@ impl KeyTranslator {
         }
         let any = mods.shift || mods.ctrl || mods.alt;
         match key.vk {
-            vk::BACK => return Some(if any { Key::Reset } else { Key::Backspace }),
+            vk::BACK => {
+                return Some(match (mods.ctrl, mods.shift || mods.alt) {
+                    // Deletes back to a word start: the next word is fully seen.
+                    (true, false) => Key::DeleteWordLeft,
+                    (false, false) => Key::Backspace,
+                    _ => Key::Reset,
+                });
+            }
             vk::TAB => return Some(if any { Key::Reset } else { Key::Boundary('\t') }),
             vk::RETURN => {
                 return Some(if mods.ctrl || mods.alt {
@@ -304,7 +311,12 @@ mod tests {
     #[test]
     fn backspace_only_without_modifiers() {
         assert_eq!(tr(vk::BACK, NONE, Typed::Other), Some(Key::Backspace));
-        assert_eq!(tr(vk::BACK, CTRL, Typed::Other), Some(Key::Reset));
+        assert_eq!(tr(vk::BACK, CTRL, Typed::Other), Some(Key::DeleteWordLeft));
+        let ctrl_shift = Modifiers {
+            shift: true,
+            ..CTRL
+        };
+        assert_eq!(tr(vk::BACK, ctrl_shift, Typed::Other), Some(Key::Reset));
         assert_eq!(tr(vk::BACK, SHIFT, Typed::Other), Some(Key::Reset));
         assert_eq!(tr(vk::TAB, SHIFT, Typed::Other), Some(Key::Reset));
     }

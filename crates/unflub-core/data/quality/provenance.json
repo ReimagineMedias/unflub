@@ -1,0 +1,77 @@
+[
+  {
+    "url": "https://raw.githubusercontent.com/GITenberg/Pride-and-Prejudice_1342/master/1342-0.txt",
+    "file": "raw\\gutenberg-1342-0.txt",
+    "sha256": "48e0522844402a86a3ea98f0947ba85ea54838db3c59022299298ed968a5a163"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/nodejs/node/main/doc/api/stream.md",
+    "file": "raw\\node-stream.md",
+    "sha256": "dd4d9a1c84f15594b139a9821e399a16a4c542532f64d9405387982690cd5573"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch04-01-what-is-ownership.md",
+    "file": "raw\\rust-ch04-01-what-is-ownership.md",
+    "sha256": "873724c6862ad0cc447becf0e818eb39a324c5d4bfa26ef721286aae1941c0ba"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch04-02-references-and-borrowing.md",
+    "file": "raw\\rust-ch04-02-references-and-borrowing.md",
+    "sha256": "7d983eec6235630df6e85c7a5b4cfbdfc7c380c780f60774df65ba2fa1d05ca4"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch10-01-syntax.md",
+    "file": "raw\\rust-ch10-01-syntax.md",
+    "sha256": "c88e9d9404ce16c820b4f4f84af73f40b4eb4978020dc3a1cead90ba0ac2569a"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch10-02-traits.md",
+    "file": "raw\\rust-ch10-02-traits.md",
+    "sha256": "705ae11758c687175e47104a302a9b5f694d04d683bffc28dcc61ffe9a0dc80e"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch10-03-lifetime-syntax.md",
+    "file": "raw\\rust-ch10-03-lifetime-syntax.md",
+    "sha256": "8660fe043e6ca70645f6734f357dc61224ecd4e3454ebde7b696f89d6a0d6e91"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch13-01-closures.md",
+    "file": "raw\\rust-ch13-01-closures.md",
+    "sha256": "a20cbb0b6af2a985486d9ec88f5be83dac27fd45893983bfe600a08c5faf7b6e"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch13-02-iterators.md",
+    "file": "raw\\rust-ch13-02-iterators.md",
+    "sha256": "0c547a5ab78fc6692bb36c2cc183d2dd1ac140a979537acb49f59c6c509ac01e"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch15-01-box.md",
+    "file": "raw\\rust-ch15-01-box.md",
+    "sha256": "67822be0c96dcae16057dadf4cb17d685586a8165f42134871c3e0590b5adf09"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch15-04-rc.md",
+    "file": "raw\\rust-ch15-04-rc.md",
+    "sha256": "3ef419d9f6d39ad665238bd0ead40f7ad65485e8762a8f8f64dd13d7152e5868"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch15-05-interior-mutability.md",
+    "file": "raw\\rust-ch15-05-interior-mutability.md",
+    "sha256": "44b89630fd7ba91ef3916854e849623118219d900adb94ad1e13a870a3dba8ed"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch16-01-threads.md",
+    "file": "raw\\rust-ch16-01-threads.md",
+    "sha256": "84d2e46991bce433f8d50c29479e36fd0c7f62e735758c8a096ab4e1ebe58fe7"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch16-02-message-passing.md",
+    "file": "raw\\rust-ch16-02-message-passing.md",
+    "sha256": "883ed745d87151fa820cd337420a24f59cf8391d4ce87d2ee22af3bd278e05d1"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rust-lang/book/main/src/ch16-03-shared-state.md",
+    "file": "raw\\rust-ch16-03-shared-state.md",
+    "sha256": "9aa8adf23ccf6ceaf7586b9aac35c30769bd13ebfbb8950a185d9b136104f10b"
+  }
+]

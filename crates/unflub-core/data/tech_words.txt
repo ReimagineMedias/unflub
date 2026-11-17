@@ -113,3 +113,5 @@ src lib libs bin pkg pkgs ctx req reqs res err errs msg msgs buf bufs ptr ptrs l
 tmp num nums obj objs arr arrs fmt std usr opt opts dir dirs pwd cb cbs dep rs ts js py rb
 sh ps fns vars consts inits figma grafana kibana sentry
 datadog prometheus loki jaeger otel opentelemetry
+# Found by the quality corpus (examples/quality.rs) as valid words the engine "fixed".
+truthy falsy crypto implementors

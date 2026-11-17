@@ -1,10 +1,13 @@
 name: Publish packages
 
-# Opens a winget-pkgs pull request for each published (not draft, not pre-release) release.
-# Off until the repository variable PUBLISH_PACKAGES is 'true' (Settings > Secrets and variables >
-# Actions > Variables). Needs the WINGET_TOKEN secret and a fork of microsoft/winget-pkgs, and
-# RMGN.unflub must already be in winget (the first version is submitted by hand). Scoop updates
-# itself from its bucket's checkver; Chocolatey is pushed by hand. See docs/releasing.md.
+# For each published (not draft, not pre-release) release: checks the release is public with
+# both setups, writes the winget, Scoop and Chocolatey files with the release's real SHA-256
+# values (artifact `package-manifests`, from scripts/package-manifests.mjs), and, once enabled,
+# opens a winget-pkgs pull request. The pull request is off until the repository variable
+# PUBLISH_PACKAGES is 'true' (Settings > Secrets and variables > Actions > Variables); it needs
+# the WINGET_TOKEN secret and a fork of microsoft/winget-pkgs, and RMGN.unflub must already be
+# in winget (the first version is submitted by hand). The Scoop bucket's own checkver job bumps
+# Scoop; Chocolatey is pushed by hand from the artifact. See docs/releasing.md.
 
 on:
   release:
@@ -19,11 +22,48 @@ permissions:
   contents: read
 
 jobs:
+  manifests:
+    name: Package files with real hashes
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Require a public stable release with both setups
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets > release.json
+          if ! jq -e '(.isDraft == false) and (.isPrerelease == false) and
+            ([.assets[].name | select(test("_(x64|arm64)-setup\\.exe$"))] | length == 2) and
+            ([.assets[].name | select(. == "SHA256SUMS.txt")] | length == 1)' release.json > /dev/null; then
+            echo "::error::$TAG must be a published, stable release with both setups and SHA256SUMS.txt."
+            exit 1
+          fi
+
+      - name: Write the package files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt
+          node scripts/package-manifests.mjs --version "${TAG#v}" --sums SHA256SUMS.txt --out package-manifests
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-manifests
+          path: package-manifests/
+
   winget:
     name: winget (RMGN.unflub)
-    if: >-
-      vars.PUBLISH_PACKAGES == 'true' &&
-      (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease)
+    needs: manifests
+    if: vars.PUBLISH_PACKAGES == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Open the winget-pkgs pull request

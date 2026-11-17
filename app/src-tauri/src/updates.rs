@@ -1,27 +1,34 @@
-//! Updates from api.rmgn.ca: a quiet check a day, a background download when automatic
+//! Updates from dl.rmgn.net: a quiet check a day, a background download when automatic
 //! updates are on, and an install only when the user restarts or quits unflub.
 //!
-//! - **Check.** `GET /unflub/v1/update/{target}/{arch}/{current_version}?channel=…` with the
-//!   headers in `net.rs` (no install ID: a rollout bucket and `X-First`). The first check runs
-//!   about two minutes after launch, then every 24
-//!   hours plus up to 90 random minutes, and also on "Check now". Never more than once an hour
-//!   (or the remote config's `min_check_interval_h`). The server decides who gets a release
-//!   (staged rollout) and answers 204 when nothing applies. Each check also refreshes the
-//!   remote config.
-//! - **Who updates.** Only copies from the setup or winget update themselves (`install.rs`);
-//!   Scoop, Store and portable copies are told to update with their tool. A machine policy
+//! - **Check.** Fetch the signed manifest for the channel (`manifest.rs`, `remote.rs`), then
+//!   decide here, with the local rollout bucket, whether a release applies
+//!   ([`manifest::eligible`]). Only then is the Tauri updater pointed at that release's static
+//!   file (`dl.rmgn.net/unflub/{version}/tauri-{target}-{arch}.json`), and its download URL and
+//!   signature must match the manifest's. Nothing identifying is sent; the bucket never leaves
+//!   the computer. The first check runs about two minutes after launch, then every 24 hours
+//!   plus up to 90 random minutes, and also on "Check now". Never more than once an hour (or the
+//!   manifest's `min_check_interval_h`).
+//! - **Who updates.** Only copies from the setup update themselves (`install.rs`); winget,
+//!   Chocolatey, Scoop, Store and portable copies are told to update with their tool. A machine policy
 //!   (`managed.rs`) can turn update checks off entirely.
 //! - **Download.** With automatic updates on, a release build downloads the update in the
-//!   background, verifies it against the public key in `tauri.conf.json`, and keeps it on disk
-//!   (`%LOCALAPPDATA%\ca.rmgn.unflub\updates`), not in memory. Off: the user is only told.
+//!   background, verifies it against the public key in `tauri.conf.json` and the SHA-256 and
+//!   size in the signed manifest, and keeps it on disk (`%LOCALAPPDATA%\ca.rmgn.unflub\updates`),
+//!   not in memory. Off: the user is only told.
 //! - **Install.** "Restart now" (About page, tray) or quitting from the tray runs the installer.
 //!   Nothing restarts on its own and nothing interrupts typing. A downloaded update survives a
-//!   restart of unflub; if the server stops offering it (paused or blocked) it is deleted.
+//!   restart of unflub; if the manifest stops offering it (paused or blocked) it is deleted.
 //!
 //! Nothing here shows a dialog: the settings UI reads [`UpdateStatus`] through `update_status`
 //! and the [`STATUS_EVENT`] event, and the tray menu follows the same status.
 
-use crate::{links, net, remote::Remote};
+use crate::{
+    links,
+    manifest::{self, Expected, Offer},
+    net,
+    remote::{RefreshError, Remote},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -48,6 +55,7 @@ const POLL: Duration = Duration::from_secs(10 * 60);
 const MAX_JITTER: Duration = Duration::from_secs(90 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const MANAGED: &str = "Updates are managed by your organization.";
+const MISMATCH: &str = "The update file doesn't match the signed release list.";
 
 /// Mirrors `UpdateStatus` in `app/src/types.ts`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -88,22 +96,32 @@ pub enum UpdateStatus {
 struct PendingFile {
     version: String,
     file: String,
-    /// The server's answer, for `Updater::restore_update`.
+    /// The release's Tauri file, for `Updater::restore_update`.
     raw_json: serde_json::Value,
+    /// From the signed manifest: hex SHA-256 and size of the installer.
+    sha256: String,
+    size: u64,
+    critical: bool,
+}
+
+/// An update the manifest offers, with what its installer must hash to.
+struct Found {
+    update: Update,
+    expected: Expected,
+    notes: String,
+    critical: bool,
 }
 
 pub struct Updates {
     status: Mutex<UpdateStatus>,
     /// The update found by the last check (or restored from disk).
-    update: Mutex<Option<Update>>,
+    update: Mutex<Option<Found>>,
     /// Its verified installer on disk, when downloaded, and the SHA-256 of the bytes that were
     /// verified. The file is only installed if it still hashes the same.
     downloaded: Mutex<Option<(PathBuf, [u8; 32])>>,
     busy: AtomicBool,
     /// Holds the time of the last check, so restarts don't check more than once an hour.
     stamp: PathBuf,
-    /// Holds the time of the last check the server answered, for `X-First`.
-    heartbeat: PathBuf,
     /// Downloaded updates.
     cache_dir: PathBuf,
 }
@@ -116,7 +134,6 @@ impl Updates {
             downloaded: Mutex::new(None),
             busy: AtomicBool::new(false),
             stamp: config_dir.join("last-update-check"),
-            heartbeat: config_dir.join("last-heartbeat"),
             cache_dir: local_data_dir.join("updates"),
         }
     }
@@ -131,18 +148,6 @@ impl Updates {
 
     fn mark_checked(&self) {
         let _ = fs::write(&self.stamp, now_secs().to_string());
-    }
-
-    fn last_heartbeat(&self) -> Option<u64> {
-        fs::read_to_string(&self.heartbeat)
-            .ok()?
-            .trim()
-            .parse()
-            .ok()
-    }
-
-    fn mark_heartbeat(&self) {
-        let _ = fs::write(&self.heartbeat, now_secs().to_string());
     }
 
     fn pending_path(&self) -> PathBuf {
@@ -170,34 +175,24 @@ fn waited(last: Option<u64>, now: u64, min_secs: u64) -> bool {
     }
 }
 
-/// The update endpoint for a channel, with the updater's own `{{…}}` variables left in.
-pub fn endpoint(channel: &str) -> String {
-    format!(
-        "{}/update/{{{{target}}}}/{{{{arch}}}}/{{{{current_version}}}}?channel={channel}",
-        links::API_BASE
-    )
+/// Accept exactly the version the manifest chose: newer, or older when the current one was
+/// blocked (a rollback). Tauri's own "newer only" rule would refuse the rollback.
+fn accepts(chosen: &semver::Version, current: &semver::Version, offered: &semver::Version) -> bool {
+    offered == chosen && offered != current
 }
 
-/// An older version offered by the server is a rollback: the current version was blocked.
-/// The response has no critical field, so that is the one case unflub can call critical.
-fn is_critical(update: &Update) -> bool {
-    let older = |current: &str, offered: &str| match (
-        semver::Version::parse(current),
-        semver::Version::parse(offered),
-    ) {
-        (Ok(c), Ok(o)) => o < c,
-        _ => false,
-    };
-    older(&update.current_version, &update.version)
-}
-
-/// Updates only ever come over https; a plain-http URL in a response is refused.
-fn check_url(update: &Update) -> Result<(), String> {
-    if update.download_url.scheme() == "https" {
-        Ok(())
-    } else {
-        Err("The update server sent a download address that isn't https.".into())
+/// The release's static Tauri file must point at the installer and signature the signed
+/// manifest names: it comes over TLS but is not signed itself. The installer must be a GitHub
+/// Release asset or a dl.rmgn.net address (which redirects to one).
+fn matches_offer(download_url: &tauri::Url, signature: &str, offer: &Offer) -> Result<(), String> {
+    let url = tauri::Url::parse(&offer.platform.url).map_err(|e| e.to_string())?;
+    if !links::installer_url_allowed(download_url) || !links::installer_url_allowed(&url) {
+        return Err("The update server sent a download address unflub doesn't trust.".into());
     }
+    if *download_url != url || signature.trim() != offer.platform.signature.trim() {
+        return Err(MISMATCH.into());
+    }
+    Ok(())
 }
 
 fn set_status(app: &AppHandle, status: UpdateStatus) -> UpdateStatus {
@@ -207,34 +202,43 @@ fn set_status(app: &AppHandle, status: UpdateStatus) -> UpdateStatus {
     status
 }
 
-/// The headers for the update check and remote config, as they would go out now.
-pub fn api_headers(app: &AppHandle) -> net::Headers {
-    let version = app.package_info().version.to_string();
-    let first = net::first_periods(app.state::<Updates>().last_heartbeat(), now_secs());
-    net::update_headers(
-        &version,
-        &crate::system::os_version(),
-        app.state::<net::Rollout>().bucket(&version),
-        &first,
-    )
+/// The headers on every manifest and release file request, as they would go out now.
+pub fn request_headers(app: &AppHandle) -> net::Headers {
+    net::headers(&app.package_info().version.to_string())
 }
 
-/// The server decides which version this copy should run: newer, or older when the current one
-/// was blocked (a rollback). So any version other than the current one is accepted.
-fn accept_server_choice(current: &semver::Version, offered: &semver::Version) -> bool {
-    offered != current
+/// Downloads follow redirects only to GitHub's release hosts ([`links::redirect_allowed`]),
+/// at most five, and only over https.
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 {
+            attempt.error("too many redirects")
+        } else if links::redirect_allowed(attempt.url()) {
+            attempt.follow()
+        } else {
+            attempt.error("redirected to an address unflub doesn't trust")
+        }
+    })
 }
 
-fn updater(app: &AppHandle) -> Result<Updater, String> {
-    let settings = crate::current_settings(app);
-    let url = tauri::Url::parse(&endpoint(settings.channel.as_str())).map_err(|e| e.to_string())?;
-    let headers = api_headers(app).into_iter().collect();
+/// An updater for one release: its static Tauri file is the only endpoint, and only its
+/// version is accepted.
+fn updater(app: &AppHandle, version: &str) -> Result<Updater, String> {
+    let chosen = semver::Version::parse(version).map_err(|e| e.to_string())?;
+    let url = tauri::Url::parse(&manifest::tauri_url(
+        version,
+        net::target(),
+        std::env::consts::ARCH,
+    ))
+    .map_err(|e| e.to_string())?;
+    let headers = request_headers(app).into_iter().collect();
     let exit_handle = app.clone();
     app.updater_builder()
         .endpoints(vec![url])
         .map_err(|e| e.to_string())?
-        .version_comparator(|current, release| accept_server_choice(&current, &release.version))
+        .version_comparator(move |current, release| accepts(&chosen, &current, &release.version))
         .headers(headers)
+        .configure_client(|client| client.https_only(true).redirect(redirect_policy()))
         .timeout(REQUEST_TIMEOUT)
         // Windows installers need unflub closed: unhook and remove the tray icon first.
         .on_before_exit(move || {
@@ -245,24 +249,73 @@ fn updater(app: &AppHandle) -> Result<Updater, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Refresh the remote config (version headers only), and apply its flags. Skipped under the
-/// `DisableRemoteConfig` policy.
-pub async fn refresh_remote(app: &AppHandle) {
-    if app.state::<crate::AppInfo>().managed.disable_remote_config {
-        return;
+/// Fetch the channel's manifest and apply its flags and message when they changed. Skipped
+/// when both `DisableUpdates` and `DisableRemoteConfig` are set. A manifest that isn't believed
+/// is logged and the last good one stays; only a network error is an error.
+pub async fn refresh_remote(app: &AppHandle) -> Result<(), String> {
+    let managed = app.state::<crate::AppInfo>().managed;
+    if managed.disable_updates && managed.disable_remote_config {
+        return Ok(());
     }
-    let settings = crate::current_settings(app);
-    let version = app.package_info().version.to_string();
-    let Ok(client) = net::client(api_headers(app)) else {
-        return;
+    let channel = crate::current_settings(app).channel.as_str();
+    let client = net::client(request_headers(app)).map_err(|e| e.to_string())?;
+    match app.state::<Remote>().refresh(&client, channel).await {
+        Ok(changed) => {
+            if changed {
+                crate::apply_remote(app);
+            }
+            Ok(())
+        }
+        Err(RefreshError::Rejected(why)) => {
+            eprintln!("manifest: {why}; keeping the last good one");
+            Ok(())
+        }
+        Err(RefreshError::Network(e)) => Err(e),
+    }
+}
+
+/// Refresh the manifest and decide what it offers this copy.
+async fn find_update(app: &AppHandle) -> Result<Option<Found>, String> {
+    refresh_remote(app).await?;
+    let channel = crate::current_settings(app).channel.as_str();
+    let manifest = app
+        .state::<Remote>()
+        .manifest(channel)
+        .ok_or_else(|| "The update server has no valid release list.".to_string())?;
+    // A frozen copy of an old manifest must not pin this app to what it offered.
+    if manifest.expired(time::OffsetDateTime::now_utc()) {
+        return Err("unflub will try again later.".into());
+    }
+    let current = app.package_info().version.clone();
+    let bucket = app.state::<net::Rollout>().bucket(&current.to_string());
+    let Some(offer) = manifest::eligible(&manifest, &current, bucket, &manifest::platform_key())
+    else {
+        return Ok(None);
     };
-    let remote = app.state::<Remote>();
-    if remote
-        .refresh(&client, settings.channel.as_str(), &version)
+    let expected = Expected::from_platform(&offer.platform)?;
+    let update = updater(app, &offer.release.version)?
+        .check()
         .await
-    {
-        crate::apply_remote(app);
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| MISMATCH.to_string())?;
+    matches_offer(&update.download_url, &update.signature, &offer)?;
+    if offer.critical {
+        eprintln!(
+            "update: {} offered as critical over {current}",
+            offer.release.version
+        );
     }
+    Ok(Some(Found {
+        notes: offer
+            .release
+            .notes
+            .clone()
+            .or_else(|| update.body.clone())
+            .unwrap_or_default(),
+        update,
+        expected,
+        critical: offer.critical,
+    }))
 }
 
 /// Check now (`manual`: the user pressed "Check now"). One check, download or install runs at a
@@ -291,7 +344,6 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
     if updates.busy.swap(true, Ordering::AcqRel) {
         return current;
     }
-    refresh_remote(app).await;
     // A background check doesn't hide an update that is waiting for the user.
     let quiet = !manual
         && matches!(
@@ -301,14 +353,8 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
     if !quiet {
         set_status(app, UpdateStatus::Checking);
     }
-    let result = match updater(app) {
-        Ok(u) => u.check().await.map_err(|e| e.to_string()),
-        Err(e) => Err(e),
-    };
+    let result = find_update(app).await;
     updates.mark_checked();
-    if result.is_ok() {
-        updates.mark_heartbeat();
-    }
     let status = match result {
         Ok(found) => found_update(app, found).await,
         Err(message) if quiet => {
@@ -322,32 +368,26 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
 }
 
 /// What a successful check found. Downloads it when automatic updates are on.
-async fn found_update(app: &AppHandle, found: Option<Update>) -> UpdateStatus {
+async fn found_update(app: &AppHandle, found: Option<Found>) -> UpdateStatus {
     let updates = app.state::<Updates>();
-    let Some(update) = found else {
-        // Paused, blocked or replaced on the server: don't install what we downloaded.
+    let Some(found) = found else {
+        // Paused, blocked or replaced in the manifest: don't install what we downloaded.
         *updates.update.lock().unwrap() = None;
         updates.discard_download();
         return UpdateStatus::UpToDate;
     };
-    if let Err(message) = check_url(&update) {
-        *updates.update.lock().unwrap() = None;
-        updates.discard_download();
-        return UpdateStatus::Error { message };
-    }
-    let version = update.version.clone();
-    let notes = update.body.clone().unwrap_or_default();
-    let critical = is_critical(&update);
-    if critical {
-        eprintln!(
-            "update: rollback from {} to {version} offered by the server",
-            update.current_version
-        );
-    }
-    let already = updates.downloaded.lock().unwrap().is_some()
+    let version = found.update.version.clone();
+    let notes = found.notes.clone();
+    let critical = found.critical;
+    let already = updates
+        .downloaded
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|(_, hash)| *hash == found.expected.sha256)
         && matches!(updates.status(), UpdateStatus::Ready { version: ref v, .. } if *v == version);
     if already {
-        *updates.update.lock().unwrap() = Some(update);
+        *updates.update.lock().unwrap() = Some(found);
         return UpdateStatus::Ready {
             version,
             notes,
@@ -362,7 +402,7 @@ async fn found_update(app: &AppHandle, found: Option<Update>) -> UpdateStatus {
         .auto_update
         && info.install_source.self_updates();
     if !auto || cfg!(debug_assertions) {
-        *updates.update.lock().unwrap() = Some(update);
+        *updates.update.lock().unwrap() = Some(found);
         return UpdateStatus::Available {
             version,
             notes,
@@ -375,10 +415,10 @@ async fn found_update(app: &AppHandle, found: Option<Update>) -> UpdateStatus {
             version: version.clone(),
         },
     );
-    match download(&updates, &update).await {
+    match download(&updates, &found).await {
         Ok(path) => {
             *updates.downloaded.lock().unwrap() = Some(path);
-            *updates.update.lock().unwrap() = Some(update);
+            *updates.update.lock().unwrap() = Some(found);
             UpdateStatus::Ready {
                 version,
                 notes,
@@ -388,7 +428,7 @@ async fn found_update(app: &AppHandle, found: Option<Update>) -> UpdateStatus {
         Err(e) => {
             eprintln!("update download: {e}");
             updates.discard_download();
-            *updates.update.lock().unwrap() = Some(update);
+            *updates.update.lock().unwrap() = Some(found);
             UpdateStatus::Available {
                 version,
                 notes,
@@ -413,55 +453,86 @@ fn read_verified(path: &std::path::Path, expected: &[u8; 32]) -> Result<Vec<u8>,
     Ok(bytes)
 }
 
-/// Download and verify, then write the installer and its metadata to the cache folder:
-/// `%LOCALAPPDATA%\ca.rmgn.unflub\updates`, which inherits the profile's ACL (the user,
-/// SYSTEM and Administrators only). Returns the file and the hash of the verified bytes.
-async fn download(updates: &Updates, update: &Update) -> Result<(PathBuf, [u8; 32]), String> {
+/// Download, then verify against the public key and the manifest's SHA-256 and size.
+async fn fetch_verified(found: &Found) -> Result<Vec<u8>, String> {
     // `download` checks the signature against the public key before returning the bytes.
-    let bytes = update
+    let bytes = found
+        .update
         .download(|_, _| {}, || {})
         .await
         .map_err(|e| e.to_string())?;
+    found.expected.check(&bytes)?;
+    Ok(bytes)
+}
+
+/// Download and verify, then write the installer and its metadata to the cache folder:
+/// `%LOCALAPPDATA%\ca.rmgn.unflub\updates`, which inherits the profile's ACL (the user,
+/// SYSTEM and Administrators only). Returns the file and the hash of the verified bytes.
+async fn download(updates: &Updates, found: &Found) -> Result<(PathBuf, [u8; 32]), String> {
+    let bytes = fetch_verified(found).await?;
     fs::create_dir_all(&updates.cache_dir).map_err(|e| e.to_string())?;
-    let file = format!("unflub-{}.update", update.version);
+    let file = format!("unflub-{}.update", found.update.version);
     let path = updates.cache_dir.join(&file);
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     let pending = PendingFile {
-        version: update.version.clone(),
+        version: found.update.version.clone(),
         file,
-        raw_json: update.raw_json.clone(),
+        raw_json: found.update.raw_json.clone(),
+        sha256: found.expected.sha256_hex(),
+        size: found.expected.size,
+        critical: found.critical,
     };
     let json = serde_json::to_vec_pretty(&pending).map_err(|e| e.to_string())?;
     fs::write(updates.pending_path(), json).map_err(|e| e.to_string())?;
     Ok((path, sha256(&bytes)))
 }
 
-/// Pick up an update downloaded before unflub last closed. Deletes it if it is no longer newer
-/// than this version or fails verification.
+/// Pick up an update downloaded before unflub last closed. Deletes it if it is no longer
+/// accepted or fails verification. The next check deletes it too if the manifest no longer
+/// offers it.
 fn restore_download(app: &AppHandle) {
     let updates = app.state::<Updates>();
     let Ok(text) = fs::read_to_string(updates.pending_path()) else {
         return;
     };
-    let restore = || -> Option<(Update, (PathBuf, [u8; 32]))> {
+    // Downloaded before a package manager took this copy over: it is that tool's to update.
+    if !app.state::<crate::AppInfo>().install_source.self_updates() {
+        updates.discard_download();
+        return;
+    }
+    let restore = || -> Option<(Found, (PathBuf, [u8; 32]))> {
         let pending: PendingFile = serde_json::from_str(&text).ok()?;
-        let update = updater(app).ok()?.restore_update(pending.raw_json).ok()??;
+        let update = updater(app, &pending.version)
+            .ok()?
+            .restore_update(pending.raw_json)
+            .ok()??;
+        let expected = Expected {
+            sha256: manifest::parse_hex32(&pending.sha256)?,
+            size: pending.size,
+        };
         let path = updates.cache_dir.join(&pending.file);
         let bytes = fs::read(&path).ok()?;
+        expected.check(&bytes).ok()?;
         update.verify(&bytes).ok()?;
-        Some((update, (path, sha256(&bytes))))
+        let found = Found {
+            notes: update.body.clone().unwrap_or_default(),
+            update,
+            expected,
+            critical: pending.critical,
+        };
+        Some((found, (path, sha256(&bytes))))
     };
-    let Some((update, file)) = restore() else {
+    let Some((found, file)) = restore() else {
         updates.discard_download();
         return;
     };
     let status = UpdateStatus::Ready {
-        version: update.version.clone(),
-        notes: update.body.clone().unwrap_or_default(),
-        critical: is_critical(&update),
+        version: found.update.version.clone(),
+        notes: found.notes.clone(),
+        critical: found.critical,
     };
     *updates.downloaded.lock().unwrap() = Some(file);
-    *updates.update.lock().unwrap() = Some(update);
+    *updates.update.lock().unwrap() = Some(found);
     set_status(app, status);
 }
 
@@ -482,29 +553,26 @@ pub async fn install(app: &AppHandle, restart: bool) -> Result<(), String> {
     if updates.busy.swap(true, Ordering::AcqRel) {
         return Err("An update check is running. Try again in a moment.".into());
     }
-    let Some(update) = updates.update.lock().unwrap().take() else {
+    let Some(mut found) = updates.update.lock().unwrap().take() else {
         updates.busy.store(false, Ordering::Release);
         return Err("No update is available.".into());
     };
-    let update = update.restart_after_install(restart);
+    found.update = found.update.restart_after_install(restart);
     set_status(
         app,
         UpdateStatus::Installing {
-            version: update.version.clone(),
+            version: found.update.version.clone(),
         },
     );
     let downloaded = updates.downloaded.lock().unwrap().clone();
     // A cached installer must hash the same as the bytes verified at download, and `install`
     // checks those exact bytes against the public key again before it writes and runs them.
-    // Without a cached file, `download_and_install` verifies what it downloads.
-    let result = match downloaded {
-        Some((path, hash)) => read_verified(&path, &hash)
-            .and_then(|bytes| update.install(bytes).map_err(|e| e.to_string())),
-        None => update
-            .download_and_install(|_, _| {}, || {})
-            .await
-            .map_err(|e| e.to_string()),
+    // Without a cached file, the download is checked against the key and the manifest first.
+    let bytes = match downloaded {
+        Some((path, hash)) => read_verified(&path, &hash),
+        None => fetch_verified(&found).await,
     };
+    let result = bytes.and_then(|bytes| found.update.install(bytes).map_err(|e| e.to_string()));
     updates.busy.store(false, Ordering::Release);
     if let Err(message) = result {
         updates.discard_download();
@@ -596,11 +664,73 @@ mod tests {
     }
 
     #[test]
-    fn any_version_the_server_picks_is_accepted() {
+    fn only_the_version_the_manifest_chose_is_accepted() {
         let v = |s: &str| semver::Version::parse(s).unwrap();
-        assert!(accept_server_choice(&v("0.2.0"), &v("0.3.0")));
-        assert!(accept_server_choice(&v("0.2.0"), &v("0.1.4")), "rollback");
-        assert!(!accept_server_choice(&v("0.2.0"), &v("0.2.0")));
+        assert!(accepts(&v("0.3.0"), &v("0.2.0"), &v("0.3.0")));
+        assert!(accepts(&v("0.1.4"), &v("0.2.0"), &v("0.1.4")), "rollback");
+        assert!(
+            !accepts(&v("0.3.0"), &v("0.2.0"), &v("0.2.5")),
+            "not the chosen one"
+        );
+        assert!(!accepts(&v("0.2.0"), &v("0.2.0"), &v("0.2.0")));
+    }
+
+    /// The unsigned Tauri file can't swap in another installer or signature.
+    #[test]
+    fn tauri_file_must_match_the_manifest() {
+        let offer = Offer {
+            release: manifest::Release {
+                version: "0.3.0".into(),
+                pub_date: None,
+                notes: None,
+                rollout_percent: 100,
+                platforms: Default::default(),
+            },
+            platform: manifest::Platform {
+                url: "https://dl.rmgn.net/unflub/0.3.0/unflub_0.3.0_x64-setup.exe".into(),
+                signature: "sig-0.3.0".into(),
+                sha256: "00".repeat(32),
+                size: 1,
+            },
+            critical: false,
+        };
+        let url = |s: &str| tauri::Url::parse(s).unwrap();
+        let good = url("https://dl.rmgn.net/unflub/0.3.0/unflub_0.3.0_x64-setup.exe");
+        assert_eq!(matches_offer(&good, "sig-0.3.0\n", &offer), Ok(()));
+        let older = url("https://dl.rmgn.net/unflub/0.1.0/unflub_0.1.0_x64-setup.exe");
+        assert_eq!(
+            matches_offer(&older, "sig-0.3.0", &offer),
+            Err(MISMATCH.into())
+        );
+        assert_eq!(
+            matches_offer(&good, "sig-0.1.0", &offer),
+            Err(MISMATCH.into())
+        );
+        for bad in [
+            "http://dl.rmgn.net/unflub/0.3.0/unflub_0.3.0_x64-setup.exe",
+            "https://evil.example/unflub_0.3.0_x64-setup.exe",
+        ] {
+            let bad_offer = Offer {
+                platform: manifest::Platform {
+                    url: bad.into(),
+                    ..offer.platform.clone()
+                },
+                ..offer.clone()
+            };
+            assert!(matches_offer(&url(bad), "sig-0.3.0", &bad_offer)
+                .unwrap_err()
+                .contains("doesn't trust"));
+        }
+        // The GitHub Release asset itself is fine too.
+        let github = "https://github.com/ReimagineMedias/unflub/releases/download/v0.3.0/unflub_0.3.0_x64-setup.exe";
+        let gh_offer = Offer {
+            platform: manifest::Platform {
+                url: github.into(),
+                ..offer.platform.clone()
+            },
+            ..offer.clone()
+        };
+        assert_eq!(matches_offer(&url(github), "sig-0.3.0", &gh_offer), Ok(()));
     }
 
     #[test]
@@ -615,30 +745,15 @@ mod tests {
         assert!(waited(Some(now + 3600), now, HOUR_SECS));
     }
 
-    /// The contract's path, with the updater's template variables for it to fill in.
+    /// The updater has no fixed endpoint: each check points it at the release the signed
+    /// manifest chose.
     #[test]
-    fn endpoint_follows_the_contract() {
-        assert_eq!(
-            endpoint("stable"),
-            "https://api.rmgn.ca/unflub/v1/update/{{target}}/{{arch}}/{{current_version}}?channel=stable"
-        );
-        assert!(endpoint("beta").ends_with("?channel=beta"));
-        // Parses, and the template survives (percent-encoded in the path, which the updater
-        // turns back into values).
-        let url = tauri::Url::parse(&endpoint("stable")).unwrap();
-        assert!(url.as_str().contains("%7B%7Btarget%7D%7D"), "{url}");
-        assert_eq!(url.query(), Some("channel=stable"));
-    }
-
-    /// tauri.conf.json carries the same endpoint (stable), so the config and the code agree.
-    #[test]
-    fn config_endpoint_matches() {
+    fn config_has_no_endpoint() {
         let conf: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
-        assert_eq!(
-            conf["plugins"]["updater"]["endpoints"][0].as_str(),
-            Some(endpoint("stable").as_str())
-        );
+        let updater = &conf["plugins"]["updater"];
+        assert!(updater["pubkey"].as_str().is_some_and(|k| !k.is_empty()));
+        assert!(updater.get("endpoints").is_none());
     }
 
     /// The settings UI switches on `state`; keep in step with `UpdateStatus` in types.ts.

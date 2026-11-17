@@ -34,10 +34,12 @@ pub struct Current {
 
 pub struct Session {
     buf: VecDeque<char>,
-    /// The character just before `buf[0]` is known to be whitespace.
+    /// The character just before `buf[0]` is known to be whitespace (or a word start).
     front_ws: bool,
     /// Inside an open backtick span.
     pub backticks: bool,
+    /// Bumped by every reset: anything learned about the caret before it is stale.
+    pub generation: u64,
 }
 
 impl Session {
@@ -46,6 +48,7 @@ impl Session {
             buf: VecDeque::with_capacity(CAPACITY),
             front_ws: false,
             backticks: false,
+            generation: 0,
         }
     }
 
@@ -54,6 +57,25 @@ impl Session {
         self.buf.clear();
         self.front_ws = false;
         self.backticks = false;
+        self.generation += 1;
+    }
+
+    /// Forget everything but that the caret is at a word start (after Ctrl+Backspace).
+    pub fn reset_at_word_start(&mut self) {
+        self.reset();
+        self.front_ws = true;
+    }
+
+    /// The adapter found that the text before the caret ended at a word boundary when this
+    /// session started (empty field, or whitespace before the caret). Taken only while nothing
+    /// but the first word has been typed: then that word counts as fully observed. Returns
+    /// whether it was taken.
+    pub fn starts_at_word_start(&mut self) -> bool {
+        if self.front_ws || self.buf.iter().any(|&c| !is_word_char(c)) {
+            return false;
+        }
+        self.front_ws = true;
+        true
     }
 
     pub fn push(&mut self, c: char) {

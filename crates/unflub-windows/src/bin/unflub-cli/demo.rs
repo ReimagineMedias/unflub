@@ -40,7 +40,7 @@ impl Corrector for DemoCorrector {
             return Action::Pass;
         }
         match key {
-            Key::Reset => {
+            Key::Reset | Key::DeleteWordLeft => {
                 self.word.clear();
                 self.last = None;
                 Action::Pass

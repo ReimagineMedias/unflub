@@ -1,0 +1,675 @@
+## What Is Ownership?
+
+_Ownership_ is a set of rules that govern how a Rust program manages memory. All programs have to manage the way they use a computer’s memory while running. Some languages have garbage collection that regularly looks for no-longer-used memory as the program runs; in other languages, the programmer must explicitly allocate and free the memory. Rust uses a third approach: Memory is managed through a system of ownership with a set of rules that the compiler checks. If any of the rules are violated, the program won’t compile. None of the features of ownership will slow down your program while it’s running.
+
+Because ownership is a new concept for many programmers, it does take some time to get used to. The good news is that the more experienced you become with Rust and the rules of the ownership system, the easier you’ll find it to naturally develop code that is safe and efficient. Keep at it!
+
+When you understand ownership, you’ll have a solid foundation for understanding the features that make Rust unique. In this chapter, you’ll learn ownership by working through some examples that focus on a very common data structure: strings.
+
+> ### The Stack and the Heap > > Many programming languages don’t require you to think about the stack and the > heap very often. But in a systems programming language like Rust, whether a > value is on the stack or the heap affects how the language behaves and why > you have to make certain decisions. Parts of ownership will be described in > relation to the stack and the heap later in this chapter, so here is a brief > explanation in preparation. > > Both the stack and the heap are parts of memory available to your code to use > at runtime, but they are structured in different ways. The stack stores > values in the order it gets them and removes the values in the opposite > order. This is referred to as _last in, first out (LIFO)_. Think of a stack of > plates: When you add more plates, you put them on top of the pile, and when > you need a plate, you take one off the top. Adding or removing plates from > the middle or bottom wouldn’t work as well! Adding data is called _pushing > onto the stack_, and removing data is called _popping off the stack_. All > data stored on the stack must have a known, fixed size. Data with an unknown > size at compile time or a size that might change must be stored on the heap > instead. > > The heap is less organized: When you put data on the heap, you request a > certain amount of space. The memory allocator finds an empty spot in the heap > that is big enough, marks it as being in use, and returns a _pointer_, which > is the address of that location. This process is called _allocating on the > heap_ and is sometimes abbreviated as just _allocating_ (pushing values onto > the stack is not considered allocating). Because the pointer to the heap is a > known, fixed size, you can store the pointer on the stack, but when you want > the actual data, you must follow the pointer. Think of being seated at a > restaurant. When you enter, you state the number of people in your group, and > the host finds an empty table that fits everyone and leads you there. If > someone in your group comes late, they can ask where you’ve been seated to > find you. > > Pushing to the stack is faster than allocating on the heap because the > allocator never has to search for a place to store new data; that location is > always at the top of the stack. Comparatively, allocating space on the heap > requires more work because the allocator must first find a big enough space > to hold the data and then perform bookkeeping to prepare for the next > allocation. > > Accessing data in the heap is generally slower than accessing data on the > stack because you have to follow a pointer to get there. Contemporary > processors are faster if they jump around less in memory. Continuing the > analogy, consider a server at a restaurant taking orders from many tables. > It’s most efficient to get all the orders at one table before moving on to > the next table. Taking an order from table A, then an order from table B, > then one from A again, and then one from B again would be a much slower > process. By the same token, a processor can usually do its job better if it > works on data that’s close to other data (as it is on the stack) rather than > farther away (as it can be on the heap). > > When your code calls a function, the values passed into the function > (including, potentially, pointers to data on the heap) and the function’s > local variables get pushed onto the stack. When the function is over, those > values get popped off the stack. > > Keeping track of what parts of code are using what data on the heap, > minimizing the amount of duplicate data on the heap, and cleaning up unused > data on the heap so that you don’t run out of space are all problems that > ownership addresses. Once you understand ownership, you won’t need to think > about the stack and the heap very often. But knowing that the main purpose of > ownership is to manage heap data can help explain why it works the way it > does.
+
+### Ownership Rules
+
+First, let’s take a look at the ownership rules. Keep these rules in mind as we work through the examples that illustrate them:
+
+- Each value in Rust has an _owner_. - There can only be one owner at a time. - When the owner goes out of scope, the value will be dropped.
+
+### Variable Scope
+
+Now that we’re past basic Rust syntax, we won’t include all the `fn main() {` code in the examples, so if you’re following along, make sure to put the following examples inside a `main` function manually. As a result, our examples will be a bit more concise, letting us focus on the actual details rather than boilerplate code.
+
+As a first example of ownership, we’ll look at the scope of some variables. A _scope_ is the range within a program for which an item is valid. Take the following variable:
+
+The variable `s` refers to a string literal, where the value of the string is hardcoded into the text of our program. The variable is valid from the point at which it’s declared until the end of the current scope. Listing 4-1 shows a program with comments annotating where the variable `s` would be valid.
+
+In other words, there are two important points in time here:
+
+- When `s` comes _into_ scope, it is valid. - It remains valid until it goes _out of_ scope.
+
+At this point, the relationship between scopes and when variables are valid is similar to that in other programming languages. Now we’ll build on top of this understanding by introducing the `String` type.
+
+### The `String` Type
+
+To illustrate the rules of ownership, we need a data type that is more complex than those we covered in the [“Data Types”][data-types] section of Chapter 3. The types covered previously are of a known size, can be stored on the stack and popped off the stack when their scope is over, and can be quickly and trivially copied to make a new, independent instance if another part of code needs to use the same value in a different scope. But we want to look at data that is stored on the heap and explore how Rust knows when to clean up that data, and the `String` type is a great example.
+
+We’ll concentrate on the parts of `String` that relate to ownership. These aspects also apply to other complex data types, whether they are provided by the standard library or created by you. We’ll discuss non-ownership aspects of `String` in [Chapter 8][ch8].
+
+We’ve already seen string literals, where a string value is hardcoded into our program. String literals are convenient, but they aren’t suitable for every situation in which we may want to use text. One reason is that they’re immutable. Another is that not every string value can be known when we write our code: For example, what if we want to take user input and store it? It is for these situations that Rust has the `String` type. This type manages data allocated on the heap and as such is able to store an amount of text that is unknown to us at compile time. You can create a `String` from a string literal using the `from` function, like so:
+
+The double colon `::` operator allows us to namespace this particular `from` function under the `String` type rather than using some sort of name like `string_from`. We’ll discuss this syntax more in the [“Methods”][methods] section of Chapter 5, and when we talk about namespacing with modules in [“Paths for Referring to an Item in the Module Tree”][paths-module-tree] in Chapter 7.
+
+This kind of string _can_ be mutated:
+
+So, what’s the difference here? Why can `String` be mutated but literals cannot? The difference is in how these two types deal with memory.
+
+### Memory and Allocation
+
+In the case of a string literal, we know the contents at compile time, so the text is hardcoded directly into the final executable. This is why string literals are fast and efficient. But these properties only come from the string literal’s immutability. Unfortunately, we can’t put a blob of memory into the binary for each piece of text whose size is unknown at compile time and whose size might change while running the program.
+
+With the `String` type, in order to support a mutable, growable piece of text, we need to allocate an amount of memory on the heap, unknown at compile time, to hold the contents. This means:
+
+- The memory must be requested from the memory allocator at runtime. - We need a way of returning this memory to the allocator when we’re done with our `String`.
+
+That first part is done by us: When we call `String::from`, its implementation requests the memory it needs. This is pretty much universal in programming languages.
+
+However, the second part is different. In languages with a _garbage collector (GC)_, the GC keeps track of and cleans up memory that isn’t being used anymore, and we don’t need to think about it. In most languages without a GC, it’s our responsibility to identify when memory is no longer being used and to call code to explicitly free it, just as we did to request it. Doing this correctly has historically been a difficult programming problem. If we forget, we’ll waste memory. If we do it too early, we’ll have an invalid variable. If we do it twice, that’s a bug too. We need to pair exactly one `allocate` with exactly one `free`.
+
+Rust takes a different path: The memory is automatically returned once the variable that owns it goes out of scope. Here’s a version of our scope example from Listing 4-1 using a `String` instead of a string literal:
+
+There is a natural point at which we can return the memory our `String` needs to the allocator: when `s` goes out of scope. When a variable goes out of scope, Rust calls a special function for us. This function is called `drop`, and it’s where the author of `String` can put the code to return the memory. Rust calls `drop` automatically at the closing curly bracket.
+
+> Note: In C++, this pattern of deallocating resources at the end of an item’s > lifetime is sometimes called _Resource Acquisition Is Initialization (RAII)_. > The `drop` function in Rust will be familiar to you if you’ve used RAII > patterns.
+
+This pattern has a profound impact on the way Rust code is written. It may seem simple right now, but the behavior of code can be unexpected in more complicated situations when we want to have multiple variables use the data we’ve allocated on the heap. Let’s explore some of those situations now.
+
+#### Variables and Data Interacting with Move
+
+Multiple variables can interact with the same data in different ways in Rust. Listing 4-2 shows an example using an integer.
+
+We can probably guess what this is doing: “Bind the value `5` to `x`; then, make a copy of the value in `x` and bind it to `y`.” We now have two variables, `x` and `y`, and both equal `5`. This is indeed what is happening, because integers are simple values with a known, fixed size, and these two `5` values are pushed onto the stack.
+
+Now let’s look at the `String` version:
+
+This looks very similar, so we might assume that the way it works would be the same: That is, the second line would make a copy of the value in `s1` and bind it to `s2`. But this isn’t quite what happens.
+
+Take a look at Figure 4-1 to see what is happening to `String` under the covers. A `String` is made up of three parts, shown on the left: a pointer to the memory that holds the contents of the string, a length, and a capacity. This group of data is stored on the stack. On the right is the memory on the heap that holds the contents.
+
+<img alt="Two tables: the first table contains the representation of s1 on the stack, consisting of its length (5), capacity (5), and a pointer to the first value in the second table. The second table contains the representation of the string data on the heap, byte by byte." src="img/trpl04-01.svg" class="center" style="width: 50%;" />
+
+Figure 4-1: The representation in memory of a `String` holding the value `"hello"` bound to `s1`
+
+The length is how much memory, in bytes, the contents of the `String` are currently using. The capacity is the total amount of memory, in bytes, that the `String` has received from the allocator. The difference between length and capacity matters, but not in this context, so for now, it’s fine to ignore the capacity.
+
+When we assign `s1` to `s2`, the `String` data is copied, meaning we copy the pointer, the length, and the capacity that are on the stack. We do not copy the data on the heap that the pointer refers to. In other words, the data representation in memory looks like Figure 4-2.
+
+<img alt="Three tables: tables s1 and s2 representing those strings on the stack, respectively, and both pointing to the same string data on the heap." src="img/trpl04-02.svg" class="center" style="width: 50%;" />
+
+Figure 4-2: The representation in memory of the variable `s2` that has a copy of the pointer, length, and capacity of `s1`
+
+The representation does _not_ look like Figure 4-3, which is what memory would look like if Rust instead copied the heap data as well. If Rust did this, the operation `s2 = s1` could be very expensive in terms of runtime performance if the data on the heap were large.
+
+<img alt="Four tables: two tables representing the stack data for s1 and s2, and each points to its own copy of string data on the heap." src="img/trpl04-03.svg" class="center" style="width: 50%;" />
+
+Figure 4-3: Another possibility for what `s2 = s1` might do if Rust copied the heap data as well
+
+Earlier, we said that when a variable goes out of scope, Rust automatically calls the `drop` function and cleans up the heap memory for that variable. But Figure 4-2 shows both data pointers pointing to the same location. This is a problem: When `s2` and `s1` go out of scope, they will both try to free the same memory. This is known as a _double free_ error and is one of the memory safety bugs we mentioned previously. Freeing memory twice can lead to memory corruption, which can potentially lead to security vulnerabilities.
+
+To ensure memory safety, after the line `let s2 = s1;`, Rust considers `s1` as no longer valid. Therefore, Rust doesn’t need to free anything when `s1` goes out of scope. Check out what happens when you try to use `s1` after `s2` is created; it won’t work:
+
+You’ll get an error like this because Rust prevents you from using the invalidated reference:
+
+If you’ve heard the terms _shallow copy_ and _deep copy_ while working with other languages, the concept of copying the pointer, length, and capacity without copying the data probably sounds like making a shallow copy. But because Rust also invalidates the first variable, instead of being called a shallow copy, it’s known as a _move_. In this example, we would say that `s1` was _moved_ into `s2`. So, what actually happens is shown in Figure 4-4.
+
+<img alt="Three tables: tables s1 and s2 representing those strings on the stack, respectively, and both pointing to the same string data on the heap. Table s1 is grayed out because s1 is no longer valid; only s2 can be used to access the heap data." src="img/trpl04-04.svg" class="center" style="width: 50%;" />
+
+Figure 4-4: The representation in memory after `s1` has been invalidated
+
+That solves our problem! With only `s2` valid, when it goes out of scope it alone will free the memory, and we’re done.
+
+In addition, there’s a design choice that’s implied by this: Rust will never automatically create “deep” copies of your data. Therefore, any _automatic_ copying can be assumed to be inexpensive in terms of runtime performance.
+
+#### Scope and Assignment
+
+The inverse of this is true for the relationship between scoping, ownership, and memory being freed via the `drop` function as well. When you assign a completely new value to an existing variable, Rust will call `drop` and free the original value’s memory immediately. Consider this code, for example:
+
+We initially declare a variable `s` and bind it to a `String` with the value `"hello"`. Then, we immediately create a new `String` with the value `"ahoy"` and assign it to `s`. At this point, nothing is referring to the original value on the heap at all. Figure 4-5 illustrates the stack and heap data now:
+
+<img alt="One table representing the string value on the stack, pointing to the second piece of string data (ahoy) on the heap, with the original string data (hello) grayed out because it cannot be accessed anymore." src="img/trpl04-05.svg" class="center" style="width: 50%;" />
+
+Figure 4-5: The representation in memory after the initial value has been replaced in its entirety
+
+The original string thus immediately goes out of scope. Rust will run the `drop` function on it and its memory will be freed right away. When we print the value at the end, it will be `"ahoy, world!"`.
+
+#### Variables and Data Interacting with Clone
+
+If we _do_ want to deeply copy the heap data of the `String`, not just the stack data, we can use a common method called `clone`. We’ll discuss method syntax in Chapter 5, but because methods are a common feature in many programming languages, you’ve probably seen them before.
+
+Here’s an example of the `clone` method in action:
+
+This works just fine and explicitly produces the behavior shown in Figure 4-3, where the heap data _does_ get copied.
+
+When you see a call to `clone`, you know that some arbitrary code is being executed and that code may be expensive. It’s a visual indicator that something different is going on.
+
+#### Stack-Only Data: Copy
+
+There’s another wrinkle we haven’t talked about yet. This code using integers—part of which was shown in Listing 4-2—works and is valid:
+
+But this code seems to contradict what we just learned: We don’t have a call to `clone`, but `x` is still valid and wasn’t moved into `y`.
+
+The reason is that types such as integers that have a known size at compile time are stored entirely on the stack, so copies of the actual values are quick to make. That means there’s no reason we would want to prevent `x` from being valid after we create the variable `y`. In other words, there’s no difference between deep and shallow copying here, so calling `clone` wouldn’t do anything different from the usual shallow copying, and we can leave it out.
+
+Rust has a special annotation called the `Copy` trait that we can place on types that are stored on the stack, as integers are (we’ll talk more about traits in [Chapter 10][traits]). If a type implements the `Copy` trait, variables that use it do not move, but rather are trivially copied, making them still valid after assignment to another variable.
+
+Rust won’t let us annotate a type with `Copy` if the type, or any of its parts, has implemented the `Drop` trait. If the type needs something special to happen when the value goes out of scope and we add the `Copy` annotation to that type, we’ll get a compile-time error. To learn about how to add the `Copy` annotation to your type to implement the trait, see [“Derivable Traits”][derivable-traits] in Appendix C.
+
+So, what types implement the `Copy` trait? You can check the documentation for the given type to be sure, but as a general rule, any group of simple scalar values can implement `Copy`, and nothing that requires allocation or is some form of resource can implement `Copy`. Here are some of the types that implement `Copy`:
+
+- All the integer types, such as `u32`. - The Boolean type, `bool`, with values `true` and `false`. - All the floating-point types, such as `f64`. - The character type, `char`. - Tuples, if they only contain types that also implement `Copy`. For example, `(i32, i32)` implements `Copy`, but `(i32, String)` does not.
+
+### Ownership and Functions
+
+The mechanics of passing a value to a function are similar to those when assigning a value to a variable. Passing a variable to a function will move or copy, just as assignment does. Listing 4-3 has an example with some annotations showing where variables go into and out of scope.
+
+If we tried to use `s` after the call to `takes_ownership`, Rust would throw a compile-time error. These static checks protect us from mistakes. Try adding code to `main` that uses `s` and `x` to see where you can use them and where the ownership rules prevent you from doing so.
+
+### Return Values and Scope
+
+Returning values can also transfer ownership. Listing 4-4 shows an example of a function that returns some value, with similar annotations as those in Listing 4-3.
+
+The ownership of a variable follows the same pattern every time: Assigning a value to another variable moves it. When a variable that includes data on the heap goes out of scope, the value will be cleaned up by `drop` unless ownership of the data has been moved to another variable.
+
+While this works, taking ownership and then returning ownership with every function is a bit tedious. What if we want to let a function use a value but not take ownership? It’s quite annoying that anything we pass in also needs to be passed back if we want to use it again, in addition to any data resulting from the body of the function that we might want to return as well.
+
+Rust does let us return multiple values using a tuple, as shown in Listing 4-5.
+
+But this is too much ceremony and a lot of work for a concept that should be common. Luckily for us, Rust has a feature for using a value without transferring ownership: references.
+
+## References and Borrowing
+
+The issue with the tuple code in Listing 4-5 is that we have to return the `String` to the calling function so that we can still use the `String` after the call to `calculate_length`, because the `String` was moved into `calculate_length`. Instead, we can provide a reference to the `String` value. A reference is like a pointer in that it’s an address we can follow to access the data stored at that address; that data is owned by some other variable. Unlike a pointer, a reference is guaranteed to point to a valid value of a particular type for the life of that reference.
+
+Here is how you would define and use a `calculate_length` function that has a reference to an object as a parameter instead of taking ownership of the value:
+
+First, notice that all the tuple code in the variable declaration and the function return value is gone. Second, note that we pass `&s1` into `calculate_length` and, in its definition, we take `&String` rather than `String`. These ampersands represent references, and they allow you to refer to some value without taking ownership of it. Figure 4-6 depicts this concept.
+
+<img alt="Three tables: the table for s contains only a pointer to the table for s1. The table for s1 contains the stack data for s1 and points to the string data on the heap." src="img/trpl04-06.svg" class="center" />
+
+Figure 4-6: A diagram of `&String` `s` pointing at `String` `s1`
+
+> Note: The opposite of referencing by using `&` is _dereferencing_, which is > accomplished with the dereference operator, `*`. We’ll see some uses of the > dereference operator in Chapter 8 and discuss details of dereferencing in > Chapter 15.
+
+Let’s take a closer look at the function call here:
+
+The `&s1` syntax lets us create a reference that _refers_ to the value of `s1` but does not own it. Because the reference does not own it, the value it points to will not be dropped when the reference stops being used.
+
+Likewise, the signature of the function uses `&` to indicate that the type of the parameter `s` is a reference. Let’s add some explanatory annotations:
+
+The scope in which the variable `s` is valid is the same as any function parameter’s scope, but the value pointed to by the reference is not dropped when `s` stops being used, because `s` doesn’t have ownership. When functions have references as parameters instead of the actual values, we won’t need to return the values in order to give back ownership, because we never had ownership.
+
+We call the action of creating a reference _borrowing_. As in real life, if a person owns something, you can borrow it from them. When you’re done, you have to give it back. You don’t own it.
+
+So, what happens if we try to modify something we’re borrowing? Try the code in Listing 4-6. Spoiler alert: It doesn’t work!
+
+Here’s the error:
+
+Just as variables are immutable by default, so are references. We’re not allowed to modify something we have a reference to.
+
+### Mutable References
+
+We can fix the code from Listing 4-6 to allow us to modify a borrowed value with just a few small tweaks that use, instead, a _mutable reference_:
+
+First, we change `s` to be `mut`. Then, we create a mutable reference with `&mut s` where we call the `change` function and update the function signature to accept a mutable reference with `some_string: &mut String`. This makes it very clear that the `change` function will mutate the value it borrows.
+
+Mutable references have one big restriction: If you have a mutable reference to a value, you can have no other references to that value. This code that attempts to create two mutable references to `s` will fail:
+
+Here’s the error:
+
+This error says that this code is invalid because we cannot borrow `s` as mutable more than once at a time. The first mutable borrow is in `r1` and must last until it’s used in the `println!`, but between the creation of that mutable reference and its usage, we tried to create another mutable reference in `r2` that borrows the same data as `r1`.
+
+The restriction preventing multiple mutable references to the same data at the same time allows for mutation but in a very controlled fashion. It’s something that new Rustaceans struggle with because most languages let you mutate whenever you’d like. The benefit of having this restriction is that Rust can prevent data races at compile time. A _data race_ is similar to a race condition and happens when these three behaviors occur:
+
+- Two or more pointers access the same data at the same time. - At least one of the pointers is being used to write to the data. - There’s no mechanism being used to synchronize access to the data.
+
+Data races cause undefined behavior and can be difficult to diagnose and fix when you’re trying to track them down at runtime; Rust prevents this problem by refusing to compile code with data races!
+
+As always, we can use curly brackets to create a new scope, allowing for multiple mutable references, just not _simultaneous_ ones:
+
+Rust enforces a similar rule for combining mutable and immutable references. This code results in an error:
+
+Here’s the error:
+
+Whew! We _also_ cannot have a mutable reference while we have an immutable one to the same value.
+
+Users of an immutable reference don’t expect the value to suddenly change out from under them! However, multiple immutable references are allowed because no one who is just reading the data has the ability to affect anyone else’s reading of the data.
+
+Note that a reference’s scope starts from where it is introduced and continues through the last time that reference is used. For instance, this code will compile because the last usage of the immutable references is in the `println!`, before the mutable reference is introduced:
+
+The scopes of the immutable references `r1` and `r2` end after the `println!` where they are last used, which is before the mutable reference `r3` is created. These scopes don’t overlap, so this code is allowed: The compiler can tell that the reference is no longer being used at a point before the end of the scope.
+
+Even though borrowing errors may be frustrating at times, remember that it’s the Rust compiler pointing out a potential bug early (at compile time rather than at runtime) and showing you exactly where the problem is. Then, you don’t have to track down why your data isn’t what you thought it was.
+
+### Dangling References
+
+In languages with pointers, it’s easy to erroneously create a _dangling pointer_—a pointer that references a location in memory that may have been given to someone else—by freeing some memory while preserving a pointer to that memory. In Rust, by contrast, the compiler guarantees that references will never be dangling references: If you have a reference to some data, the compiler will ensure that the data will not go out of scope before the reference to the data does.
+
+Let’s try to create a dangling reference to see how Rust prevents them with a compile-time error:
+
+Here’s the error:
+
+This error message refers to a feature we haven’t covered yet: lifetimes. We’ll discuss lifetimes in detail in Chapter 10. But, if you disregard the parts about lifetimes, the message does contain the key to why this code is a problem:
+
+Let’s take a closer look at exactly what’s happening at each stage of our `dangle` code:
+
+Because `s` is created inside `dangle`, when the code of `dangle` is finished, `s` will be deallocated. But we tried to return a reference to it. That means this reference would be pointing to an invalid `String`. That’s no good! Rust won’t let us do this.
+
+The solution here is to return the `String` directly:
+
+This works without any problems. Ownership is moved out, and nothing is deallocated.
+
+### The Rules of References
+
+Let’s recap what we’ve discussed about references:
+
+- At any given time, you can have _either_ one mutable reference _or_ any number of immutable references. - References must always be valid.
+
+Next, we’ll look at a different kind of reference: slices.
+
+## Generic Data Types
+
+We use generics to create definitions for items like function signatures or structs, which we can then use with many different concrete data types. Let’s first look at how to define functions, structs, enums, and methods using generics. Then, we’ll discuss how generics affect code performance.
+
+### In Function Definitions
+
+When defining a function that uses generics, we place the generics in the signature of the function where we would usually specify the data types of the parameters and return value. Doing so makes our code more flexible and provides more functionality to callers of our function while preventing code duplication.
+
+Continuing with our `largest` function, Listing 10-4 shows two functions that both find the largest value in a slice. We’ll then combine these into a single function that uses generics.
+
+The `largest_i32` function is the one we extracted in Listing 10-3 that finds the largest `i32` in a slice. The `largest_char` function finds the largest `char` in a slice. The function bodies have the same code, so let’s eliminate the duplication by introducing a generic type parameter in a single function.
+
+To parameterize the types in a new single function, we need to name the type parameter, just as we do for the value parameters to a function. You can use any identifier as a type parameter name. But we’ll use `T` because, by convention, type parameter names in Rust are short, often just one letter, and Rust’s type-naming convention is UpperCamelCase. Short for _type_, `T` is the default choice of most Rust programmers.
+
+When we use a parameter in the body of the function, we have to declare the parameter name in the signature so that the compiler knows what that name means. Similarly, when we use a type parameter name in a function signature, we have to declare the type parameter name before we use it. To define the generic `largest` function, we place type name declarations inside angle brackets, `<>`, between the name of the function and the parameter list, like this:
+
+We read this definition as “The function `largest` is generic over some type `T`.” This function has one parameter named `list`, which is a slice of values of type `T`. The `largest` function will return a reference to a value of the same type `T`.
+
+Listing 10-5 shows the combined `largest` function definition using the generic data type in its signature. The listing also shows how we can call the function with either a slice of `i32` values or `char` values. Note that this code won’t compile yet.
+
+If we compile this code right now, we’ll get this error:
+
+The help text mentions `std::cmp::PartialOrd`, which is a trait, and we’re going to talk about traits in the next section. For now, know that this error states that the body of `largest` won’t work for all possible types that `T` could be. Because we want to compare values of type `T` in the body, we can only use types whose values can be ordered. To enable comparisons, the standard library has the `std::cmp::PartialOrd` trait that you can implement on types (see Appendix C for more on this trait). To fix Listing 10-5, we can follow the help text’s suggestion and restrict the types valid for `T` to only those that implement `PartialOrd`. The listing will then compile, because the standard library implements `PartialOrd` on both `i32` and `char`.
+
+### In Struct Definitions
+
+We can also define structs to use a generic type parameter in one or more fields using the `<>` syntax. Listing 10-6 defines a `Point` struct to hold `x` and `y` coordinate values of any type.
+
+` struct that holds `x` and `y` values of type `T`">
+
+The syntax for using generics in struct definitions is similar to that used in function definitions. First, we declare the name of the type parameter inside angle brackets just after the name of the struct. Then, we use the generic type in the struct definition where we would otherwise specify concrete data types.
+
+Note that because we’ve used only one generic type to define `Point`, this definition says that the `Point` struct is generic over some type `T`, and the fields `x` and `y` are _both_ that same type, whatever that type may be. If we create an instance of a `Point` that has values of different types, as in Listing 10-7, our code won’t compile.
+
+In this example, when we assign the integer value `5` to `x`, we let the compiler know that the generic type `T` will be an integer for this instance of `Point`. Then, when we specify `4.0` for `y`, which we’ve defined to have the same type as `x`, we’ll get a type mismatch error like this:
+
+To define a `Point` struct where `x` and `y` are both generics but could have different types, we can use multiple generic type parameters. For example, in Listing 10-8, we change the definition of `Point` to be generic over types `T` and `U` where `x` is of type `T` and `y` is of type `U`.
+
+` generic over two types so that `x` and `y` can be values of different types">
+
+Now all the instances of `Point` shown are allowed! You can use as many generic type parameters in a definition as you want, but using more than a few makes your code hard to read. If you’re finding you need lots of generic types in your code, it could indicate that your code needs restructuring into smaller pieces.
+
+### In Enum Definitions
+
+As we did with structs, we can define enums to hold generic data types in their variants. Let’s take another look at the `Option` enum that the standard library provides, which we used in Chapter 6:
+
+This definition should now make more sense to you. As you can see, the `Option` enum is generic over type `T` and has two variants: `Some`, which holds one value of type `T`, and a `None` variant that doesn’t hold any value. By using the `Option` enum, we can express the abstract concept of an optional value, and because `Option` is generic, we can use this abstraction no matter what the type of the optional value is.
+
+Enums can use multiple generic types as well. The definition of the `Result` enum that we used in Chapter 9 is one example:
+
+The `Result` enum is generic over two types, `T` and `E`, and has two variants: `Ok`, which holds a value of type `T`, and `Err`, which holds a value of type `E`. This definition makes it convenient to use the `Result` enum anywhere we have an operation that might succeed (return a value of some type `T`) or fail (return an error of some type `E`). In fact, this is what we used to open a file in Listing 9-3, where `T` was filled in with the type `std::fs::File` when the file was opened successfully and `E` was filled in with the type `std::io::Error` when there were problems opening the file.
+
+When you recognize situations in your code with multiple struct or enum definitions that differ only in the types of the values they hold, you can avoid duplication by using generic types instead.
+
+### In Method Definitions
+
+We can implement methods on structs and enums (as we did in Chapter 5) and use generic types in their definitions too. Listing 10-9 shows the `Point` struct we defined in Listing 10-6 with a method named `x` implemented on it.
+
+` struct that will return a reference to the `x` field of type `T`">
+
+Here, we’ve defined a method named `x` on `Point` that returns a reference to the data in the field `x`.
+
+Note that we have to declare `T` just after `impl` so that we can use `T` to specify that we’re implementing methods on the type `Point`. By declaring `T` as a generic type after `impl`, Rust can identify that the type in the angle brackets in `Point` is a generic type rather than a concrete type. We could have chosen a different name for this generic parameter than the generic parameter declared in the struct definition, but using the same name is conventional. If you write a method within an `impl` that declares a generic type, that method will be defined on any instance of the type, no matter what concrete type ends up substituting for the generic type.
+
+We can also specify constraints on generic types when defining methods on the type. We could, for example, implement methods only on `Point` instances rather than on `Point` instances with any generic type. In Listing 10-10, we use the concrete type `f32`, meaning we don’t declare any types after `impl`.
+
+This code means the type `Point` will have a `distance_from_origin` method; other instances of `Point` where `T` is not of type `f32` will not have this method defined. The method measures how far our point is from the point at coordinates (0.0, 0.0) and uses mathematical operations that are available only for floating-point types.
+
+Generic type parameters in a struct definition aren’t always the same as those you use in that same struct’s method signatures. Listing 10-11 uses the generic types `X1` and `Y1` for the `Point` struct and `X2` and `Y2` for the `mixup` method signature to make the example clearer. The method creates a new `Point` instance with the `x` value from the `self` `Point` (of type `X1`) and the `y` value from the passed-in `Point` (of type `Y2`).
+
+In `main`, we’ve defined a `Point` that has an `i32` for `x` (with value `5`) and an `f64` for `y` (with value `10.4`). The `p2` variable is a `Point` struct that has a string slice for `x` (with value `"Hello"`) and a `char` for `y` (with value `c`). Calling `mixup` on `p1` with the argument `p2` gives us `p3`, which will have an `i32` for `x` because `x` came from `p1`. The `p3` variable will have a `char` for `y` because `y` came from `p2`. The `println!` macro call will print `p3.x = 5, p3.y = c`.
+
+The purpose of this example is to demonstrate a situation in which some generic parameters are declared with `impl` and some are declared with the method definition. Here, the generic parameters `X1` and `Y1` are declared after `impl` because they go with the struct definition. The generic parameters `X2` and `Y2` are declared after `fn mixup` because they’re only relevant to the method.
+
+### Performance of Code Using Generics
+
+You might be wondering whether there is a runtime cost when using generic type parameters. The good news is that using generic types won’t make your program run any slower than it would with concrete types.
+
+Rust accomplishes this by performing monomorphization of the code using generics at compile time. _Monomorphization_ is the process of turning generic code into specific code by filling in the concrete types that are used when compiled. In this process, the compiler does the opposite of the steps we used to create the generic function in Listing 10-5: The compiler looks at all the places where generic code is called and generates code for the concrete types the generic code is called with.
+
+Let’s look at how this works by using the standard library’s generic `Option` enum:
+
+When Rust compiles this code, it performs monomorphization. During that process, the compiler reads the values that have been used in `Option` instances and identifies two kinds of `Option`: One is `i32` and the other is `f64`. As such, it expands the generic definition of `Option` into two definitions specialized to `i32` and `f64`, thereby replacing the generic definition with the specific ones.
+
+The monomorphized version of the code looks similar to the following (the compiler uses different names than what we’re using here for illustration):
+
+The generic `Option` is replaced with the specific definitions created by the compiler. Because Rust compiles generic code into code that specifies the type in each instance, we pay no runtime cost for using generics. When the code runs, it performs just as it would if we had duplicated each definition by hand. The process of monomorphization makes Rust’s generics extremely efficient at runtime.
+
+## Defining Shared Behavior with Traits
+
+A _trait_ defines the functionality a particular type has and can share with other types. We can use traits to define shared behavior in an abstract way. We can use _trait bounds_ to specify that a generic type can be any type that has certain behavior.
+
+> Note: Traits are similar to a feature often called _interfaces_ in other > languages, although with some differences.
+
+### Defining a Trait
+
+A type’s behavior consists of the methods we can call on that type. Different types share the same behavior if we can call the same methods on all of those types. Trait definitions are a way to group method signatures together to define a set of behaviors necessary to accomplish some purpose.
+
+For example, let’s say we have multiple structs that hold various kinds and amounts of text: a `NewsArticle` struct that holds a news story filed in a particular location and a `SocialPost` that can have, at most, 280 characters along with metadata that indicates whether it was a new post, a repost, or a reply to another post.
+
+We want to make a media aggregator library crate named `aggregator` that can display summaries of data that might be stored in a `NewsArticle` or `SocialPost` instance. To do this, we need a summary from each type, and we’ll request that summary by calling a `summarize` method on an instance. Listing 10-12 shows the definition of a public `Summary` trait that expresses this behavior.
+
+Here, we declare a trait using the `trait` keyword and then the trait’s name, which is `Summary` in this case. We also declare the trait as `pub` so that crates depending on this crate can make use of this trait too, as we’ll see in a few examples. Inside the curly brackets, we declare the method signatures that describe the behaviors of the types that implement this trait, which in this case is `fn summarize(&self) -> String`.
+
+After the method signature, instead of providing an implementation within curly brackets, we use a semicolon. Each type implementing this trait must provide its own custom behavior for the body of the method. The compiler will enforce that any type that has the `Summary` trait will have the method `summarize` defined with this signature exactly.
+
+A trait can have multiple methods in its body: The method signatures are listed one per line, and each line ends in a semicolon.
+
+### Implementing a Trait on a Type
+
+Now that we’ve defined the desired signatures of the `Summary` trait’s methods, we can implement it on the types in our media aggregator. Listing 10-13 shows an implementation of the `Summary` trait on the `NewsArticle` struct that uses the headline, the author, and the location to create the return value of `summarize`. For the `SocialPost` struct, we define `summarize` as the username followed by the entire text of the post, assuming that the post content is already limited to 280 characters.
+
+Implementing a trait on a type is similar to implementing regular methods. The difference is that after `impl`, we put the trait name we want to implement, then use the `for` keyword, and then specify the name of the type we want to implement the trait for. Within the `impl` block, we put the method signatures that the trait definition has defined. Instead of adding a semicolon after each signature, we use curly brackets and fill in the method body with the specific behavior that we want the methods of the trait to have for the particular type.
+
+Now that the library has implemented the `Summary` trait on `NewsArticle` and `SocialPost`, users of the crate can call the trait methods on instances of `NewsArticle` and `SocialPost` in the same way we call regular methods. The only difference is that the user must bring the trait into scope as well as the types. Here’s an example of how a binary crate could use our `aggregator` library crate:
+
+This code prints `1 new post: horse_ebooks: of course, as you probably already know, people`.
+
+Other crates that depend on the `aggregator` crate can also bring the `Summary` trait into scope to implement `Summary` on their own types. One restriction to note is that we can implement a trait on a type only if either the trait or the type, or both, are local to our crate. For example, we can implement standard library traits like `Display` on a custom type like `SocialPost` as part of our `aggregator` crate functionality because the type `SocialPost` is local to our `aggregator` crate. We can also implement `Summary` on `Vec` in our `aggregator` crate because the trait `Summary` is local to our `aggregator` crate.
+
+But we can’t implement external traits on external types. For example, we can’t implement the `Display` trait on `Vec` within our `aggregator` crate, because `Display` and `Vec` are both defined in the standard library and aren’t local to our `aggregator` crate. This restriction is part of a property called _coherence_, and more specifically the _orphan rule_, so named because the parent type is not present. This rule ensures that other people’s code can’t break your code and vice versa. Without the rule, two crates could implement the same trait for the same type, and Rust wouldn’t know which implementation to use.
+
+### Using Default Implementations
+
+Sometimes it’s useful to have default behavior for some or all of the methods in a trait instead of requiring implementations for all methods on every type. Then, as we implement the trait on a particular type, we can keep or override each method’s default behavior.
+
+In Listing 10-14, we specify a default string for the `summarize` method of the `Summary` trait instead of only defining the method signature, as we did in Listing 10-12.
+
+To use a default implementation to summarize instances of `NewsArticle`, we specify an empty `impl` block with `impl Summary for NewsArticle {}`.
+
+Even though we’re no longer defining the `summarize` method on `NewsArticle` directly, we’ve provided a default implementation and specified that `NewsArticle` implements the `Summary` trait. As a result, we can still call the `summarize` method on an instance of `NewsArticle`, like this:
+
+This code prints `New article available! (Read more...)`.
+
+Creating a default implementation doesn’t require us to change anything about the implementation of `Summary` on `SocialPost` in Listing 10-13. The reason is that the syntax for overriding a default implementation is the same as the syntax for implementing a trait method that doesn’t have a default implementation.
+
+Default implementations can call other methods in the same trait, even if those other methods don’t have a default implementation. In this way, a trait can provide a lot of useful functionality and only require implementors to specify a small part of it. For example, we could define the `Summary` trait to have a `summarize_author` method whose implementation is required, and then define a `summarize` method that has a default implementation that calls the `summarize_author` method:
+
+To use this version of `Summary`, we only need to define `summarize_author` when we implement the trait on a type:
+
+After we define `summarize_author`, we can call `summarize` on instances of the `SocialPost` struct, and the default implementation of `summarize` will call the definition of `summarize_author` that we’ve provided. Because we’ve implemented `summarize_author`, the `Summary` trait has given us the behavior of the `summarize` method without requiring us to write any more code. Here’s what that looks like:
+
+This code prints `1 new post: (Read more from @horse_ebooks...)`.
+
+Note that it isn’t possible to call the default implementation from an overriding implementation of that same method.
+
+### Using Traits as Parameters
+
+Now that you know how to define and implement traits, we can explore how to use traits to define functions that accept many different types. We’ll use the `Summary` trait we implemented on the `NewsArticle` and `SocialPost` types in Listing 10-13 to define a `notify` function that calls the `summarize` method on its `item` parameter, which is of some type that implements the `Summary` trait. To do this, we use the `impl Trait` syntax, like this:
+
+Instead of a concrete type for the `item` parameter, we specify the `impl` keyword and the trait name. This parameter accepts any type that implements the specified trait. In the body of `notify`, we can call any methods on `item` that come from the `Summary` trait, such as `summarize`. We can call `notify` and pass in any instance of `NewsArticle` or `SocialPost`. Code that calls the function with any other type, such as a `String` or an `i32`, won’t compile, because those types don’t implement `Summary`.
+
+#### Trait Bound Syntax
+
+The `impl Trait` syntax works for straightforward cases but is actually syntax sugar for a longer form known as a _trait bound_; it looks like this:
+
+This longer form is equivalent to the example in the previous section but is more verbose. We place trait bounds with the declaration of the generic type parameter after a colon and inside angle brackets.
+
+The `impl Trait` syntax is convenient and makes for more concise code in simple cases, while the fuller trait bound syntax can express more complexity in other cases. For example, we can have two parameters that implement `Summary`. Doing so with the `impl Trait` syntax looks like this:
+
+Using `impl Trait` is appropriate if we want this function to allow `item1` and `item2` to have different types (as long as both types implement `Summary`). If we want to force both parameters to have the same type, however, we must use a trait bound, like this:
+
+The generic type `T` specified as the type of the `item1` and `item2` parameters constrains the function such that the concrete type of the value passed as an argument for `item1` and `item2` must be the same.
+
+#### Multiple Trait Bounds with the `+` Syntax
+
+We can also specify more than one trait bound. Say we wanted `notify` to use display formatting as well as `summarize` on `item`: We specify in the `notify` definition that `item` must implement both `Display` and `Summary`. We can do so using the `+` syntax:
+
+The `+` syntax is also valid with trait bounds on generic types:
+
+With the two trait bounds specified, the body of `notify` can call `summarize` and use `{}` to format `item`.
+
+#### Clearer Trait Bounds with `where` Clauses
+
+Using too many trait bounds has its downsides. Each generic has its own trait bounds, so functions with multiple generic type parameters can contain lots of trait bound information between the function’s name and its parameter list, making the function signature hard to read. For this reason, Rust has alternate syntax for specifying trait bounds inside a `where` clause after the function signature. So, instead of writing this:
+
+we can use a `where` clause, like this:
+
+This function’s signature is less cluttered: The function name, parameter list, and return type are close together, similar to a function without lots of trait bounds.
+
+### Returning Types That Implement Traits
+
+We can also use the `impl Trait` syntax in the return position to return a value of some type that implements a trait, as shown here:
+
+By using `impl Summary` for the return type, we specify that the `returns_summarizable` function returns some type that implements the `Summary` trait without naming the concrete type. In this case, `returns_summarizable` returns a `SocialPost`, but the code calling this function doesn’t need to know that.
+
+The ability to specify a return type only by the trait it implements is especially useful in the context of closures and iterators, which we cover in Chapter 13. Closures and iterators create types that only the compiler knows or types that are very long to specify. The `impl Trait` syntax lets you concisely specify that a function returns some type that implements the `Iterator` trait without needing to write out a very long type.
+
+However, you can only use `impl Trait` if you’re returning a single type. For example, this code that returns either a `NewsArticle` or a `SocialPost` with the return type specified as `impl Summary` wouldn’t work:
+
+Returning either a `NewsArticle` or a `SocialPost` isn’t allowed due to restrictions around how the `impl Trait` syntax is implemented in the compiler. We’ll cover how to write a function with this behavior in the [“Using Trait Objects to Abstract over Shared Behavior”][trait-objects] section of Chapter 18.
+
+### Using Trait Bounds to Conditionally Implement Methods
+
+By using a trait bound with an `impl` block that uses generic type parameters, we can implement methods conditionally for types that implement the specified traits. For example, the type `Pair` in Listing 10-15 always implements the `new` function to return a new instance of `Pair` (recall from the [“Method Syntax”][methods] section of Chapter 5 that `Self` is a type alias for the type of the `impl` block, which in this case is `Pair`). But in the next `impl` block, `Pair` only implements the `cmp_display` method if its inner type `T` implements the `PartialOrd` trait that enables comparison _and_ the `Display` trait that enables printing.
+
+We can also conditionally implement a trait for any type that implements another trait. Implementations of a trait on any type that satisfies the trait bounds are called _blanket implementations_ and are used extensively in the Rust standard library. For example, the standard library implements the `ToString` trait on any type that implements the `Display` trait. The `impl` block in the standard library looks similar to this code:
+
+Because the standard library has this blanket implementation, we can call the `to_string` method defined by the `ToString` trait on any type that implements the `Display` trait. For example, we can turn integers into their corresponding `String` values like this because integers implement `Display`:
+
+Blanket implementations appear in the documentation for the trait in the “Implementors” section.
+
+Traits and trait bounds let us write code that uses generic type parameters to reduce duplication but also specify to the compiler that we want the generic type to have particular behavior. The compiler can then use the trait bound information to check that all the concrete types used with our code provide the correct behavior. In dynamically typed languages, we would get an error at runtime if we called a method on a type that didn’t define the method. But Rust moves these errors to compile time so that we’re forced to fix the problems before our code is even able to run. Additionally, we don’t have to write code that checks for behavior at runtime, because we’ve already checked at compile time. Doing so improves performance without having to give up the flexibility of generics.
+
+## Validating References with Lifetimes
+
+Lifetimes are another kind of generic that we’ve already been using. Rather than ensuring that a type has the behavior we want, lifetimes ensure that references are valid as long as we need them to be.
+
+One detail we didn’t discuss in the [“References and Borrowing”][references-and-borrowing] section in Chapter 4 is that every reference in Rust has a lifetime, which is the scope for which that reference is valid. Most of the time, lifetimes are implicit and inferred, just like most of the time, types are inferred. We are only required to annotate types when multiple types are possible. In a similar way, we must annotate lifetimes when the lifetimes of references could be related in a few different ways. Rust requires us to annotate the relationships using generic lifetime parameters to ensure that the actual references used at runtime will definitely be valid.
+
+Annotating lifetimes is not even a concept most other programming languages have, so this is going to feel unfamiliar. Although we won’t cover lifetimes in their entirety in this chapter, we’ll discuss common ways you might encounter lifetime syntax so that you can get comfortable with the concept.
+
+### Dangling References
+
+The main aim of lifetimes is to prevent dangling references, which, if they were allowed to exist, would cause a program to reference data other than the data it’s intended to reference. Consider the program in Listing 10-16, which has an outer scope and an inner scope.
+
+> Note: The examples in Listings 10-16, 10-17, and 10-23 declare variables > without giving them an initial value, so the variable name exists in the outer > scope. At first glance, this might appear to be in conflict with Rust having > no null values. However, if we try to use a variable before giving it a value, > we’ll get a compile-time error, which shows that indeed Rust does not allow > null values.
+
+The outer scope declares a variable named `r` with no initial value, and the inner scope declares a variable named `x` with the initial value of `5`. Inside the inner scope, we attempt to set the value of `r` as a reference to `x`. Then, the inner scope ends, and we attempt to print the value in `r`. This code won’t compile, because the value that `r` is referring to has gone out of scope before we try to use it. Here is the error message:
+
+The error message says that the variable `x` “does not live long enough.” The reason is that `x` will be out of scope when the inner scope ends on line 7. But `r` is still valid for the outer scope; because its scope is larger, we say that it “lives longer.” If Rust allowed this code to work, `r` would be referencing memory that was deallocated when `x` went out of scope, and anything we tried to do with `r` wouldn’t work correctly. So, how does Rust determine that this code is invalid? It uses a borrow checker.
+
+### The Borrow Checker
+
+The Rust compiler has a _borrow checker_ that compares scopes to determine whether all borrows are valid. Listing 10-17 shows the same code as Listing 10-16 but with annotations showing the lifetimes of the variables.
+
+Here, we’ve annotated the lifetime of `r` with `'a` and the lifetime of `x` with `'b`. As you can see, the inner `'b` block is much smaller than the outer `'a` lifetime block. At compile time, Rust compares the size of the two lifetimes and sees that `r` has a lifetime of `'a` but that it refers to memory with a lifetime of `'b`. The program is rejected because `'b` is shorter than `'a`: The subject of the reference doesn’t live as long as the reference.
+
+Listing 10-18 fixes the code so that it doesn’t have a dangling reference and it compiles without any errors.
+
+Here, `x` has the lifetime `'b`, which in this case is larger than `'a`. This means `r` can reference `x` because Rust knows that the reference in `r` will always be valid while `x` is valid.
+
+Now that you know where the lifetimes of references are and how Rust analyzes lifetimes to ensure that references will always be valid, let’s explore generic lifetimes in function parameters and return values.
+
+### Generic Lifetimes in Functions
+
+We’ll write a function that returns the longer of two string slices. This function will take two string slices and return a single string slice. After we’ve implemented the `longest` function, the code in Listing 10-19 should print `The longest string is abcd`.
+
+Note that we want the function to take string slices, which are references, rather than strings, because we don’t want the `longest` function to take ownership of its parameters. Refer to [“String Slices as Parameters”][string-slices-as-parameters] in Chapter 4 for more discussion about why the parameters we use in Listing 10-19 are the ones we want.
+
+If we try to implement the `longest` function as shown in Listing 10-20, it won’t compile.
+
+Instead, we get the following error that talks about lifetimes:
+
+The help text reveals that the return type needs a generic lifetime parameter on it because Rust can’t tell whether the reference being returned refers to `x` or `y`. Actually, we don’t know either, because the `if` block in the body of this function returns a reference to `x` and the `else` block returns a reference to `y`!
+
+When we’re defining this function, we don’t know the concrete values that will be passed into this function, so we don’t know whether the `if` case or the `else` case will execute. We also don’t know the concrete lifetimes of the references that will be passed in, so we can’t look at the scopes as we did in Listings 10-17 and 10-18 to determine whether the reference we return will always be valid. The borrow checker can’t determine this either, because it doesn’t know how the lifetimes of `x` and `y` relate to the lifetime of the return value. To fix this error, we’ll add generic lifetime parameters that define the relationship between the references so that the borrow checker can perform its analysis.
+
+### Lifetime Annotation Syntax
+
+Lifetime annotations don’t change how long any of the references live. Rather, they describe the relationships of the lifetimes of multiple references to each other without affecting the lifetimes. Just as functions can accept any type when the signature specifies a generic type parameter, functions can accept references with any lifetime by specifying a generic lifetime parameter.
+
+Lifetime annotations have a slightly unusual syntax: The names of lifetime parameters must start with an apostrophe (`'`) and are usually all lowercase and very short, like generic types. Most people use the name `'a` for the first lifetime annotation. We place lifetime parameter annotations after the `&` of a reference, using a space to separate the annotation from the reference’s type.
+
+Here are some examples—a reference to an `i32` without a lifetime parameter, a reference to an `i32` that has a lifetime parameter named `'a`, and a mutable reference to an `i32` that also has the lifetime `'a`:
+
+One lifetime annotation by itself doesn’t have much meaning, because the annotations are meant to tell Rust how generic lifetime parameters of multiple references relate to each other. Let’s examine how the lifetime annotations relate to each other in the context of the `longest` function.
+
+### In Function Signatures
+
+To use lifetime annotations in function signatures, we need to declare the generic lifetime parameters inside angle brackets between the function name and the parameter list, just as we did with generic type parameters.
+
+We want the signature to express the following constraint: The returned reference will be valid as long as both of the parameters are valid. This is the relationship between lifetimes of the parameters and the return value. We’ll name the lifetime `'a` and then add it to each reference, as shown in Listing 10-21.
+
+This code should compile and produce the result we want when we use it with the `main` function in Listing 10-19.
+
+The function signature now tells Rust that for some lifetime `'a`, the function takes two parameters, both of which are string slices that live at least as long as lifetime `'a`. The function signature also tells Rust that the string slice returned from the function will live at least as long as lifetime `'a`. In practice, it means that the lifetime of the reference returned by the `longest` function is the same as the smaller of the lifetimes of the values referred to by the function arguments. These relationships are what we want Rust to use when analyzing this code.
+
+Remember, when we specify the lifetime parameters in this function signature, we’re not changing the lifetimes of any values passed in or returned. Rather, we’re specifying that the borrow checker should reject any values that don’t adhere to these constraints. Note that the `longest` function doesn’t need to know exactly how long `x` and `y` will live, only that some scope can be substituted for `'a` that will satisfy this signature.
+
+When annotating lifetimes in functions, the annotations go in the function signature, not in the function body. The lifetime annotations become part of the contract of the function, much like the types in the signature. Having function signatures contain the lifetime contract means the analysis the Rust compiler does can be simpler. If there’s a problem with the way a function is annotated or the way it is called, the compiler errors can point to the part of our code and the constraints more precisely. If, instead, the Rust compiler made more inferences about what we intended the relationships of the lifetimes to be, the compiler might only be able to point to a use of our code many steps away from the cause of the problem.
+
+When we pass concrete references to `longest`, the concrete lifetime that is substituted for `'a` is the part of the scope of `x` that overlaps with the scope of `y`. In other words, the generic lifetime `'a` will get the concrete lifetime that is equal to the smaller of the lifetimes of `x` and `y`. Because we’ve annotated the returned reference with the same lifetime parameter `'a`, the returned reference will also be valid for the length of the smaller of the lifetimes of `x` and `y`.
+
+Let’s look at how the lifetime annotations restrict the `longest` function by passing in references that have different concrete lifetimes. Listing 10-22 is a straightforward example.
+
+In this example, `string1` is valid until the end of the outer scope, `string2` is valid until the end of the inner scope, and `result` references something that is valid until the end of the inner scope. Run this code and you’ll see that the borrow checker approves; it will compile and print `The longest string is long string is long`.
+
+Next, let’s try an example that shows that the lifetime of the reference in `result` must be the smaller lifetime of the two arguments. We’ll move the declaration of the `result` variable outside the inner scope but leave the assignment of the value to the `result` variable inside the scope with `string2`. Then, we’ll move the `println!` that uses `result` to outside the inner scope, after the inner scope has ended. The code in Listing 10-23 will not compile.
+
+When we try to compile this code, we get this error:
+
+The error shows that for `result` to be valid for the `println!` statement, `string2` would need to be valid until the end of the outer scope. Rust knows this because we annotated the lifetimes of the function parameters and return values using the same lifetime parameter `'a`.
+
+As humans, we can look at this code and see that `string1` is longer than `string2`, and therefore, `result` will contain a reference to `string1`. Because `string1` has not gone out of scope yet, a reference to `string1` will still be valid for the `println!` statement. However, the compiler can’t see that the reference is valid in this case. We’ve told Rust that the lifetime of the reference returned by the `longest` function is the same as the smaller of the lifetimes of the references passed in. Therefore, the borrow checker disallows the code in Listing 10-23 as possibly having an invalid reference.
+
+Try designing more experiments that vary the values and lifetimes of the references passed in to the `longest` function and how the returned reference is used. Make hypotheses about whether or not your experiments will pass the borrow checker before you compile; then, check to see if you’re right!
+
+### Relationships
+
+The way in which you need to specify lifetime parameters depends on what your function is doing. For example, if we changed the implementation of the `longest` function to always return the first parameter rather than the longest string slice, we wouldn’t need to specify a lifetime on the `y` parameter. The following code will compile:
+
+We’ve specified a lifetime parameter `'a` for the parameter `x` and the return type, but not for the parameter `y`, because the lifetime of `y` does not have any relationship with the lifetime of `x` or the return value.
+
+When returning a reference from a function, the lifetime parameter for the return type needs to match the lifetime parameter for one of the parameters. If the reference returned does _not_ refer to one of the parameters, it must refer to a value created within this function. However, this would be a dangling reference because the value will go out of scope at the end of the function. Consider this attempted implementation of the `longest` function that won’t compile:
+
+Here, even though we’ve specified a lifetime parameter `'a` for the return type, this implementation will fail to compile because the return value lifetime is not related to the lifetime of the parameters at all. Here is the error message we get:
+
+The problem is that `result` goes out of scope and gets cleaned up at the end of the `longest` function. We’re also trying to return a reference to `result` from the function. There is no way we can specify lifetime parameters that would change the dangling reference, and Rust won’t let us create a dangling reference. In this case, the best fix would be to return an owned data type rather than a reference so that the calling function is then responsible for cleaning up the value.
+
+Ultimately, lifetime syntax is about connecting the lifetimes of various parameters and return values of functions. Once they’re connected, Rust has enough information to allow memory-safe operations and disallow operations that would create dangling pointers or otherwise violate memory safety.
+
+### In Struct Definitions
+
+So far, the structs we’ve defined all hold owned types. We can define structs to hold references, but in that case, we would need to add a lifetime annotation on every reference in the struct’s definition. Listing 10-24 has a struct named `ImportantExcerpt` that holds a string slice.
+
+This struct has the single field `part` that holds a string slice, which is a reference. As with generic data types, we declare the name of the generic lifetime parameter inside angle brackets after the name of the struct so that we can use the lifetime parameter in the body of the struct definition. This annotation means an instance of `ImportantExcerpt` can’t outlive the reference it holds in its `part` field.
+
+The `main` function here creates an instance of the `ImportantExcerpt` struct that holds a reference to the first sentence of the `String` owned by the variable `novel`. The data in `novel` exists before the `ImportantExcerpt` instance is created. In addition, `novel` doesn’t go out of scope until after the `ImportantExcerpt` goes out of scope, so the reference in the `ImportantExcerpt` instance is valid.
+
+### Lifetime Elision
+
+You’ve learned that every reference has a lifetime and that you need to specify lifetime parameters for functions or structs that use references. However, we had a function in Listing 4-9, shown again in Listing 10-25, that compiled without lifetime annotations.
+
+The reason this function compiles without lifetime annotations is historical: In early versions (pre-1.0) of Rust, this code wouldn’t have compiled, because every reference needed an explicit lifetime. At that time, the function signature would have been written like this:
+
+After writing a lot of Rust code, the Rust team found that Rust programmers were entering the same lifetime annotations over and over in particular situations. These situations were predictable and followed a few deterministic patterns. The developers programmed these patterns into the compiler’s code so that the borrow checker could infer the lifetimes in these situations and wouldn’t need explicit annotations.
+
+This piece of Rust history is relevant because it’s possible that more deterministic patterns will emerge and be added to the compiler. In the future, even fewer lifetime annotations might be required.
+
+The patterns programmed into Rust’s analysis of references are called the _lifetime elision rules_. These aren’t rules for programmers to follow; they’re a set of particular cases that the compiler will consider, and if your code fits these cases, you don’t need to write the lifetimes explicitly.
+
+The elision rules don’t provide full inference. If there is still ambiguity about what lifetimes the references have after Rust applies the rules, the compiler won’t guess what the lifetime of the remaining references should be. Instead of guessing, the compiler will give you an error that you can resolve by adding the lifetime annotations.
+
+Lifetimes on function or method parameters are called _input lifetimes_, and lifetimes on return values are called _output lifetimes_.
+
+The compiler uses three rules to figure out the lifetimes of the references when there aren’t explicit annotations. The first rule applies to input lifetimes, and the second and third rules apply to output lifetimes. If the compiler gets to the end of the three rules and there are still references for which it can’t figure out lifetimes, the compiler will stop with an error. These rules apply to `fn` definitions as well as `impl` blocks.
+
+The first rule is that the compiler assigns a lifetime parameter to each parameter that’s a reference. In other words, a function with one parameter gets one lifetime parameter: `fn foo(x: &'a i32)`; a function with two parameters gets two separate lifetime parameters: `fn foo(x: &'a i32, y: &'b i32)`; and so on.
+
+The second rule is that, if there is exactly one input lifetime parameter, that lifetime is assigned to all output lifetime parameters: `fn foo(x: &'a i32) -> &'a i32`.
+
+The third rule is that, if there are multiple input lifetime parameters, but one of them is `&self` or `&mut self` because this is a method, the lifetime of `self` is assigned to all output lifetime parameters. This third rule makes methods much nicer to read and write because fewer symbols are necessary.
+
+Let’s pretend we’re the compiler. We’ll apply these rules to figure out the lifetimes of the references in the signature of the `first_word` function in Listing 10-25. The signature starts without any lifetimes associated with the references:
+
+Then, the compiler applies the first rule, which specifies that each parameter gets its own lifetime. We’ll call it `'a` as usual, so now the signature is this:
+
+The second rule applies because there is exactly one input lifetime. The second rule specifies that the lifetime of the one input parameter gets assigned to the output lifetime, so the signature is now this:
+
+Now all the references in this function signature have lifetimes, and the compiler can continue its analysis without needing the programmer to annotate the lifetimes in this function signature.
+
+Let’s look at another example, this time using the `longest` function that had no lifetime parameters when we started working with it in Listing 10-20:
+
+Let’s apply the first rule: Each parameter gets its own lifetime. This time we have two parameters instead of one, so we have two lifetimes:
+
+You can see that the second rule doesn’t apply, because there is more than one input lifetime. The third rule doesn’t apply either, because `longest` is a function rather than a method, so none of the parameters are `self`. After working through all three rules, we still haven’t figured out what the return type’s lifetime is. This is why we got an error trying to compile the code in Listing 10-20: The compiler worked through the lifetime elision rules but still couldn’t figure out all the lifetimes of the references in the signature.
+
+Because the third rule really only applies in method signatures, we’ll look at lifetimes in that context next to see why the third rule means we don’t have to annotate lifetimes in method signatures very often.
+
+### In Method Definitions
+
+When we implement methods on a struct with lifetimes, we use the same syntax as that of generic type parameters, as shown in Listing 10-11. Where we declare and use the lifetime parameters depends on whether they’re related to the struct fields or the method parameters and return values.
+
+Lifetime names for struct fields always need to be declared after the `impl` keyword and then used after the struct’s name because those lifetimes are part of the struct’s type.
+
+In method signatures inside the `impl` block, references might be tied to the lifetime of references in the struct’s fields, or they might be independent. In addition, the lifetime elision rules often make it so that lifetime annotations aren’t necessary in method signatures. Let’s look at some examples using the struct named `ImportantExcerpt` that we defined in Listing 10-24.
+
+First, we’ll use a method named `level` whose only parameter is a reference to `self` and whose return value is an `i32`, which is not a reference to anything:
+
+The lifetime parameter declaration after `impl` and its use after the type name are required, but because of the first elision rule, we’re not required to annotate the lifetime of the reference to `self`.
+
+Here is an example where the third lifetime elision rule applies:
+
+There are two input lifetimes, so Rust applies the first lifetime elision rule and gives both `&self` and `announcement` their own lifetimes. Then, because one of the parameters is `&self`, the return type gets the lifetime of `&self`, and all lifetimes have been accounted for.
+
+### The Static Lifetime
+
+One special lifetime we need to discuss is `'static`, which denotes that the affected reference _can_ live for the entire duration of the program. All string literals have the `'static` lifetime, which we can annotate as follows:
+
+The text of this string is stored directly in the program’s binary, which is always available. Therefore, the lifetime of all string literals is `'static`.
+
+You might see suggestions in error messages to use the `'static` lifetime. But before specifying `'static` as the lifetime for a reference, think about whether or not the reference you have actually lives the entire lifetime of your program, and whether you want it to. Most of the time, an error message suggesting the `'static` lifetime results from attempting to create a dangling reference or a mismatch of the available lifetimes. In such cases, the solution is to fix those problems, not to specify the `'static` lifetime.
+
+## Generic Type Parameters, Trait Bounds, and Lifetimes
+
+Let’s briefly look at the syntax of specifying generic type parameters, trait bounds, and lifetimes all in one function!
+
+This is the `longest` function from Listing 10-21 that returns the longer of two string slices. But now it has an extra parameter named `ann` of the generic type `T`, which can be filled in by any type that implements the `Display` trait as specified by the `where` clause. This extra parameter will be printed using `{}`, which is why the `Display` trait bound is necessary. Because lifetimes are a type of generic, the declarations of the lifetime parameter `'a` and the generic type parameter `T` go in the same list inside the angle brackets after the function name.
+
+## Summary
+
+We covered a lot in this chapter! Now that you know about generic type parameters, traits and trait bounds, and generic lifetime parameters, you’re ready to write code without repetition that works in many different situations. Generic type parameters let you apply the code to different types. Traits and trait bounds ensure that even though the types are generic, they’ll have the behavior the code needs. You learned how to use lifetime annotations to ensure that this flexible code won’t have any dangling references. And all of this analysis happens at compile time, which doesn’t affect runtime performance!
+
+Believe it or not, there is much more to learn on the topics we discussed in this chapter: Chapter 18 discusses trait objects, which are another way to use traits. There are also more complex scenarios involving lifetime annotations that you will only need in very advanced scenarios; for those, you should read the [Rust Reference][reference]. But next, you’ll learn how to write tests in Rust so that you can make sure your code is working the way it should.
+
+## Closures
+
+Rust’s closures are anonymous functions you can save in a variable or pass as arguments to other functions. You can create the closure in one place and then call the closure elsewhere to evaluate it in a different context. Unlike functions, closures can capture values from the scope in which they’re defined. We’ll demonstrate how these closure features allow for code reuse and behavior customization.
+
+### Capturing the Environment
+
+We’ll first examine how we can use closures to capture values from the environment they’re defined in for later use. Here’s the scenario: Every so often, our T-shirt company gives away an exclusive, limited-edition shirt to someone on our mailing list as a promotion. People on the mailing list can optionally add their favorite color to their profile. If the person chosen for a free shirt has their favorite color set, they get that color shirt. If the person hasn’t specified a favorite color, they get whatever color the company currently has the most of.
+
+There are many ways to implement this. For this example, we’re going to use an enum called `ShirtColor` that has the variants `Red` and `Blue` (limiting the number of colors available for simplicity). We represent the company’s inventory with an `Inventory` struct that has a field named `shirts` that contains a `Vec` representing the shirt colors currently in stock. The method `giveaway` defined on `Inventory` gets the optional shirt color preference of the free-shirt winner, and it returns the shirt color the person will get. This setup is shown in Listing 13-1.
+
+The `store` defined in `main` has two blue shirts and one red shirt remaining to distribute for this limited-edition promotion. We call the `giveaway` method for a user with a preference for a red shirt and a user without any preference.
+
+Again, this code could be implemented in many ways, and here, to focus on closures, we’ve stuck to concepts you’ve already learned, except for the body of the `giveaway` method that uses a closure. In the `giveaway` method, we get the user preference as a parameter of type `Option` and call the `unwrap_or_else` method on `user_preference`. The [`unwrap_or_else` method on `Option`][unwrap-or-else] is defined by the standard library. It takes one argument: a closure without any arguments that returns a value `T` (the same type stored in the `Some` variant of the `Option`, in this case `ShirtColor`). If the `Option` is the `Some` variant, `unwrap_or_else` returns the value from within the `Some`. If the `Option` is the `None` variant, `unwrap_or_else` calls the closure and returns the value returned by the closure.
+
+We specify the closure expression `|| self.most_stocked()` as the argument to `unwrap_or_else`. This is a closure that takes no parameters itself (if the closure had parameters, they would appear between the two vertical pipes). The body of the closure calls `self.most_stocked()`. We’re defining the closure here, and the implementation of `unwrap_or_else` will evaluate the closure later if the result is needed.
+
+Running this code prints the following:
+
+One interesting aspect here is that we’ve passed a closure that calls `self.most_stocked()` on the current `Inventory` instance. The standard library didn’t need to know anything about the `Inventory` or `ShirtColor` types we defined, or the logic we want to use in this scenario. The closure captures an immutable reference to the `self` `Inventory` instance and passes it with the code we specify to the `unwrap_or_else` method. Functions, on the other hand, are not able to capture their environment in this way.
+
+### Inferring and Annotating Closure Types
+
+There are more differences between functions and closures. Closures don’t usually require you to annotate the types of the parameters or the return value like `fn` functions do. Type annotations are required on functions because the types are part of an explicit interface exposed to your users. Defining this interface rigidly is important for ensuring that everyone agrees on what types of values a function uses and returns. Closures, on the other hand, aren’t used in an exposed interface like this: They’re stored in variables, and they’re used without naming them and exposing them to users of our library.
+
+Closures are typically short and relevant only within a narrow context rather than in any arbitrary scenario. Within these limited contexts, the compiler can infer the types of the parameters and the return type, similar to how it’s able to infer the types of most variables (there are rare cases where the compiler needs closure type annotations too).
+
+As with variables, we can add type annotations if we want to increase explicitness and clarity at the cost of being more verbose than is strictly necessary. Annotating the types for a closure would look like the definition shown in Listing 13-2. In this example, we’re defining a closure and storing it in a variable rather than defining the closure in the spot we pass it as an argument, as we did in Listing 13-1.
+
+With type annotations added, the syntax of closures looks more similar to the syntax of functions. Here, we define a function that adds 1 to its parameter and a closure that has the same behavior, for comparison. We’ve added some spaces to line up the relevant parts. This illustrates how closure syntax is similar to function syntax except for the use of pipes and the amount of syntax that is optional:
+
+The first line shows a function definition and the second line shows a fully annotated closure definition. In the third line, we remove the type annotations from the closure definition. In the fourth line, we remove the brackets, which are optional because the closure body has only one expression. These are all valid definitions that will produce the same behavior when they’re called. The `add_one_v3` and `add_one_v4` lines require the closures to be evaluated to be able to compile because the types will be inferred from their usage. This is similar to `let v = Vec::new();` needing either type annotations or values of some type to be inserted into the `Vec` for Rust to be able to infer the type.
+
+For closure definitions, the compiler will infer one concrete type for each of their parameters and for their return value. For instance, Listing 13-3 shows the definition of a short closure that just returns the value it receives as a parameter. This closure isn’t very useful except for the purposes of this example. Note that we haven’t added any type annotations to the definition. Because there are no type annotations, we can call the closure with any type, which we’ve done here with `String` the first time. If we then try to call `example_closure` with an integer, we’ll

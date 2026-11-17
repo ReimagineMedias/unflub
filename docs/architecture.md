@@ -2,12 +2,19 @@
 
 unflub fixes typos as you type, in any text field on the desktop. This page explains how.
 
+**The part of unflub that sees your keys has no network code. CI enforces it.** unflub runs as two processes: `unflub-engine.exe`
+holds the keyboard hook, the engine and the pill and has no network code at all, and
+`unflub.exe` (the tray app) does everything that talks to the internet and never sees a key.
+See [Two processes](#two-processes).
+
 ## Layout
 
 ```
 crates/unflub-core      Platform-free engine. No OS calls, no unsafe. Tested on every OS in CI.
 crates/unflub-windows   Windows adapter: keyboard hook, text injection, Windows spell checker.
-app/                    Tauri 2 app: tray, settings window, start at login. Runs the adapter in-process.
+crates/unflub-engine    unflub-engine.exe (hook, engine, pill) and the pipe protocol. No network code.
+app/                    Tauri 2 app, unflub.exe: tray, settings, tour, updates, stats, crash reports.
+                        Starts and supervises unflub-engine.exe.
 site/                   unflub.rmgn.net (Astro, static)
 ```
 
@@ -20,8 +27,17 @@ app stay the same.
    (`Char`, `Boundary`, `Backspace`, `Reset`).
 2. It calls `Engine::on_key` synchronously, inside the hook. The engine tracks the word being
    typed. Caret moves, clicks, focus changes and shortcuts reset it, so we never guess at text
-   we didn't see. After a reset the first word is never corrected, because the caret may be in
-   the middle of a word we never saw; correction resumes after the next boundary key.
+   we didn't see. After a reset the first word is not corrected, because the caret may be in
+   the middle of a word we never saw; correction resumes after the next boundary key. The
+   exception is a caret known to be at a word start: after a click or focus change the UIA
+   worker (never the hook thread, with its short timeouts) reads the character before the
+   caret through `TextPattern`, and if the field is empty or that character is whitespace or an
+   opening bracket or quote, the hook passes `caret_at_word_start(generation)` to the engine
+   before the next key. It counts only for the reset it was asked about and only until the
+   first word's boundary; a late, stale or unknown answer keeps the default. So the first word
+   in an empty prompt box (`brb` in a chat or an AI agent's input) is fixed too. Ctrl+Backspace
+   (`Key::DeleteWordLeft`) is the other exception: apps differ in exactly what it deletes, but
+   the caret ends at a word start, so the next word is fully seen. Ctrl+Delete stays a reset.
 3. On a boundary key (space, punctuation, Enter) the engine decides whether the word is wrong
    and what it should be. If it is confident, it returns `Action::Replace`.
 4. The adapter swallows the boundary key and hands backspaces plus the fixed word and the
@@ -31,8 +47,38 @@ app stay the same.
    user presses before the correction has landed are held back and replayed right after it,
    in order, so fast typing can't interleave with a correction. Mouse clicks aren't held back:
    a click in the few milliseconds before a correction lands moves the caret first.
-5. If the very next key is Backspace, the engine returns `Action::Undo`: the original word comes
-   back and, by default, that word is never corrected again.
+5. Undo is a double Backspace by default (setting "Undo a fix": Backspace twice, once, or off).
+   People press Backspace right after a fix all the time to delete the space before a comma,
+   so one Backspace alone never undoes:
+
+   | After a fix, while its pill shows (pill duration) | What happens |
+   |---|---|
+   | Backspace | Held: nothing is deleted, the pill turns red and asks "Undo?" (`Action::HoldBackspace`), and stays up until answered |
+   | then Backspace again | The fix is undone: your word and the boundary come back, the pill says "Undone" and fades as usual |
+   | then any other key (comma, letter, arrow, Shift, Enter, Ctrl+Backspace) | The held Backspace is sent first, then that key, in order (`,` after `the ` gives `the,`); the pill fades out at once |
+   | then a click or a focus change | The held Backspace is dropped; the pill fades out |
+   | then pause, quit or the engine stopping | The held Backspace is sent after the hooks are gone, so the keypress isn't lost |
+   | Backspace after the pill's time | A plain Backspace |
+
+   The hold has no timeout (owner testing: a red pill that vanished on its own, deleting a
+   space a second later, felt wrong), but it never holds other input back: the next key-down,
+   whatever it is, releases it first. A click is the exception: it has already moved the
+   caret, so sending the Backspace then would delete wherever the click landed (holding the
+   click back and replaying it would mean re-injecting mouse input).
+   With "Backspace once" the first Backspace right after a fix undoes it, as before; with "Off"
+   Backspace is always just Backspace.
+
+   A word stops being fixed only after its fix was undone `learnAfterUndos` times (default 2,
+   1 to 5, 0 never), counted per typo and fix (only while learning is on, and not in terminals);
+   the counts are written to `undo-counts.json` beside the settings only while the Stats page's
+   "Keep a list" is on, and Clear history clears them (in the engine too); then it
+   goes to the personal dictionary. unflub never writes to the Windows dictionary
+   (`ISpellChecker::Add`): that list is shared by every app, so a typo undone once would stop
+   being underlined everywhere (a test fails if any source calls it).
+
+   Never after a fix ended by Enter or Tab: undoing would type Enter or Tab again (a second chat
+   message, the next spreadsheet cell), so that Backspace is just a Backspace and the pill shows
+   no undo hint.
 
 The hook budget is **1 ms per key, worst case**. Anything slower would add input lag, so the
 engine never calls slow APIs on this path.
@@ -55,12 +101,22 @@ COM multithreaded apartment:
   in the foreground window's layout without changing the kernel's dead-key state, so accents
   keep working in the user's app. We can't see what a dead key composes with, so the key after
   a dead key resets the word instead of guessing.
-- **Injection.** One `SendInput` per action, on the injector thread: backspaces, then the text
+- **Injection.** One `SendInput` per action, on the injector thread: for a fix, the boundary
+  key first (it replaces a suggestion that inline autocomplete selected after the word, as in
+  Excel or the address bar), then backspaces over the word and that boundary, then the text;
+  after Enter or Tab, which would send or commit, just the backspaces and the text. Text goes
   as Unicode packets (`\n` and `\t` as real Enter and Tab), tagged with a batch number so our
   hook can tell when the whole batch has landed. Until then the user's keys (downs and ups,
   modifiers too) are held in a queue of up to 64 events, then replayed with a replay tag and
-  handled as normal keys. A full queue, a 500 ms timeout or a failed send replays what is
-  held; a send that typed nothing gives the triggering key back. Input injected by
+  handled as normal keys. A full queue or a failed send replays what is held; a send that
+  typed nothing gives the triggering key back. If our own events haven't all come back after
+  500 ms (Windows dropped our hook mid-batch, or another program's low-level hook eats
+  injected input), we stop waiting: what is held is replayed once and unflub **pauses
+  itself**. Keys then pass straight through, nothing is held or corrected, and the tray and
+  settings window say "unflub paused itself: another app is interfering with keyboard input".
+  It probes with one tagged key-up of an unassigned key (which our hook swallows) after 30 s,
+  doubling to 30 minutes while it keeps happening, and right after the hooks are reinstalled;
+  when the probe comes back it resumes. No key is ever held longer than one timeout. Input injected by
   other programs (dictation tools, macro tools) resets the word. We don't inject, and let the
   key through instead, when Ctrl, Alt or Win is held (Ctrl+Backspace would delete a word), when
   the key is an auto-repeat (swallowing it would leave a key stuck down), or on Shift+Enter (a
@@ -83,7 +139,15 @@ COM multithreaded apartment:
   costs CPU and memory in Chrome and Electron apps. That is why we only ask when focus may
   have moved; a burst of focus events costs one query.
 - **Other skips.** Keyboard layouts for Chinese, Japanese and Korean (IME input) and apps on
-  the exclude list are treated like secure fields.
+  the exclude list are treated like secure fields. So are, whatever the exclude list says
+  (`policy::never_correct`): virtual machine consoles and VNC viewers (VMware, VirtualBox,
+  Hyper-V's VMConnect, QEMU), which forward scan codes and drop our Unicode text, so a fix
+  would delete the word and type nothing; terminals and SSH clients beyond the default exclude
+  list (PuTTY, KiTTY, MobaXterm, Tabby, Hyper, ConEmu, Termius, Warp and others), where a
+  password prompt can't be detected; and xterm.js terminals inside other apps (VS Code's
+  terminal), found by their UIA class `xterm-helper-textarea`. A fix made in any terminal,
+  including the default-excluded consoles a user takes off the list, never records its words
+  on the local Stats page (`policy::keep_words`).
 - **Spell checker.** `Check` runs on the hook thread (it is fast). The OS auto-replace lookup
   only reads a cache; misses are looked up in the background and used next time. Learning a
   word writes the user's dictionary, so it also happens in the background.
@@ -119,31 +183,79 @@ After a fix or an undo the adapter shows a small overlay at the caret for about 
 - **Placement.** Above the line by default, flipped below when there is no room, clamped to the
   monitor's work area, and scaled by that monitor's DPI.
 
-### In the app
+### Two processes
 
-The tray app (`app/src-tauri`) is the product; the `unflub-cli` runner stays as a developer tool. On
-launch, `EngineHost` (`engine.rs`) starts an `unflub-engine` thread that joins the COM MTA
-(the Tauri main thread is an STA, where the spell checker can't be created), builds the spell
-checker and engine, installs the hook, and reads `HookEvent`s through a small `unflub-events`
-forwarder. Every settings change applies without a restart:
+The part of unflub that sees your keys has no network code. CI enforces it.
 
-- **Engine settings** reach the hook thread through `LiveEngine` (`live.rs`): the app queues a
-  new `Config` on a channel, and the hook thread applies the newest one at the start of the next
-  key. Checking an empty channel is one atomic read, so the hook never waits or takes a lock.
-  Excluded apps travel in that `Config` (the engine drops keys from those apps). The hook's own
-  exclude list holds only `unflub.exe`, so nothing typed in unflub's own windows (your words,
-  app names) is ever "fixed". The tour's practice box runs a separate engine instead
-  (`tour.rs`): the web view sends each key over IPC and draws the result and the pill itself.
-- **Pause** removes the keyboard and mouse hooks and closes the pill; resume installs them
-  again. While paused unflub sees no keys at all.
-- **Language** changes restart the hook with a spell checker for the new language. If Windows
-  has no dictionary for it, the user's UI language is used.
-- **Pill** options and theme colours go to `OverlayHandle::set_config`. The OS dark mode
-  (`AppsUseLightTheme`) and accent colour are read again before each pill, so "match system"
-  follows the OS.
-- **Undo teaches**: the engine's `Learned` word is sent from the hook thread over a channel;
-  the engine thread adds it to the Windows dictionary (on `unflub-spell`) and to the personal
-  words in settings, which are saved and sent to the open settings window.
+| Process | Holds | Network |
+|---|---|---|
+| `unflub-engine.exe` (`crates/unflub-engine`) | keyboard and mouse hooks, the engine, the Windows spell checker, the pill | none: no HTTP, TLS, Sentry or Tauri crate, no `Win32_Networking` feature |
+| `unflub.exe` (`app/src-tauri`) | tray, settings window, tour, updater, remote config, usage stats, crash reports, the local Stats page | dl.rmgn.net (signed manifest, release files), GitHub Releases (installers), api.rmgn.net (usage stats), Sentry (crash reports, builds with a DSN), see [Network and privacy](#network-and-privacy) |
+
+**The guard.** `crates/unflub-engine/tests/no_network.rs` runs `cargo tree -p unflub-engine
+-e normal --target all` and fails on any crate in the reqwest, hyper, h2, ureq, isahc, curl,
+surf, sentry, tauri, rustls, tokio-rustls, native-tls or openssl families (and a few more), and
+on any `Win32_Networking*` feature of `windows` (or a socket or HTTP module of `winapi`). CI
+runs it on every OS as its own step, "No network code in the engine".
+
+**The pipe.** The app creates `\\.\pipe\unflub-engine-<pid>-<64 random bits>` as the only
+instance of that name (`FILE_FLAG_FIRST_PIPE_INSTANCE`), with a protected DACL that grants
+access to the current user's SID alone, and `PIPE_REJECT_REMOTE_CLIENTS`. It starts the engine
+with that name and its own pid, then accepts one client and drops it unless
+`GetNamedPipeClientProcessId` is the pid it spawned; the engine checks
+`GetNamedPipeServerProcessId` the same way. I/O is overlapped, so a pending read never blocks a
+write on the same handle.
+
+**Messages** (`crates/unflub-engine/src/protocol.rs`) are a 4-byte little-endian length and a
+JSON body, at most 4 MB. JSON rather than bincode: messages are rare, so speed doesn't matter,
+while a self-describing format lets either side skip a message it doesn't know and keeps
+defaulted fields compatible across versions (bincode isn't self-describing, and the project
+stopped in 2025). The engine opens with `Hello { protocol, version }`; the app answers
+`Welcome` only if the protocol matches, else ends it. Then:
+
+| Direction | Messages |
+|---|---|
+| app to engine | `Configure` (core `Config` plus pill settings, remote flags already applied), `Shutdown` |
+| engine to app | `Ready { hooked }`, `Corrected`, `Undone` (with the words, for the local Stats page), `WordsChecked` every 10 s when it moved, `Learned`, `HookReinstalled`, `CorrectorPanicked` |
+
+**Supervision** (`app/src-tauri/src/engine.rs`). The app starts the engine beside `unflub.exe`
+in a Job Object with kill-on-close, so the engine never outlives the app (crash, Task Manager,
+the installer closing `unflub.exe`); the engine also exits when its pipe closes. If it exits
+unasked, the app counts a crash and starts it again after 1 s, doubling to at most 5 minutes,
+and back to 1 s once a run lasted a minute.
+
+- **Pause ends the engine process**; resume starts a new one (~0.3 s, mostly the dictionary
+  index, which an in-process resume rebuilt too). Unhooking inside a live engine would keep
+  ~20 MB and a process that could still see keys. While paused nothing holds a hook or a typed
+  character.
+- **Quit and updates** send `Shutdown`, wait up to 3 s, then end it. The updater does this
+  before the installer runs, so `unflub-engine.exe` is never locked.
+- **Settings** go over the pipe as one `Configure`; the engine applies them live. Engine
+  settings reach the hook thread through `LiveEngine` (`live.rs`): the hook thread applies the
+  newest queued `Config` at the start of the next key (one atomic read when nothing is queued).
+  Excluded apps travel in that `Config`. The hook's own exclude list holds only `unflub.exe`, so
+  nothing typed in unflub's own windows is ever "fixed". A language change restarts the hook
+  with a spell checker for the new language (or the user's UI language if Windows has none).
+- **The pill** is drawn by the engine. The OS dark mode and accent are read again before each
+  pill, so "match system" follows the OS without a message.
+- **Undo teaches**: the engine sends `Learned`; the app adds the word to the personal words in
+  settings, saves them, and sends the new settings back.
+- **Crashes**: the engine's panic hook writes `engine-crash.json` in the app data folder (the
+  panic location, frame addresses, loaded modules and thread name; never the message, and the
+  home folder cut out) and ends the process at once, without writing to stderr. The app turns it
+  into the same opt-in crash report as its own (`crash.rs`) and restarts the engine. Release
+  builds use `panic = "abort"`, so a panic in the corrector inside the hook ends the engine the
+  same way; the hook's `catch_unwind` (keys pass through, `CorrectorPanicked`) only applies
+  where panics unwind, in debug builds and tests.
+- **The tour** runs its own engine inside the app (`tour.rs`), with no hook: the web view sends
+  each key typed in the practice box over Tauri IPC and draws the result itself.
+
+`unflub.exe --perf-idle <dir>` runs the pair for `perf/idle.ps1`: settings and data in `<dir>`,
+every network feature off, no settings window, and the engine with `--dry-run`.
+`unflub-engine.exe --test-ipc` does the handshake and messages without ever installing a hook
+(`tests/ipc.rs`).
+
+The `unflub-cli` runner stays as a developer tool with the whole stack in one process.
 
 Try the hook before the engine lands: `cargo run --release --bin unflub-cli -- --demo` fixes
 `teh`, `adn` and `recieve`, shows the pill (`--pill <style>` to change it), and prints each fix
@@ -176,10 +288,15 @@ Its top suggestion was right for 20 of 23 real typos, but it ranks without conte
   short words and for capitalised words mid-sentence, and weaker for long words.
 
 Engine modes (user setting): `Both` (default: OS flags it and the bundled ranking is confident),
-`SystemOnly`, `BundledOnly` (identical on every OS), `Aggressive` (phone-like).
+`SystemOnly`, `BundledOnly` (identical on every OS), `Balanced` (like `Both`, plus the OS
+checker's own auto-replace fixes; it never fixes a word the OS checker calls correct, and
+without an OS checker the bundled dictionary decides), `Aggressive` (phone-like: either may
+flag the word, low margin).
 
 `Config::language` (default `en-US`) tells the adapter which language to open the OS checker
-in. The bundled dictionary is English only for now and ignores it.
+in. The bundled dictionary is English only, so for any other language its candidates are off
+and only the OS checker's own fixes apply (French `bien` must never become `been`), unless
+`english_for_other_languages` is set (settings.json only for now) or the mode is `BundledOnly`.
 
 The bundled dictionary includes about 1,000 programming terms (`data/tech_words.txt`):
 keywords, standard types, tools and jargon. People write prose about code all day, so these
@@ -195,18 +312,17 @@ count as known words and are never corrected.
 - The first word after a reset: the caret may be in the middle of text we never saw.
 - Hyphenated words, words with non-ASCII letters, and words ending in an apostrophe.
 
-## UI processes
+## Processes and threads
 
-- **Core process** (hook, engine, tray): always running, target about 30 MB RAM idle. The
-  bundled dictionary index alone takes about 15 MB.
-- **Pill**: drawn natively in a click-through, no-activate window, shown briefly after a fix.
-  No web view stays resident.
-- **Core process** (hook, engine, tray): always running, target under 15 MB RAM idle.
-- **Pill**: drawn natively in a click-through, no-activate window on the core process's
+- **Engine** (`unflub-engine.exe`: hook, engine, pill): runs while autocorrect is on. The
+  bundled dictionary index alone takes about 15 MB. Idle numbers are in
+  [performance.md](performance.md).
+- **Pill**: drawn natively in a click-through, no-activate window on the engine's
   `unflub-overlay` thread, shown briefly after a fix. No web view.
+- **Tray app** (`unflub.exe`): always running, also while paused.
 - **Settings**: a Tauri window created on demand and destroyed when closed.
-- **Updates**: an `unflub-update` thread that checks api.rmgn.ca about two minutes after launch and
-  then daily. With automatic updates on it downloads and verifies a new version in the
+- **Updates**: an `unflub-update` thread that reads the signed manifest on dl.rmgn.net about two
+  minutes after launch and then daily. With automatic updates on it downloads and verifies a new version in the
   background; it installs only on Restart now or quit. See
   [releasing.md](releasing.md#how-the-app-updates).
 - **Stats**: an `unflub-stats` thread that saves the local Stats page and usage counts every ten
@@ -214,26 +330,36 @@ count as known words and are never corrected.
 
 ## Network and privacy
 
-Nothing typed ever leaves the computer: words reach only the engine, the pill and, for the local
-Stats page, `stats.json` in the app data folder. Everything unflub sends goes to api.rmgn.ca
-(contract: `D:\Code\rmgn-api\docs\unflub-contract.md`) and carries no identifier.
+The part of unflub that sees your keys has no network code. CI enforces it. Keys and words are handled in `unflub-engine.exe`, which
+has no network code (see [Two processes](#two-processes)). Nothing typed ever leaves the
+computer: words reach only the engine, the pill and, over the local pipe, the app's Stats page,
+`stats.json` in the app data folder. Updates are static downloads from dl.rmgn.net and GitHub
+Releases; the only thing unflub posts is usage stats to api.rmgn.net (contract:
+`D:\Code\rmgn-api\docs\unflub-contract.md`). Nothing carries an identifier.
 
 | What | When | Carries | Off switch |
 |---|---|---|---|
-| Update check | ~2 min after launch, then daily | app and OS version, `X-Rollout-Bucket` (random 0 to 99, redrawn per version), `X-First` (first check of the UTC day/week/month) | Machine policy `DisableUpdates` |
-| Remote config | at launch and with each check | the same headers | Policy `DisableRemoteConfig` |
-| Update download | when an update is found (auto) or on Restart now | nothing extra | Automatic updates, policy |
-| Usage stats | once a day | counts, settings snapshot, p99 latencies, health counters; no headers (`usage.rs`, allowlist test) | Privacy > Anonymous usage stats (on by default), policy `DisableUsageStats` |
-| Crash report | next start after a crash | scrubbed Sentry event: location, stack, modules, OS and app version (`crash.rs`) | Privacy > Crash reports (on by default), policy `DisableCrashReports`; builds without `SENTRY_DSN` |
+| Signed manifest (`dl.rmgn.net/unflub/manifest/{channel}.json` + `.sig`) | at launch, then with each update check (~2 min after launch, then daily) | `User-Agent: unflub/<version>`, `If-None-Match`. The rollout bucket (random 0 to 99, redrawn per version) stays on the computer | Policy `DisableUpdates` and `DisableRemoteConfig` together; `DisableRemoteConfig` alone ignores its flags and message |
+| Release file (`dl.rmgn.net/unflub/{version}/tauri-{target}-{arch}.json`) | only when the manifest offers this copy a release | `User-Agent` | Policy `DisableUpdates` |
+| Update download (GitHub Release asset, possibly through a dl.rmgn.net redirect) | when an update is found (auto) or on Restart now | nothing extra | Automatic updates, policy |
+| Usage stats | once a day | counts, settings snapshot, p99 latencies, health counters; no identity headers, only `X-First: week,month` on the first report of an ISO week or month (`usage.rs`, `net.rs`, allowlist test). These reports are the only active-install count | Privacy > Anonymous usage stats (on by default), policy `DisableUsageStats` |
+| Crash report | next start after a crash, or after an engine crash | scrubbed Sentry event: location, stack, modules, OS and app version (`crash.rs`); for the engine, from the marker it wrote | Privacy > Crash reports (on by default), policy `DisableCrashReports`; builds without `SENTRY_DSN` |
 
-- **Remote config only takes away.** Its flags (`pill_enabled`, `uia_caret`, `stats_enabled`,
-  `min_check_interval_h`) can switch a feature off or make a limit stricter, never turn on what
-  the user or a policy turned off. Each consumer ANDs the flag with its own setting
-  (`remote.rs` tests every combination).
+- **The manifest is signed.** Ed25519 over the exact bytes, keys in `keys.rs`; unsigned,
+  badly signed, oversized (> 256 KB) or older (`generated_at`) manifests are rejected and the
+  last good one stays (`manifest.rs`, `remote.rs`). Eligibility (kill switch, blocked,
+  `min_version`, rollout) runs in the app; the release's Tauri file must name the installer URL
+  and signature in the manifest, and the installer must match its SHA-256 and size.
+- **Remote flags only take away.** The manifest's flags (`pill_enabled`, `uia_caret`,
+  `stats_enabled`, `min_check_interval_h`) can switch a feature off or make a limit stricter,
+  never turn on what the user or a policy turned off. Each consumer ANDs the flag with its own
+  setting (`remote.rs` tests every combination). Its optional message shows as a row in About
+  and in the tray.
 - **Machine policy** in `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`) overrides the user's
   switch; the window shows "Managed by your organization".
-- **Who updates** depends on `install-source` beside `unflub.exe` (`install.rs`): the setup and
-  winget update themselves; Scoop, Store and portable copies are told to use their tool.
+- **Who updates** depends on `install-source` beside `unflub.exe` (`install.rs`): only the setup's
+  copies update themselves; winget, Chocolatey, Scoop and Store copies are told to use their
+  tool, and portable copies to download the new version.
 - **Settings file** `settings.json` has a `schemaVersion`; `migrations.rs` upgrades older files
   step by step and keeps a `.v<N>` copy. Fields from a newer unflub are kept and written back.
 

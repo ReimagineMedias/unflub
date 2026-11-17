@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   answerCrashReport, appInfo, appVersion, checkForUpdates, crashReportPending, dismissMessage, getSettings, inTauri,
+  inputInterference, onInputInterference,
   installUpdate, onCrashReport, onOpenPage, onRemoteMessage, onSettingsChanged, onUpdateStatus, remoteMessage,
   resetSettings, setSettings, systemLook, updateStatus,
 } from "./api";
@@ -11,7 +12,7 @@ import { PillPreview } from "./PillPreview";
 import { PrivacyPage } from "./PrivacyPage";
 import { StatsPage } from "./StatsPage";
 import { Tour } from "./Tour";
-import type { AppInfo, EngineMode, RemoteMessage, Settings, SystemLook, Theme, UpdateStatus } from "./types";
+import type { AppInfo, EngineMode, RemoteMessage, Settings, SystemLook, Theme, UndoMode, UpdateStatus } from "./types";
 
 type Page = "general" | "correction" | "appearance" | "apps" | "dictionary" | "stats" | "privacy" | "about";
 const PAGES: { id: Page; label: StringKey }[] = [
@@ -69,9 +70,11 @@ function useResolvedMode(appearance: Settings["appearance"] | undefined) {
   return systemDark ? "dark" : "light";
 }
 
-/** Shown above every page: a crash report waiting for an answer, or an important update. */
-function Banners({ crash, onCrash, update, autoUpdate, onInstall, onDetails }: {
+/** Shown above every page: a crash report waiting for an answer, unflub pausing itself, or an
+ * important update. */
+function Banners({ crash, onCrash, interference, update, autoUpdate, onInstall, onDetails }: {
   crash: boolean;
+  interference: boolean;
   onCrash: (a: "send" | "dont-send" | "always-send") => void;
   update: UpdateStatus;
   autoUpdate: boolean;
@@ -79,9 +82,14 @@ function Banners({ crash, onCrash, update, autoUpdate, onInstall, onDetails }: {
   onDetails: () => void;
 }) {
   const critical = update.state === "available" && update.critical && !autoUpdate;
-  if (!crash && !critical) return null;
+  if (!crash && !interference && !critical) return null;
   return (
     <div className="banners">
+      {interference && (
+        <div className="banner important" role="status">
+          <span>{t("banner.interference")}</span>
+        </div>
+      )}
       {crash && (
         <div className="banner" role="status">
           <span>{t("banner.crash")}</span>
@@ -113,6 +121,7 @@ export default function App() {
   const [updateState, setUpdateState] = useState<UpdateStatus>({ state: "idle" });
   const [laterFor, setLaterFor] = useState<string | null>(null);
   const [crash, setCrash] = useState(false);
+  const [interference, setInterference] = useState(false);
   const [message, setMessage] = useState<RemoteMessage | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [touring, setTouring] = useState(() => new URLSearchParams(window.location.search).get("page") === "tour");
@@ -130,12 +139,14 @@ export default function App() {
     appVersion().then(setVersion);
     updateStatus().then(setUpdateState);
     crashReportPending().then(setCrash);
+    inputInterference().then(setInterference);
     remoteMessage().then(setMessage);
     appInfo().then(setInfo);
     const offs: Promise<() => void>[] = [
       onSettingsChanged(setLocal),
       onUpdateStatus(setUpdateState),
       onCrashReport(setCrash),
+      onInputInterference(setInterference),
       onRemoteMessage(setMessage),
       onOpenPage((p) => {
         if (p === "tour") setTouring(true);
@@ -186,7 +197,7 @@ export default function App() {
   const u = updateState;
   const pending = (u.state === "ready" || u.state === "available") && laterFor !== u.version ? u : null;
   const source = info?.installSource ?? "installer";
-  const selfUpdates = source === "installer" || source === "winget";
+  const selfUpdates = source === "installer";
   const mainMode = MAIN_MODES.find((m) => m.value === s.mode);
   const singleEngine = s.mode === "system-only" || s.mode === "bundled-only";
 
@@ -206,7 +217,7 @@ export default function App() {
       </nav>
 
       <main>
-        <Banners crash={crash} onCrash={answerCrash} update={u} autoUpdate={s.autoUpdate}
+        <Banners crash={crash} onCrash={answerCrash} interference={interference} update={u} autoUpdate={s.autoUpdate}
           onInstall={install} onDetails={() => setPage("about")} />
 
         {page === "general" && (
@@ -220,9 +231,6 @@ export default function App() {
               <Row label={t("general.login")} hint={info && !info.loginAllowed ? t("general.login.unavailable") : t("general.login.hint")}>
                 <Switch label={t("general.login")} disabled={info ? !info.loginAllowed : false}
                   checked={s.startAtLogin && (info?.loginAllowed ?? true)} onChange={(v) => update({ startAtLogin: v })} />
-              </Row>
-              <Row label={t("general.undo")} hint={t("general.undo.hint")}>
-                <Switch label={t("general.undo")} checked={s.undoLearns} onChange={(v) => update({ undoLearns: v })} />
               </Row>
             </div>
           </>
@@ -250,6 +258,24 @@ export default function App() {
               </Row>
               <Row label={t("correction.code")} hint={t("correction.code.hint")}>
                 <Switch label={t("correction.code")} checked={s.skipCode} onChange={(v) => update({ skipCode: v })} />
+              </Row>
+              <Row stack label={t("correction.undo")} hint={t("correction.undo.hint")}>
+                <Segmented<UndoMode> label={t("correction.undo")} value={s.undoMode} onChange={(v) => update({ undoMode: v })}
+                  options={[
+                    { value: "twice", label: t("correction.undo.twice"), title: t("correction.undo.twice.tip") },
+                    { value: "once", label: t("correction.undo.once"), title: t("correction.undo.once.tip") },
+                    { value: "off", label: t("correction.undo.off"), title: t("correction.undo.off.tip") },
+                  ]} />
+              </Row>
+              <Row stack label={t("correction.learn")} hint={t("correction.learn.hint")}>
+                <Segmented label={t("correction.learn")} value={String(s.learnAfterUndos)}
+                  onChange={(v) => update({ learnAfterUndos: Number(v) })}
+                  options={[
+                    { value: "0", label: t("correction.learn.never") },
+                    { value: "1", label: "1" },
+                    { value: "2", label: "2" },
+                    { value: "3", label: t("correction.learn.three") },
+                  ]} />
               </Row>
             </div>
             <details className="exact" open={singleEngine || undefined}>
@@ -377,7 +403,7 @@ export default function App() {
                       {pending.critical && <em className="tag">{t("about.critical")}</em>}
                     </span>
                     <small>{
-                      !selfUpdates ? t(source === "scoop" ? "about.via.scoop" : source === "store" ? "about.via.store" : "about.via.portable")
+                      !selfUpdates ? t(source === "scoop" ? "about.via.scoop" : source === "winget" ? "about.via.winget" : source === "chocolatey" ? "about.via.chocolatey" : source === "store" ? "about.via.store" : "about.via.portable")
                       : t(pending.state === "ready" ? "about.ready.hint" : "about.available.hint")
                     }</small>
                     {pending.notes && (

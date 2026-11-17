@@ -1,6 +1,6 @@
 [package]
 name = "unflub-app"
-description = "unflub desktop app: tray, settings, pill"
+description = "unflub desktop app: tray, settings, updates; runs and supervises unflub-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,11 +18,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# build.rs edits TAURI_CONFIG to leave the engine sidecar out of non-bundle builds.
+serde_json = "1"
 
 [dependencies]
+# The tour's practice engine runs in this process (no hook).
 unflub-core.workspace = true
-# Builds on every OS (only its pure helpers outside Windows), so the pill mapping is tested in CI.
-unflub-windows.workspace = true
+# The IPC contract with unflub-engine.exe, which holds the keyboard hook. Builds on every OS
+# (the pipe only on Windows), so the settings mapping is tested in CI.
+unflub-engine.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
@@ -33,11 +37,15 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
-# Local dates for the Stats page.
-time = { version = "0.3", features = ["local-offset"] }
+# Local dates for the Stats page; `generated_at` of the update manifest.
+time = { version = "0.3", features = ["local-offset", "parsing"] }
 sha2 = "0.10"
 semver = "1"
-# Remote config and opt-in usage stats. Same reqwest and rustls (ring) as the updater, so nothing new
+# Ed25519 check of the signed update manifest (manifest.rs, keys.rs). The same ring that rustls
+# already links, so nothing new is built.
+ring = "0.17"
+base64 = "0.23"
+# The update manifest and usage stats. Same reqwest and rustls (ring) as the updater, so nothing new
 # is linked for TLS.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }

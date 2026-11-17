@@ -1,5 +1,5 @@
-//! What the OS says: its look (accent colour, dark taskbar and apps), its version, our memory
-//! use and machine policy.
+//! What the OS says: its look (accent colour, dark taskbar), its version, our memory use and
+//! machine policy. The pill's OS look is read by the engine process (`unflub_engine::look`).
 
 /// The OS accent colour as `#RRGGBB`, if the platform exposes one.
 pub fn accent_color() -> Option<String> {
@@ -30,45 +30,6 @@ pub fn taskbar_is_dark() -> bool {
     #[cfg(not(windows))]
     {
         true
-    }
-}
-
-/// True when apps are set to dark mode ("Choose your app mode"), the same switch web views see
-/// as `prefers-color-scheme`. Light when the OS doesn't say.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub fn apps_use_dark() -> bool {
-    #[cfg(windows)]
-    {
-        windows_impl::read_dword(
-            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-            "AppsUseLightTheme",
-        )
-        .is_some_and(|v| v == 0)
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
-}
-
-/// The OS version as `major.minor.build` (`10.0.26300` on Windows 11), for the `X-OS-Version`
-/// header. `unknown` when the OS doesn't say.
-pub fn os_version() -> String {
-    #[cfg(windows)]
-    {
-        // GetVersionEx lies to apps without a compatibility manifest; the registry doesn't.
-        let key = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
-        let major = windows_impl::read_dword_hklm(key, "CurrentMajorVersionNumber");
-        let minor = windows_impl::read_dword_hklm(key, "CurrentMinorVersionNumber");
-        let build = windows_impl::read_string_hklm(key, "CurrentBuildNumber");
-        match (major, minor, build) {
-            (Some(major), Some(minor), Some(build)) => format!("{major}.{minor}.{build}"),
-            _ => "unknown".into(),
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        "unknown".into()
     }
 }
 
@@ -106,7 +67,7 @@ mod windows_impl {
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
     };
     use windows::Win32::System::Registry::{
-        RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+        RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD,
     };
     use windows::Win32::System::Threading::GetCurrentProcess;
 
@@ -116,28 +77,6 @@ mod windows_impl {
 
     pub fn read_dword_hklm(key: &str, value: &str) -> Option<u32> {
         read_dword_in(HKEY_LOCAL_MACHINE, key, value)
-    }
-
-    pub fn read_string_hklm(key: &str, value: &str) -> Option<String> {
-        let mut buf = [0u16; 64];
-        let mut size = std::mem::size_of_val(&buf) as u32;
-        // SAFETY: buf and size describe a valid local buffer; RRF_RT_REG_SZ null-terminates.
-        let status = unsafe {
-            RegGetValueW(
-                HKEY_LOCAL_MACHINE,
-                &HSTRING::from(key),
-                &HSTRING::from(value),
-                RRF_RT_REG_SZ,
-                None,
-                Some(buf.as_mut_ptr() as *mut _),
-                Some(&mut size),
-            )
-        };
-        if status.is_err() {
-            return None;
-        }
-        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        String::from_utf16(&buf[..len]).ok()
     }
 
     pub fn private_bytes() -> Option<u64> {

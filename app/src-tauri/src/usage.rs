@@ -92,6 +92,10 @@ pub struct Health {
     /// The adapter's watchdog installed the keyboard hook again (Windows dropped it, or the
     /// computer resumed or was unlocked).
     pub hook_reinstalls: u64,
+    /// The engine fell back to pass-through because its own injected keys stopped coming back
+    /// (another program interferes with keyboard input).
+    #[serde(default)]
+    pub self_pauses: u64,
 }
 
 /// What is kept on disk between sends.
@@ -105,6 +109,8 @@ struct Tally {
     inject_us: Vec<u32>,
     /// When counting started (switch turned on, or the last accepted send).
     since: u64,
+    /// When the last report was accepted, for `X-First` (Unix seconds).
+    last_report: Option<u64>,
 }
 
 pub struct Usage {
@@ -213,6 +219,10 @@ impl Usage {
         self.record(|t| t.health.hook_reinstalls += 1);
     }
 
+    pub fn self_pause(&self) {
+        self.record(|t| t.health.self_pauses += 1);
+    }
+
     /// The payload the next send would post, from the counts so far.
     pub fn payload(&self, settings: &Settings, version: &str) -> Payload {
         let tally = self.tally.lock().unwrap();
@@ -249,11 +259,18 @@ impl Usage {
         now < since || now - since >= DAY_SECS + jitter
     }
 
+    /// Which of `week` and `month` this report is the first of (`X-First`, contract section 2).
+    fn first(&self, now: u64) -> Vec<&'static str> {
+        crate::net::first_report(self.tally.lock().unwrap().last_report, now)
+    }
+
     /// Start a new day after an accepted send.
     fn sent(&self) {
         let mut tally = self.tally.lock().unwrap();
+        let now = now_secs();
         *tally = Tally {
-            since: now_secs(),
+            since: now,
+            last_report: Some(now),
             ..Tally::default()
         };
         drop(tally);
@@ -292,13 +309,18 @@ struct Answer {
     accepted: bool,
 }
 
+/// `POST https://api.rmgn.net/unflub/v1/events`.
+fn events_url() -> String {
+    format!("{}/events", crate::links::API_BASE)
+}
+
 /// Post one payload. True when the server accepted it.
 async fn send(client: &reqwest::Client, payload: &Payload) -> bool {
     let body = match serde_json::to_vec(payload) {
         Ok(b) if b.len() <= MAX_BODY => b,
         _ => return false,
     };
-    let url = format!("{}/events", crate::links::API_BASE);
+    let url = events_url();
     match client
         .post(url)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -346,8 +368,10 @@ pub fn spawn(app: tauri::AppHandle) {
                 }
                 let settings = crate::current_settings(&app);
                 let version = app.package_info().version.to_string();
-                // No identity headers on stats, not even the version (it is in the body).
-                let Ok(client) = crate::net::client(Vec::new()) else {
+                // No identity headers on stats, not even the version (it is in the body); only
+                // whether this is the first report of the ISO week or month.
+                let headers = crate::net::first_header(&usage.first(now_secs()));
+                let Ok(client) = crate::net::client(headers) else {
                     continue;
                 };
                 let payload = usage.payload(&settings, &version);
@@ -394,6 +418,7 @@ mod tests {
         "health",
         "health.crashes",
         "health.hook_reinstalls",
+        "health.self_pauses",
     ];
 
     fn paths(value: &Value, prefix: &str, out: &mut BTreeSet<String>) {
@@ -420,6 +445,7 @@ mod tests {
             health: Health {
                 crashes: 0,
                 hook_reinstalls: 1,
+                self_pauses: 0,
             },
             ..Tally::default()
         };
@@ -514,6 +540,11 @@ mod tests {
         again.set_on(false);
         assert!(!dir.join("usage.json").exists());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn events_go_to_the_api() {
+        assert_eq!(events_url(), "https://api.rmgn.net/unflub/v1/events");
     }
 
     #[test]

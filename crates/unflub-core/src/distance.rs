@@ -15,7 +15,7 @@ pub const SUB: f32 = 1.0;
 pub const SUB_NEIGHBOUR: f32 = 0.5;
 pub const SUB_VOWEL: f32 = 0.5;
 pub const TRANSPOSE: f32 = 0.6;
-pub const INSERT: f32 = 0.8;
+pub const INSERT: f32 = 0.5;
 pub const DELETE: f32 = 0.8;
 pub const DELETE_NEIGHBOUR: f32 = 0.6;
 /// A doubled letter typed once, or a single letter typed twice.

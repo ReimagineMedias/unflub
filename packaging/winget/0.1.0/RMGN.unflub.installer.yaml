@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.28.0.schema.json
-# The per-user NSIS setup.exe, served from R2 through api.rmgn.ca (the same file is on the GitHub
-# release). Before submitting, replace each InstallerSha256 with its line in the release's
-# SHA256SUMS.txt (docs/releasing.md).
+# The per-user NSIS setup.exe, a GitHub Release asset (stable URLs, which winget prefers).
+# The hashes are placeholders: the Publish packages workflow writes this file with the
+# published release's SHA-256 values (scripts/package-manifests.mjs, docs/releasing.md).
 
 PackageIdentifier: RMGN.unflub
 PackageVersion: 0.1.0
@@ -12,7 +12,10 @@ InstallModes:
   - silent
   - silentWithProgress
 # Tells unflub it came from winget (install.rs); the setup writes it beside unflub.exe.
+# /S and /P are Tauri's NSIS silent and passive (progress only) modes.
 InstallerSwitches:
+  Silent: /S
+  SilentWithProgress: /P
   Custom: /SOURCE=winget
 # Installing over an older version upgrades it in place, keeping settings and start at login.
 UpgradeBehavior: install
@@ -28,10 +31,10 @@ InstallationMetadata:
 MinimumOSVersion: 10.0.17763.0
 Installers:
   - Architecture: x64
-    InstallerUrl: https://api.rmgn.ca/unflub/v1/files/0.1.0/unflub_0.1.0_x64-setup.exe
+    InstallerUrl: https://github.com/ReimagineMedias/unflub/releases/download/v0.1.0/unflub_0.1.0_x64-setup.exe
     InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
   - Architecture: arm64
-    InstallerUrl: https://api.rmgn.ca/unflub/v1/files/0.1.0/unflub_0.1.0_arm64-setup.exe
+    InstallerUrl: https://github.com/ReimagineMedias/unflub/releases/download/v0.1.0/unflub_0.1.0_arm64-setup.exe
     InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
 ManifestType: installer
 ManifestVersion: 1.28.0

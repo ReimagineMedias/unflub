@@ -20,9 +20,35 @@ unknown words we know of.
 | `heap_bytes` | Memory the dictionary index holds. |
 | `peak_rss_bytes` | The most memory the bench process ever had resident (where the OS reports it). |
 
-**The idle footprint** (`perf/idle.ps1`, Windows). It starts `unflub-cli.exe --dry-run --pill off`
-with the keyboard hook installed, waits until the hook is in, waits 3 more seconds, then samples
-the process every second for 20 seconds.
+**Autocorrect quality** (`crates/unflub-core/examples/quality.rs`, every OS). Not speed but
+how often the engine is wrong: about 100,000 words of clean text (*Pride and Prejudice*, the
+Node.js stream docs, chapters of the Rust book; `data/quality/ATTRIBUTION.md`) typed through the
+engine, where every replacement counts as a false fix, and 5,000 realistic single-letter typos in
+their original context (adjacent key, transposed, dropped and doubled letters, 1,250 each).
+Default config, no OS spell checker, so the numbers are the same on every OS.
+
+| Metric | What it means | Before / after 2026-11-17 | Limit |
+|---|---|---:|---:|
+| `false_fixes_per_10k` | Replacements per 10,000 clean words (lower is better) | 48.2 / 7.9 | at most 10 |
+| `typo_exact_pct` | Typos turned back into the right word | 82.26 / 85.86 | at least 84 |
+| `typo_wrong_pct` | Typos turned into a different word | 2.92 / 1.72 | at most 2.5 |
+
+The 2026-11-17 changes came from an independent quality lab: possessives with a known or
+capitalised base are left alone (`sister's` was "fixed" to `sisters`), a capitalised word
+mid-sentence is a name and gets no fix (`Longbourn` to `Longhorn`), four technical words were
+added, and a missing letter costs less when ranking. A gentler length penalty for unknown words
+cut false fixes too but lost exact fixes, so it was not adopted. `--dump <dir>` writes every
+false fix and typo outcome as TSV.
+
+**The idle footprint** (`perf/idle.ps1`, Windows). unflub is two processes (see
+[architecture.md](architecture.md#two-processes)), and this measures both. It starts
+`unflub.exe --perf-idle <temp dir>`: the tray app with its settings and data in a temporary
+folder, every network feature off, no settings window, and the `unflub-engine.exe` it starts
+with `--dry-run`. It waits until the engine's hook is in, waits 3 more seconds, then samples
+both processes every second for 20 seconds. Each process has its own limits
+(`[idle.engine]`, `[idle.app]`) and so does the pair (`[idle.total]`, the peak of the
+per-sample sums). With `-Exe target/release/unflub-cli.exe` it measures the one-process
+developer runner instead (`[idle]`, `--pill off`).
 
 | Metric | What it means |
 |---|---|
@@ -32,13 +58,14 @@ the process every second for 20 seconds.
 | `cpu_seconds` | CPU time used over the 20 idle seconds. |
 | `threads`, `handles` | Peak thread and handle counts. |
 
-`--dry-run` installs the hook and runs the engine on real keys, but never sends input and never
-swallows a key: every fix it would make is reported as skipped and the engine is reset, as for
+`--dry-run` (the engine's and the CLI's) installs the hook and runs the engine on real keys, but
+never sends input and never swallows a key: every fix it would make is reported as skipped and the engine is reset, as for
 any other vetoed fix. The perf scripts send no input of any kind, and stop only the processes
 they started.
 
-**The low-end simulation** (`perf/lowend.ps1`, Windows). Both checks above run again inside a
-Windows Job Object that allows:
+**The low-end simulation** (`perf/lowend.ps1`, Windows). The core bench and the idle check of
+`unflub-cli.exe` (the same engine and hook in one process) run again inside a Windows Job Object
+that allows:
 
 - 25 % of **one** logical core (a hard cap; Windows takes it as a share of the whole machine,
   so on 32 logical cores that is 78/10,000),
@@ -61,12 +88,27 @@ several runs each, while someone was typing (each key went through the dry-run h
 | Letter key p99 | 0.1 µs | 0.1 µs | 20 µs |
 | Index memory | 14.9 MB | 14.9 MB | 24 MB |
 | Bench peak resident | 44 MB | 44 MB (34 MB committed) | 80 MB |
-| Idle: ready | 0.2–1.0 s | 0.2–1.4 s | 3 / 10 s |
-| Idle: private memory | 18.8 MB | 18.9 MB | 40 MB |
-| Idle: working set | 38–40 MB | 38–40 MB | 64 MB |
-| Idle: CPU over 20 s | 0.016–0.047 s | 0.016–0.125 s | 0.2 s |
-| Idle: threads | 11–12 | 11–12 | 16 |
-| Idle: handles | 207–215 | 210–215 | 400 |
+| Idle (`unflub-cli`): ready | 0.2–1.0 s | 0.2–1.4 s | 3 / 10 s |
+| Idle (`unflub-cli`): private memory | 18.8 MB | 18.9 MB | 40 MB |
+| Idle (`unflub-cli`): working set | 38–40 MB | 38–40 MB | 64 MB |
+| Idle (`unflub-cli`): CPU over 20 s | 0.016–0.047 s | 0.016–0.125 s | 0.2 s |
+| Idle (`unflub-cli`): threads | 11–12 | 11–12 | 16 |
+| Idle (`unflub-cli`): handles | 207–215 | 210–215 | 400 |
+
+The shipping pair, measured 2026-11-17 on the same machine (four runs, pill on, settings window
+closed). Before the split the tray app ran all of this in one process: about 20 MB private and
+0.08 s of CPU per 20 s.
+
+| Metric | `unflub-engine.exe` | `unflub.exe` | Both | Limits (engine / app / both) |
+|---|---:|---:|---:|---:|
+| Ready (launch to hook installed) | 0.17–1.0 s | | | 3 s |
+| Private memory | 19.5–19.8 MB | 4.3–4.4 MB | 23.8–24.0 MB | 40 / 24 / 64 MB |
+| Working set | 40.6–41.8 MB | 15.7–16.6 MB | 56–58 MB | 64 / 64 / 128 MB |
+| CPU over 20 s | 0–0.047 s | 0 s | 0–0.047 s | 0.2 / 0.1 / 0.3 s |
+| Threads | 18–19 | 40 | 58–59 | 24 / 64 / 88 |
+| Handles | 264–275 | 239–248 | 503–523 | 400 / 400 / 800 |
+
+The app's 40 threads are mostly the async runtime's workers, one per logical core (32 here).
 
 0.1 µs is the timer's resolution on this machine; letter keys take less. CPU time is counted in
 15.6 ms ticks, so small idle numbers move in steps.
@@ -93,7 +135,7 @@ To test a genuinely slower CPU, run the same scripts on old hardware or a small 
 
 ### Threads
 
-12 threads at first, 9 after about a minute. The extra three are Windows thread-pool workers
+`unflub-cli`: 12 threads at first, 9 after about a minute. The extra three are Windows thread-pool workers
 started while loading DLLs, which retire when idle. Ours are the main thread, `unflub-hook`,
 `unflub-inject`, `unflub-uia` and `unflub-spell`; the rest belong to Windows components we load
 (COM, UI Automation, the spell checker). The pill adds `unflub-overlay` and `unflub-caret` when it is
@@ -106,8 +148,11 @@ Build from PowerShell (in Git Bash, `/usr/bin/link` hides the MSVC linker):
 ```powershell
 cargo build --release -p unflub-core --example bench
 cargo build --release -p unflub-windows --bin unflub-cli --example jobrun
+cd app; npm ci; npm run build; cd ..               # the app embeds the settings UI
+cargo build --release -p unflub-app -p unflub-engine
 
 ./target/release/examples/bench --check perf/limits.toml   # human-readable; --json for JSON
+cargo run --release -p unflub-core --example quality -- --check perf/limits.toml
 pwsh perf/idle.ps1                                          # ~25 s
 pwsh perf/lowend.ps1                                        # ~25 s
 pwsh -c "./perf/summary.ps1 -Path out1.json, out2.json"     # markdown table from saved JSON
@@ -117,7 +162,8 @@ The scripts run in PowerShell 7 and Windows PowerShell 5.1. Each prints one JSON
 line on stdout and exits 1 when a limit is exceeded, 2 when the run itself failed.
 
 Running `idle.ps1` on a machine where someone is typing is safe: the dry-run hook only watches,
-and a normal unflub that is already running is left alone.
+and a normal unflub that is already running is left alone (`--perf-idle` skips the single
+instance check and uses its own settings folder). Its tray icon shows for the 25 seconds.
 
 If a CI runner can't install the keyboard hook, the dry run keeps the engine loaded, and the
 summary says "hook unavailable on runner": those idle numbers leave out the hook thread.
@@ -130,8 +176,9 @@ switch a check off.
 
 ## Not measured yet
 
-- The pill: the idle check runs with `--pill off`. With it on, the overlay and caret threads
-  are added, and Direct2D is loaded briefly after each fix.
+- The pill in the CLI: its idle check runs with `--pill off`. The pair runs with the default
+  pill, whose overlay thread waits idle; Direct2D is loaded only briefly after each fix.
+- The pair under the low-end Job Object: `lowend.ps1` still measures `unflub-cli`.
 - Linux and macOS idle footprint: there is no adapter for them yet. The engine bench runs there.
 - Per-key latency inside the real hook under load: the bench times the engine alone. `unflub-cli`
   prints the hook's own latency histogram when you stop it.

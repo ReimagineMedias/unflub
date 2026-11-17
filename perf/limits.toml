@@ -21,7 +21,46 @@ hard_max_us = 10_000          # measured 145-454 us locally, 2509 us once on a G
 heap_bytes = 25_165_824       # 24 MiB; measured 15_581_387 (14.9 MiB), deterministic
 peak_rss_bytes = 83_886_080   # 80 MiB; measured 43.6-45.7 MiB (index build peak)
 
-# pwsh perf/idle.ps1: unflub-cli.exe --dry-run --pill off, 3 s warm-up, 20 s of samples
+# cargo run --release -p unflub-core --example quality -- --check perf/limits.toml
+# Deterministic (no timing, no OS checker), so the headroom is small. typo_exact_pct is a minimum
+# (higher is better); the others are maximums. Measured 2026-11-17 before / after the quality
+# lab's changes (possessive and name guards, four tech words, insertion cost 0.5).
+[quality]
+false_fixes_per_10k = 10      # measured 48.2 before, 7.9 after (79 in 100,000 clean words)
+typo_exact_pct = 84           # measured 82.26 before, 85.86 after (5,000 single typos)
+typo_wrong_pct = 2.5          # measured 2.92 before, 1.72 after
+
+# pwsh perf/idle.ps1: unflub.exe --perf-idle (tray app, no network, no window) and the
+# unflub-engine.exe it starts with --dry-run, 3 s warm-up, 20 s of samples. Per process, then
+# both together (the peak of the per-sample sums).
+[idle.engine]
+ready_ms = 3_000               # measured 172-1_018 ms from launching unflub.exe to hook installed
+private_bytes = 41_943_040     # 40 MiB; measured 19.5-19.8 MiB
+working_set_bytes = 67_108_864 # 64 MiB; measured 40.6-41.8 MiB (includes shared system DLLs)
+cpu_seconds = 0.2              # measured 0-0.047 s over 20 s, with someone typing
+threads = 24                   # measured 18-19 (the pill's overlay thread included)
+handles = 400                  # measured 264-275
+
+[idle.app]
+ready_ms = 3_000               # the same moment as the engine's
+private_bytes = 25_165_824     # 24 MiB; measured 4.3-4.4 MiB with the settings window closed
+working_set_bytes = 67_108_864 # 64 MiB; measured 15.7-16.6 MiB
+cpu_seconds = 0.1              # measured 0 s over 20 s
+threads = 64                   # measured 40: the async runtime keeps a worker per logical core
+                               # (32 here); fewer on CI runners
+handles = 400                  # measured 239-248
+
+[idle.total]
+ready_ms = 3_000
+private_bytes = 67_108_864     # 64 MiB; measured 23.8-24.0 MiB (before the split, the one
+                               # process was ~20 MiB)
+working_set_bytes = 134_217_728 # 128 MiB; measured 56.3-58.4 MiB
+cpu_seconds = 0.3              # measured 0-0.047 s over 20 s
+threads = 88                   # measured 58-59
+handles = 800                  # measured 503-523
+
+# pwsh perf/idle.ps1 -Exe target/release/unflub-cli.exe: the developer runner, everything in one
+# process, --dry-run --pill off.
 [idle]
 ready_ms = 3_000               # measured 190-960 ms from launch to hook installed
 private_bytes = 41_943_040     # 40 MiB; measured 18.7-18.8 MiB

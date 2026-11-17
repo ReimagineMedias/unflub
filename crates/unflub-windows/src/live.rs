@@ -7,34 +7,48 @@
 //!
 //! Why this is safe on the hook path: the inbox is an unbounded `std::sync::mpsc` channel.
 //! Checking it with `try_recv` is a lock-free atomic read when it's empty, and it never waits.
-//! Only the newest queued config is applied. `Engine::set_config` rebuilds a few small hash
-//! sets (excluded apps, personal words, rules): microseconds, once per settings change.
+//! Only the newest queued config is applied. Its lookups (excluded apps, personal words, rules)
+//! are built by [`LiveConfig::set`] on the caller's thread, and the old ones go back over a
+//! second channel to be freed there at the next `set`: with a large personal dictionary either
+//! takes milliseconds (about 4 ms for 20,000 words), more than the hook's whole budget.
 //!
 //! The engine also reports words the user taught it by undoing a fix ([`Event::Learned`]).
 //! `LiveEngine` hands each one to a callback right away. The callback runs on the hook thread,
 //! so it must not block: send the word to a channel and do the work elsewhere.
 
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
-use unflub_core::{Action, Config, Context, Corrector, Engine, Event, Key};
+use unflub_core::{Action, Config, Context, Corrector, Engine, Event, Key, PreparedConfig};
 
 /// An [`Engine`] whose config can be replaced from another thread. See the module docs.
 pub struct LiveEngine {
     engine: Engine,
-    configs: Receiver<Config>,
+    configs: Receiver<PreparedConfig>,
+    /// Replaced configs, freed by [`LiveConfig`] off the hook thread.
+    trash: Sender<PreparedConfig>,
     on_learned: Box<dyn FnMut(String) + Send>,
 }
 
-/// Queues configs for a [`LiveEngine`]. Cheap to clone; every method returns immediately.
+/// Queues configs for a [`LiveEngine`]. Cheap to clone; `set` never waits for the hook.
 #[derive(Clone)]
 pub struct LiveConfig {
-    configs: Sender<Config>,
+    configs: Sender<PreparedConfig>,
+    trash: Arc<Mutex<Receiver<PreparedConfig>>>,
 }
 
 impl LiveConfig {
-    /// Queue `config` for the next key event. False once the engine is gone (hook stopped).
+    /// Build `config`'s lookups here and queue it for the next key event. Frees configs the
+    /// hook thread replaced since the last call. False once the engine is gone (hook stopped).
     pub fn set(&self, config: Config) -> bool {
-        self.configs.send(config).is_ok()
+        self.empty_trash();
+        self.configs.send(PreparedConfig::new(config)).is_ok()
+    }
+
+    fn empty_trash(&self) {
+        if let Ok(trash) = self.trash.lock() {
+            while trash.try_recv().is_ok() {}
+        }
     }
 }
 
@@ -46,25 +60,61 @@ impl LiveEngine {
         on_learned: impl FnMut(String) + Send + 'static,
     ) -> (LiveEngine, LiveConfig) {
         let (tx, rx) = mpsc::channel();
+        let (trash_tx, trash_rx) = mpsc::channel();
         (
             LiveEngine {
                 engine,
                 configs: rx,
+                trash: trash_tx,
                 on_learned: Box::new(on_learned),
             },
-            LiveConfig { configs: tx },
+            LiveConfig {
+                configs: tx,
+                trash: Arc::new(Mutex::new(trash_rx)),
+            },
         )
     }
 
-    /// Apply the newest queued config, if any. Never blocks.
+    /// Apply the newest queued config, if any. Never blocks, builds or frees lookups: older
+    /// queued configs and the replaced one go back to be freed off this thread.
     fn take_config(&mut self) {
-        if let Some(config) = self.configs.try_iter().last() {
-            self.engine.set_config(config);
+        let mut newest = None;
+        for config in self.configs.try_iter() {
+            if let Some(older) = newest.replace(config) {
+                self.discard(older);
+            }
+        }
+        if let Some(config) = newest {
+            let old = self.engine.set_prepared(config);
+            self.discard(old);
+        }
+    }
+
+    fn discard(&self, config: PreparedConfig) {
+        if let Err(mpsc::SendError(config)) = self.trash.send(config) {
+            // Nobody to free it (the settings side is gone): free it here.
+            drop(config);
         }
     }
 }
 
 impl Corrector for LiveEngine {
+    fn end_undo_window(&mut self) -> bool {
+        self.engine.end_undo_window()
+    }
+
+    fn undo_window(&self) -> Option<std::time::Duration> {
+        Corrector::undo_window(&self.engine)
+    }
+
+    fn reset_generation(&self) -> Option<u64> {
+        Some(self.engine.reset_generation())
+    }
+
+    fn caret_at_word_start(&mut self, generation: u64) {
+        self.engine.caret_at_word_start(generation);
+    }
+
     fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action {
         self.take_config();
         let action = self.engine.on_key(key, ctx);
@@ -158,23 +208,58 @@ mod tests {
     #[test]
     fn undo_reports_the_learned_word() {
         let (tx, rx) = mpsc::channel();
-        let (mut live, _config) = LiveEngine::new(
-            Engine::new(rules(&[("omw", "on my way")]), None),
-            move |w| {
-                let _ = tx.send(w);
-            },
+        let config = Config {
+            learn_after_undos: 1,
+            undo_window_ms: 900,
+            ..rules(&[("omw", "on my way")])
+        };
+        let (mut live, _config) = LiveEngine::new(Engine::new(config, None), move |w| {
+            let _ = tx.send(w);
+        });
+        assert_eq!(
+            live.undo_window(),
+            Some(std::time::Duration::from_millis(900))
         );
         // A user rule fix never teaches; check the bundled dictionary's fix instead.
         let actions = type_text(&mut live, " teh ");
         let Some(Action::Replace(_)) = actions.last() else {
             panic!("expected a fix for teh: {actions:?}");
         };
+        // Double Backspace: the first is held, the second undoes.
+        assert!(matches!(
+            live.on_key(Key::Backspace, &ctx()),
+            Action::HoldBackspace(_)
+        ));
+        assert!(rx.try_recv().is_err(), "nothing learned yet");
         assert!(matches!(
             live.on_key(Key::Backspace, &ctx()),
             Action::Undo(_)
         ));
         assert_eq!(rx.try_recv().as_deref(), Ok("teh"));
         assert!(rx.try_recv().is_err());
+    }
+
+    /// Review nit 8: the hook thread neither builds nor frees a config's lookups.
+    #[test]
+    fn replaced_configs_are_freed_off_the_hook_thread() {
+        let (mut live, config) = LiveEngine::new(Engine::new(bundled(), None), |_| {});
+        type_text(&mut live, " ");
+        config.set(rules(&[("omw", "on my way")]));
+        config.set(rules(&[("brb", "be right back")]));
+        type_text(&mut live, "x ");
+        // The skipped config and the replaced one wait to be freed by the settings side.
+        assert_eq!(config.trash.lock().unwrap().try_iter().count(), 2);
+        config.set(bundled());
+        type_text(&mut live, "y ");
+        config.set(bundled());
+        assert_eq!(
+            config.trash.lock().unwrap().try_iter().count(),
+            0,
+            "set() frees what the hook thread handed back"
+        );
+        // The newest config was the one applied.
+        let actions = type_text(&mut live, "omw ");
+        assert!(!replaced(&actions));
     }
 
     #[test]

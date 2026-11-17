@@ -4948,7 +4948,9 @@ dependencies = [
 name = "unflub-app"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "reqwest",
+ "ring",
  "rustls",
  "semver",
  "sentry",
@@ -4963,7 +4965,7 @@ dependencies = [
  "tauri-plugin-updater",
  "time",
  "unflub-core",
- "unflub-windows",
+ "unflub-engine",
  "uuid",
  "windows 0.58.0",
 ]
@@ -4973,6 +4975,20 @@ name = "unflub-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "unflub-engine"
+version = "0.1.0"
+dependencies = [
+ "backtrace",
+ "embed-resource",
+ "findshlibs",
+ "serde",
+ "serde_json",
+ "unflub-core",
+ "unflub-windows",
+ "windows 0.58.0",
 ]
 
 [[package]]

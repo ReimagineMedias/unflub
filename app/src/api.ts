@@ -126,7 +126,17 @@ export async function onCrashReport(cb: (pending: boolean) => void): Promise<() 
   return listen<boolean>("crash-report", (e) => cb(e.payload));
 }
 
-/** A note from unflub's server (remote config), if there is one to show. */
+/** unflub paused itself: another program is interfering with keyboard input. */
+export async function inputInterference(): Promise<boolean> {
+  return inTauri ? invoke<boolean>("input_interference") : query().has("interference");
+}
+
+export async function onInputInterference(cb: (active: boolean) => void): Promise<() => void> {
+  if (!inTauri) return () => {};
+  return listen<boolean>("input-interference", (e) => cb(e.payload));
+}
+
+/** A note from the signed update manifest, if there is one to show. */
 export async function remoteMessage(): Promise<RemoteMessage | null> {
   return inTauri ? invoke<RemoteMessage | null>("remote_message") : null;
 }

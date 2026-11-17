@@ -272,6 +272,19 @@ mod win {
             }
             HookEvent::Warning(w) => eprintln!("warning: {w}"),
             HookEvent::HooksReinstalled { reason } => eprintln!("hooks reinstalled ({reason})"),
+            HookEvent::UndoPending { replacement: r } => {
+                println!(
+                    "undo?  {:?} -> {:?}  (Backspace again to undo)",
+                    r.corrected, r.original
+                )
+            }
+            HookEvent::UndoDeclined => println!("undo?  no: the held Backspace went on"),
+            HookEvent::InputInterference { active: true } => eprintln!(
+                "our injected input isn't coming back: corrections paused, keys pass through"
+            ),
+            HookEvent::InputInterference { active: false } => {
+                eprintln!("our injected input comes back again: corrections resumed")
+            }
         }
     }
 }
