@@ -33,6 +33,10 @@ Repo is private until v0.1, then flipped public.
   `cargo run --release --bin unflub -- --demo` (rules teh/adn/recieve). Never run it in automation on a machine someone
   is typing on, except with `--dry-run`.
 - Windows `ISpellChecker::Check` reports any word of 64+ UTF-16 units as correct.
+- The tray app runs the hook in-process (`app/src-tauri/src/engine.rs`), so `npm run tauri dev` installs a real keyboard
+  hook too: same rule as the CLI, never in automation. Settings apply live through `unflub_windows::LiveEngine` (a
+  channel the hook thread drains at the next key); pausing unhooks. The Tauri main thread is an STA, so the spell
+  checker is created on the `unflub-engine` thread. The app's excluded apps live in the engine `Config` only.
 - UI Automation (and MSAA) queries switch on Chromium's accessibility tree, costing CPU and memory in Chrome and Electron.
   The adapter asks UIA only on focus changes, clicks, Tab and Enter, for every class except the standard edits (Edit, RichEdit*: ES_PASSWORD alone);
   unknown classes fail closed (secure until UIA says otherwise). Tests only create the UIA client and never query an app.
