@@ -295,7 +295,11 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then
             mkdir -p binaries
             for exe in unflub.exe unflub-engine.exe; do
-              cp "target/${{ matrix.target }}/release/$exe" "binaries/${exe%.exe}_${VERSION}_${{ matrix.name }}.exe" \
+              # build-engine.mjs only names the target when cross-building, so on the runner's own
+              # architecture the engine is in target/release.
+              src="target/${{ matrix.target }}/release/$exe"
+              [ -f "$src" ] || src="target/release/$exe"
+              cp "$src" "binaries/${exe%.exe}_${VERSION}_${{ matrix.name }}.exe" \
                 || { echo "::error::$exe was not built"; exit 1; }
             done
             ls -l binaries
