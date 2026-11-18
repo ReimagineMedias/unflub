@@ -4946,7 +4946,7 @@ dependencies = [
 
 [[package]]
 name = "unflub-app"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "reqwest",
@@ -4972,14 +4972,14 @@ dependencies = [
 
 [[package]]
 name = "unflub-core"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "unflub-engine"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "backtrace",
  "embed-resource",
@@ -4993,7 +4993,7 @@ dependencies = [
 
 [[package]]
 name = "unflub-windows"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 dependencies = [
  "unflub-core",
  "windows 0.58.0",
