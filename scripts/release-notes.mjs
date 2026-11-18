@@ -30,10 +30,14 @@ const version =
 const git = (...args) =>
   execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 
-/** The newest release tag before `to`, or null for the first release. */
+/**
+ * The newest release tag before `to`, or null for the first release. A stable release is compared with the
+ * previous stable one, so its notes cover every beta in between.
+ */
 function previousTag() {
+  const skipBetas = version.includes("-") ? [] : ["--exclude", "v*-*"];
   try {
-    return git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*.[0-9]*.[0-9]*", `${to}^`);
+    return git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*.[0-9]*.[0-9]*", ...skipBetas, `${to}^`);
   } catch {
     return null;
   }
@@ -84,7 +88,7 @@ out.push(
   "## Install",
   "",
   `- **Windows:** \`unflub_${version}_x64-setup.exe\` (\`_arm64-setup.exe\` on ARM). Installs for your account only, no admin needed. unflub updates itself from then on.`,
-  `- **Managed installs:** \`unflub_${version}_x64_en-US.msi\` installs for all users.`,
+  ...(version.includes("-") ? [] : [`- **Managed installs:** \`unflub_${version}_x64_en-US.msi\` installs for all users.`]),
   "- The installers aren't code-signed yet, so Windows SmartScreen may say \"Windows protected your PC\". Choose **More info**, then **Run anyway**. Compare the file with `SHA256SUMS.txt` if you want to be sure it is ours.",
   "",
 );

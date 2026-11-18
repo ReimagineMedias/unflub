@@ -336,7 +336,7 @@ mod tests {
         let mut event = Event {
             server_name: Some("MY-LAPTOP".into()),
             user: Some(User {
-                username: Some("reima".into()),
+                username: Some("alex".into()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -367,13 +367,13 @@ mod tests {
 
     #[test]
     fn scrub_removes_identity_and_home() {
-        let home = r"C:\Users\Reima";
+        let home = r"C:\Users\Alex";
         let event = scrub(event_with_paths(home), Some(home));
         assert_eq!(event.server_name, None);
         assert_eq!(event.user, None);
         assert!(event.breadcrumbs.values.is_empty());
         let text = serde_json::to_string(&event).unwrap();
-        assert!(!text.to_lowercase().contains("reima"), "{text}");
+        assert!(!text.to_lowercase().contains("alex"), "{text}");
         assert!(text.contains(r"~\\AppData\\Roaming"), "{text}");
         assert!(text.contains("~/AppData/Local"), "{text}");
     }
@@ -382,8 +382,8 @@ mod tests {
     fn replaces_ignoring_case() {
         assert_eq!(
             replace_ignore_case(
-                r"c:\users\reima\x and C:\Users\Reima\y",
-                r"C:\Users\Reima",
+                r"c:\users\alex\x and C:\Users\Alex\y",
+                r"C:\Users\Alex",
                 "~"
             ),
             r"~\x and ~\y"
@@ -431,7 +431,7 @@ mod tests {
             "mechanism": { "type": "panic", "handled": false },
             "stacktrace": { "frames": [{ "instruction_addr": "0x7ff6a0001234" }] } }] },
         "debug_meta": { "images": [{ "type": "symbolic",
-            "name": "C:\\Users\\Reima\\AppData\\Local\\unflub\\unflub-engine.exe",
+            "name": "C:\\Users\\Alex\\AppData\\Local\\unflub\\unflub-engine.exe",
             "code_id": "6738A5B21F000", "id": "00112233-4455-6677-8899-aabbccddeeff-1",
             "debug_file": "unflub_engine.pdb", "image_addr": "0x7ff6a0000000",
             "image_size": 2031616 }] },
@@ -443,7 +443,7 @@ mod tests {
         let event = event_from_engine(
             ENGINE_MARKER_JSON.as_bytes(),
             "unflub@9.9.9",
-            Some(r"C:\Users\Reima"),
+            Some(r"C:\Users\Alex"),
         )
         .expect("parses as a Sentry event");
         assert_eq!(event.release.as_deref(), Some("unflub@9.9.9"));
@@ -451,7 +451,7 @@ mod tests {
         assert_eq!(event.tags["process"], "unflub-engine");
         assert_eq!(event.debug_meta.images.len(), 1);
         let text = serde_json::to_string(&event).unwrap();
-        assert!(!text.to_lowercase().contains("reima"), "{text}");
+        assert!(!text.to_lowercase().contains("alex"), "{text}");
         assert!(text.contains("0x7ff6a0001234"), "{text}");
         assert!(text.contains("panic message withheld"), "{text}");
 

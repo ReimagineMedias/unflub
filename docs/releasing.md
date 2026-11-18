@@ -21,40 +21,41 @@ The dashboard is <https://api.rmgn.net/dashboard/?product=unflub>, behind Cloudf
 rollout change there produces a new signed manifest on dl.rmgn.net, which is all the app reads. The
 API contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
 
+## Versions and channels
+
+- **SemVer, tagged `vX.Y.Z`.** Before 1.0, a new feature or a breaking change bumps the minor
+  (0.2.0) and a fix bumps the patch (0.1.1).
+- **Betas** are `X.Y.Z-beta.N` for the version they lead to (0.2.0-beta.1, 0.2.0-beta.2, then 0.2.0).
+  They go to the `beta` channel (Settings > Privacy > Channel), are drafted as GitHub pre-releases,
+  and ship the setup.exe only (WiX can't put a pre-release version in an MSI). The beta channel
+  also receives stable releases, so a beta tester always ends up on the newest build.
+- **Commit and PR titles are Conventional Commits.** The changelog and the release notes are built
+  from them: `feat` under New, `fix` under Fixes, `perf` under Faster, `!` or a `BREAKING CHANGE`
+  footer under Breaking changes; everything else is counted, not listed.
+- **Releases are never rewritten.** A published version is fixed; a mistake gets the next version.
+
 ## Cut a release
 
-1. **Bump the version** in all five places it is written (Cargo workspace, Cargo.lock,
-   `tauri.conf.json`, `package.json`, `package-lock.json`):
+1. **Prepare the release PR** from an up-to-date `main`:
 
    ```sh
    git switch main && git pull
-   git switch -c chore/release-0.2.0
-   node scripts/bump-version.mjs 0.2.0
-   node scripts/bump-version.mjs --check     # all files agree
-   git commit -am "chore(release): 0.2.0"
+   node scripts/prepare-release.mjs 0.2.0 --pr          # or 0.2.0-beta.1
    ```
 
-   Open the PR, and merge it (squash) once it is approved.
+   It checks the version is newer than the last tag, sets it in all five places (Cargo workspace,
+   Cargo.lock, `tauri.conf.json`, `package.json`, `package-lock.json`), adds the CHANGELOG.md section,
+   commits `chore(release): 0.2.0` on `release/v0.2.0` and opens the PR. Read the changelog in it.
 
-2. **Dry run (optional, recommended for the first few releases).** Actions > Release > Run
-   workflow on `main` with "dry run" ticked. It builds everything, scans with VirusTotal (if the
-   key is set), writes `latest.json`, `SHA256SUMS.txt` and the registration body,
-   and attaches them to the run as the `release-assets` artifact. Nothing is drafted or
-   registered. The run warns while `app/src-tauri/src/keys.rs` still has the placeholder manifest
-   key; a real release fails on it.
+2. **Dry run (optional, recommended before a stable release).** Actions > Release > Run workflow on
+   the release branch with "dry run" ticked. It builds everything, scans with VirusTotal (if the key
+   is set), writes `latest.json`, `SHA256SUMS.txt` and the registration body, and attaches them to
+   the run as the `release-assets` artifact. Nothing is tagged, drafted or registered.
 
-3. **Tag** the merged commit:
-
-   ```sh
-   git switch main && git pull
-   git tag v0.2.0
-   git push origin v0.2.0
-   ```
-
-   The workflow refuses a tag that doesn't match the version in the files. A version with a
-   hyphen (`0.3.0-beta.1`) is registered on the `beta` channel and drafted as a GitHub
-   pre-release. The release job runs in the `release` environment; if it has required reviewers,
-   approve it in the run.
+3. **Squash-merge the PR, keeping its title.** `.github/workflows/release-tag.yml` sees
+   `chore(release): 0.2.0` on `main`, checks the files agree, tags the merge commit `v0.2.0` and
+   starts the Release workflow on the tag. (Pushing a `v*` tag by hand starts it too.) The workflow
+   refuses a tag that doesn't match the version in the files, and a tag that already exists.
 
 4. **What the run does after the builds**, in order, stopping at the first failure:
    - VirusTotal scans each `*-setup.exe` and `*.msi`, and the two executables inside them on
@@ -101,8 +102,10 @@ API contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
    Unsigned installers start with no reputation; a clean verdict there clears Defender's
    heuristics sooner. Attach the VirusTotal link from the run summary.
 
-The website's download buttons point at `https://api.rmgn.net/unflub/download/windows?ref=site`,
-which redirects to the newest stable release that is at 100% (the site lives on another branch).
+The website's download buttons go through `https://api.rmgn.net/unflub/v1/download/windows?ref=site`
+(after a Turnstile check), which answers with the newest stable release that is active at 100%,
+served from `dl.rmgn.net/unflub/latest/windows-x86_64`. Until one is, it falls back to the GitHub
+releases page.
 
 ## Secrets and variables
 

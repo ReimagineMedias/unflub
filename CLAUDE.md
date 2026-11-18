@@ -80,6 +80,11 @@ Repo is private until v0.1, then flipped public.
   fits in one burst (index build) runs at full speed; it doesn't simulate a slower clock.
 - Windows PowerShell 5.1: `$PSScriptRoot` can be empty in `param()` defaults, and a native command's stderr throws
   under `$ErrorActionPreference = 'Stop'`. The perf scripts handle both.
+- Release conventions (2026-11-17): SemVer tags `vX.Y.Z`, betas `X.Y.Z-beta.N` (beta channel, GitHub pre-release,
+  setup.exe only since WiX rejects pre-release versions). `node scripts/prepare-release.mjs <v> --pr` opens the
+  `chore(release): <v>` PR with CHANGELOG.md; squash-merging it makes `release-tag.yml` tag and dispatch Release.
+  GitHub Actions minutes: the repo is public since 2026-11-17 (free); the private rmgn-api repo shares the org's
+  2,000 free minutes, so keep macOS/Windows CI off private repos.
 - Releases: see `docs/releasing.md`. A `v*.*.*` tag runs `.github/workflows/release.yml`: build, sign, VirusTotal,
   attest, attach installers + `.sig` to a draft GitHub Release (installers live there; no R2), then register with
   `POST api.rmgn.net/unflub/v1/admin/releases` (`scripts/register-release.mjs`: file, signature, sha256, size; lands

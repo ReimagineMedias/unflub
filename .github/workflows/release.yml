@@ -92,11 +92,17 @@ jobs:
 
       - name: Build matrix
         id: matrix
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           # macOS and Linux stay off until their adapters (unflub-macos, unflub-linux) exist.
           # To build one, set its "enabled" to true. Its bundles, latest.json entries and
           # checksums then follow without other changes (macOS signing and notarisation aside).
-          matrix=$(jq -c '{include: [.[] | select(.enabled)]}' <<'EOF'
+          # WiX (MSI) only takes numeric versions, so a pre-release (0.2.0-beta.1) ships the setup.exe alone:
+          # it is what the updater and the website use, and beta testers don't need managed installs.
+          prerelease=$([[ "$VERSION" == *-* ]] && echo true || echo false)
+          matrix=$(jq -c --argjson pre "$prerelease" '{include: [.[] | select(.enabled)
+            | if $pre then .bundles = (.bundles | split(",") | map(select(. != "msi")) | join(",")) else . end]}' <<'EOF'
           [
             { "name": "windows-x64", "os": "windows-latest", "target": "x86_64-pc-windows-msvc",
               "rust_targets": "x86_64-pc-windows-msvc", "bundles": "nsis,msi", "enabled": true },
@@ -134,6 +140,8 @@ jobs:
     name: Build (${{ matrix.name }})
     needs: prepare
     runs-on: ${{ matrix.os }}
+    # The updater signing key lives in the release environment, which only main, release/* and v* tags can use.
+    environment: release
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
@@ -310,6 +318,11 @@ jobs:
             if (-not ($listing -match "\s$([regex]::Escape($exe))$")) { throw "$exe is not in $($setup.Name)" }
           }
           $msi = Get-ChildItem dist -Filter *.msi | Select-Object -First 1
+          if (-not $msi) {
+            if ($env:VERSION -notmatch '-') { throw 'a stable release must include the MSI' }
+            "Both executables are in $($setup.Name) (pre-release: no MSI)."
+            return
+          }
           $extract = Join-Path $env:RUNNER_TEMP 'msi-extract'
           Start-Process msiexec -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=`"$extract`"" -Wait
           foreach ($exe in 'unflub.exe', 'unflub-engine.exe') {

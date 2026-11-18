@@ -19,6 +19,15 @@ updates:
     commit-message:
       prefix: build
       include: scope
+    groups:
+      # Patch updates are bug fixes: one PR a week for all of them.
+      cargo-patch:
+        update-types: ["patch"]
+    ignore:
+      # The windows crates change their API on every 0.x minor (the 0.58 -> 0.62 bump failed the Windows
+      # build). Upgrade them on purpose, with a live test of the keyboard engine, not from a bot PR.
+      - dependency-name: "windows*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: npm
     directories:
@@ -29,3 +38,10 @@ updates:
     commit-message:
       prefix: build
       include: scope
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # TypeScript 7 (the native compiler) isn't supported by @astrojs/check yet; revisit when it is.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
