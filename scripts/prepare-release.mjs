@@ -47,12 +47,12 @@ function compare(a, b) {
   return ba === bb ? 0 : ba < bb ? -1 : 1;
 }
 
-const current = JSON.parse(readFileSync(join(root, "app/src-tauri/tauri.conf.json"), "utf8")).version;
+// Only real releases (tags) count: the version in the files may be one that was never released, such as
+// the 0.1.0 a first 0.1.0-beta.1 leads to.
 const tags = git("tag", "--list", "v*").split("\n").filter(Boolean);
 const released = tags.map((t) => t.slice(1)).filter((v) => VERSION.test(v));
 const newest = released.sort(compare).at(-1);
 if (newest && compare(version, newest) <= 0) fail(`${version} is not newer than the last release ${newest}`);
-if (!newest && VERSION.test(current) && compare(version, current) < 0) fail(`${version} is older than the app's ${current}`);
 
 // A clean main that matches origin, so the release PR holds nothing but the release.
 if (git("status", "--porcelain")) fail("the working tree has changes; commit or stash them first");
