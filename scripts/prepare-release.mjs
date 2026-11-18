@@ -21,7 +21,8 @@ const REPO = "ReimagineMedias/unflub";
 const VERSION = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/;
 
 const run = (cmd, args, opts = {}) =>
-  execFileSync(cmd, args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], ...opts }).trim();
+  // With stdio "inherit" the output goes to the terminal and execFileSync returns null.
+  (execFileSync(cmd, args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], ...opts }) ?? "").trim();
 const git = (...args) => run("git", args);
 const fail = (message) => {
   console.error(`prepare-release: ${message}`);
