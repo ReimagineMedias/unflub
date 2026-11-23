@@ -160,4 +160,9 @@ Repo is private until v0.1, then flipped public.
   After the check the page fetches `?format=json` from the API (4 s timeout) and opens the returned URL (only
   dl.rmgn.net or github.com). Any failure falls back to GitHub's latest release after a one-line message. Headless Chrome fails the real key;
   test the flow with Cloudflare's test keys (1x...BB pass, 3x...FF interactive) or by hand in a normal browser.
+- dl.rmgn.net publish runs here since 2026-11-23 (`.github/workflows/publish-dl.yml`): rmgn-api is private and the
+  org's free minutes ran out, so this public repo checks out ReimagineMedias/api read-only and runs its publisher.
+  Environment `dl-publish` (main only) holds the keys; variable `DL_PUBLISH_ACTORS` lists who may run it. Its
+  log must never show the publisher's output. Fallback from a PC: `node scripts/publish-dl.mjs --deploy` in
+  D:\Code\rmgn-api with the `.local` secrets (`.dev.vars`' CF_ACCOUNT_ID is quoted; strip the quotes).
 - In Git Bash, `--flag=/path`-style args get rewritten to Windows paths (MSYS); pass names, not leading-slash paths.
