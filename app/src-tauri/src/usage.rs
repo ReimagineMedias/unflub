@@ -264,6 +264,20 @@ impl Usage {
         crate::net::first_report(self.tally.lock().unwrap().last_report, now)
     }
 
+    /// Drop a report the server refused as malformed (400 or 413): sending it again would fail
+    /// the same way, so start a new day without counting it as reported.
+    fn dropped(&self) {
+        let mut tally = self.tally.lock().unwrap();
+        *tally = Tally {
+            since: now_secs(),
+            last_report: tally.last_report,
+            ..Tally::default()
+        };
+        drop(tally);
+        self.dirty.store(true, Ordering::Relaxed);
+        self.flush();
+    }
+
     /// Start a new day after an accepted send.
     fn sent(&self) {
         let mut tally = self.tally.lock().unwrap();
@@ -302,11 +316,58 @@ pub fn may_send(user_on: bool, flags: crate::remote::RemoteFlags) -> bool {
     user_on && flags.stats_enabled
 }
 
-/// The server's answer: `202 { "accepted": true }`, or `accepted: false` when its flood limit
-/// dropped the post (sent again at the next tick).
+/// The server's answer to an accepted post: `202 { "accepted": true }`. Per-IP limits answer with
+/// an HTTP error instead (Cloudflare WAF or the Workers daily limit).
 #[derive(Deserialize)]
 struct Answer {
     accepted: bool,
+}
+
+/// What to do after a send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// Counted: start a new day.
+    Accepted,
+    /// The server can never accept this report (400, 413, or the body was too large to send):
+    /// drop it and start a new day.
+    Rejected,
+    /// Network error, rate limit, 5xx or an unexpected answer: try again after a back-off.
+    Retry,
+}
+
+impl Outcome {
+    fn of(status: u16, accepted: Option<bool>) -> Self {
+        match (status, accepted) {
+            (202, Some(true)) => Self::Accepted,
+            (400 | 413 | 422, _) => Self::Rejected,
+            _ => Self::Retry,
+        }
+    }
+}
+
+/// Wait between failed sends: 10 minutes, doubling to one day, reset by any other outcome. Kept in
+/// memory only, so a restart tries again at the next tick.
+#[derive(Debug, Default)]
+struct Backoff {
+    wait: u64,
+    until: u64,
+}
+
+impl Backoff {
+    const MIN: u64 = 10 * 60;
+
+    fn ready(&self, now: u64) -> bool {
+        now >= self.until
+    }
+
+    fn failed(&mut self, now: u64) {
+        self.wait = (self.wait * 2).clamp(Self::MIN, DAY_SECS);
+        self.until = now + self.wait;
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
 
 /// `POST https://api.rmgn.net/unflub/v1/events`.
@@ -314,11 +375,11 @@ fn events_url() -> String {
     format!("{}/events", crate::links::API_BASE)
 }
 
-/// Post one payload. True when the server accepted it.
-async fn send(client: &reqwest::Client, payload: &Payload) -> bool {
+/// Post one payload.
+async fn send(client: &reqwest::Client, payload: &Payload) -> Outcome {
     let body = match serde_json::to_vec(payload) {
         Ok(b) if b.len() <= MAX_BODY => b,
-        _ => return false,
+        _ => return Outcome::Rejected,
     };
     let url = events_url();
     match client
@@ -329,15 +390,16 @@ async fn send(client: &reqwest::Client, payload: &Payload) -> bool {
         .await
     {
         Ok(r) if r.status() == reqwest::StatusCode::ACCEPTED => {
-            r.json::<Answer>().await.is_ok_and(|a| a.accepted)
+            let accepted = r.json::<Answer>().await.ok().map(|a| a.accepted);
+            Outcome::of(202, accepted)
         }
         Ok(r) => {
             eprintln!("usage stats: {}", r.status());
-            false
+            Outcome::of(r.status().as_u16(), None)
         }
         Err(e) => {
             eprintln!("usage stats: {}", e.without_url());
-            false
+            Outcome::Retry
         }
     }
 }
@@ -353,6 +415,7 @@ pub fn spawn(app: tauri::AppHandle) {
         .name("unflub-stats".into())
         .spawn(move || {
             let jitter = crate::net::jitter(Duration::from_secs(2 * 60 * 60)).as_secs();
+            let mut backoff = Backoff::default();
             loop {
                 std::thread::sleep(TICK);
                 let usage = app.state::<Usage>();
@@ -363,6 +426,7 @@ pub fn spawn(app: tauri::AppHandle) {
                 if cfg!(debug_assertions)
                     || !may_send(usage.is_on(), flags)
                     || !usage.due(now_secs(), jitter)
+                    || !backoff.ready(now_secs())
                 {
                     continue;
                 }
@@ -375,8 +439,16 @@ pub fn spawn(app: tauri::AppHandle) {
                     continue;
                 };
                 let payload = usage.payload(&settings, &version);
-                if tauri::async_runtime::block_on(send(&client, &payload)) {
-                    usage.sent();
+                match tauri::async_runtime::block_on(send(&client, &payload)) {
+                    Outcome::Accepted => {
+                        backoff.reset();
+                        usage.sent();
+                    }
+                    Outcome::Rejected => {
+                        backoff.reset();
+                        usage.dropped();
+                    }
+                    Outcome::Retry => backoff.failed(now_secs()),
                 }
             }
         });
@@ -390,6 +462,38 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn outcome_retries_only_what_can_succeed_later() {
+        assert_eq!(Outcome::of(202, Some(true)), Outcome::Accepted);
+        assert_eq!(Outcome::of(202, Some(false)), Outcome::Retry);
+        assert_eq!(Outcome::of(202, None), Outcome::Retry);
+        for bad in [400, 413, 422] {
+            assert_eq!(Outcome::of(bad, None), Outcome::Rejected, "{bad}");
+        }
+        for later in [429, 500, 502, 503, 404] {
+            assert_eq!(Outcome::of(later, None), Outcome::Retry, "{later}");
+        }
+    }
+
+    #[test]
+    fn backoff_doubles_to_a_day_and_resets() {
+        let mut b = Backoff::default();
+        assert!(b.ready(0));
+        b.failed(1_000);
+        assert!(!b.ready(1_000 + Backoff::MIN - 1));
+        assert!(b.ready(1_000 + Backoff::MIN));
+        let mut waits = Vec::new();
+        for _ in 0..12 {
+            b.failed(0);
+            waits.push(b.wait);
+        }
+        assert_eq!(waits[0], 2 * Backoff::MIN);
+        assert_eq!(*waits.last().unwrap(), DAY_SECS);
+        assert!(waits.windows(2).all(|w| w[1] >= w[0]));
+        b.reset();
+        assert!(b.ready(0));
+    }
 
     /// The contract's allowlist (`D:\Code\rmgn-api\docs\unflub-contract.md`, section 4), as
     /// dotted paths. Changing this list means changing the contract and the server first.
@@ -545,6 +649,26 @@ mod tests {
     #[test]
     fn events_go_to_the_api() {
         assert_eq!(events_url(), "https://api.rmgn.net/unflub/v1/events");
+    }
+
+    #[test]
+    fn a_rejected_report_is_dropped_but_not_counted_as_sent() {
+        let dir = std::env::temp_dir().join(format!("unflub-usage-drop-{}", std::process::id()));
+        let usage = Usage::new(dir.clone(), true);
+        usage.correction(Duration::from_micros(90), Duration::from_micros(400), true);
+        {
+            let mut t = usage.tally.lock().unwrap();
+            t.since = 1_700_000_000;
+            t.last_report = Some(1_600_000_000);
+        }
+        usage.dropped();
+        let t = usage.tally.lock().unwrap().clone();
+        assert_eq!(t.counters, Counters::default());
+        assert_eq!(t.last_report, Some(1_600_000_000));
+        assert!(t.since > 1_700_000_000);
+        drop(t);
+        assert!(!usage.due(now_secs(), 0));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
