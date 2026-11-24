@@ -235,6 +235,29 @@ test("scroll-driven animations keep their timeline out of the animation shorthan
   assert.match(css("/"), /animation-timeline:scroll\(root\)/);
 });
 
+test("reduced motion keeps the same page: pins, night and scenes are not gated on motion", () => {
+  // Only movement may sit behind prefers-reduced-motion: no-preference. The pinned scenes, the night fade and the
+  // nav inversion must apply in both modes, or reduced motion turns into a different site.
+  const css = pages
+    .get("/")
+    .querySelectorAll("style")
+    .map((s) => s.textContent)
+    .join("\n");
+  const gated = [];
+  const open = /@media\s*\(prefers-reduced-motion:\s*no-preference\)\s*\{/g;
+  for (let m; (m = open.exec(css)); ) {
+    let depth = 1;
+    let i = open.lastIndex;
+    while (depth && i < css.length) depth += css[i] === "{" ? 1 : css[i] === "}" ? -1 : 0, i++;
+    gated.push(css.slice(open.lastIndex, i));
+  }
+  assert.ok(gated.length > 0, "found the motion-only blocks");
+  for (const block of gated) {
+    assert.doesNotMatch(block, /position:sticky|view-timeline|nightfall|daybreak|height:\d+vh/, `gated on motion: ${block.slice(0, 160)}`);
+  }
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
+});
+
 test("vercel.json serves dist with trailing slashes and the production headers", () => {
   const cfg = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
   assert.equal(cfg.outputDirectory, "dist");

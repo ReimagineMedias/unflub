@@ -218,89 +218,99 @@ const steps = [
     display: none;
   }
 
+  /* The pinned rail is the same with reduced motion; only the slide between cards becomes a cut. */
   @supports (animation-timeline: view()) {
-    @media (prefers-reduced-motion: no-preference) {
-      .rail {
-        height: 340vh;
-        padding: 0;
-        view-timeline: --rail block;
-      }
+    .rail {
+      height: 340vh;
+      padding: 0;
+      view-timeline: --rail block;
+    }
 
-      .view {
-        position: sticky;
-        top: 0;
-        height: 100svh;
-        overflow: clip;
-        align-content: center;
-        gap: clamp(14px, 3vh, 32px);
-        padding-top: calc(var(--header) + 4px);
-      }
+    .view {
+      position: sticky;
+      top: 0;
+      height: 100svh;
+      overflow: clip;
+      align-content: center;
+      gap: clamp(14px, 3vh, 32px);
+      padding-top: calc(var(--header) + 4px);
+    }
 
-      .head {
-        gap: 6px;
-      }
+    .head {
+      gap: 6px;
+    }
 
-      .head .lead {
-        font-size: clamp(1rem, min(1.3vw, 2.2vh), 1.1875rem);
-      }
+    .head .lead {
+      font-size: clamp(1rem, min(1.3vw, 2.2vh), 1.1875rem);
+    }
 
-      .cards {
-        display: flex;
-        width: max-content;
-        margin: 0;
-        padding-inline: calc((100vw - var(--w)) / 2);
-        animation: slide linear both;
-      }
+    .cards {
+      display: flex;
+      width: max-content;
+      margin: 0;
+      padding-inline: calc((100vw - var(--w)) / 2);
+      animation: slide linear both;
+    }
 
+    .track .cards {
+      animation-timeline: --rail;
+      animation-range: contain 0% contain 100%;
+    }
+
+    .app {
+      width: var(--w);
+      flex: none;
+      /* Waiting cards step back into the dark. Brightness, not opacity, so the text keeps its real contrast. */
+      filter: brightness(0.42);
+      transform: scale(0.94);
+      transition:
+        filter 0.5s var(--ease-out),
+        transform 0.7s var(--ease-out);
+    }
+
+    .app:global(.is-active) {
+      filter: none;
+      transform: none;
+    }
+
+    .names {
+      display: flex;
+      justify-content: center;
+      gap: 4px;
+      width: max-content;
+      max-width: 100%;
+      margin-inline: auto;
+      padding: 5px;
+      border-radius: 999px;
+      background: rgba(242, 230, 227, 0.08);
+    }
+
+    .names button {
+      padding: 8px 16px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #cdb9b3;
+      font: 600 0.875rem/1 var(--font);
+      cursor: pointer;
+      transition:
+        background-color 0.3s ease,
+        color 0.3s ease;
+    }
+
+    .names button:hover {
+      color: var(--paper);
+      background: rgba(242, 230, 227, 0.1);
+    }
+
+    .names button:global(.on) {
+      background: var(--paper);
+      color: var(--espresso);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
       .track .cards {
-        animation-timeline: --rail;
-        animation-range: contain 0% contain 100%;
-      }
-
-      .app {
-        width: var(--w);
-        flex: none;
-        /* Waiting cards step back into the dark. Brightness, not opacity, so the text keeps its real contrast. */
-        filter: brightness(0.42);
-        transform: scale(0.94);
-        transition:
-          filter 0.5s var(--ease-out),
-          transform 0.7s var(--ease-out);
-      }
-
-      .app:global(.is-active) {
-        filter: none;
-        transform: none;
-      }
-
-      .names {
-        display: flex;
-        justify-content: center;
-        gap: 4px;
-        width: max-content;
-        max-width: 100%;
-        margin-inline: auto;
-        padding: 5px;
-        border-radius: 999px;
-        background: rgba(242, 230, 227, 0.08);
-      }
-
-      .names button {
-        padding: 8px 16px;
-        border: 0;
-        border-radius: 999px;
-        background: transparent;
-        color: #cdb9b3;
-        font: 600 0.875rem/1 var(--font);
-        cursor: pointer;
-        transition:
-          background-color 0.3s ease,
-          color 0.3s ease;
-      }
-
-      .names button:global(.on) {
-        background: var(--paper);
-        color: var(--espresso);
+        animation-name: slide-cut;
       }
     }
   }
@@ -328,6 +338,31 @@ const steps = [
       animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
     }
     88%,
+    100% {
+      transform: translateX(calc(-4 * (var(--w) + var(--gap))));
+    }
+  }
+
+  /* Reduced motion: the same stops, but each move is a cut at its midpoint, where scripts/everywhere.ts switches the
+     active card (17%, 39%, 61%, 83%). */
+  @keyframes slide-cut {
+    0%,
+    16.99% {
+      transform: translateX(0);
+    }
+    17%,
+    38.99% {
+      transform: translateX(calc(-1 * (var(--w) + var(--gap))));
+    }
+    39%,
+    60.99% {
+      transform: translateX(calc(-2 * (var(--w) + var(--gap))));
+    }
+    61%,
+    82.99% {
+      transform: translateX(calc(-3 * (var(--w) + var(--gap))));
+    }
+    83%,
     100% {
       transform: translateX(calc(-4 * (var(--w) + var(--gap))));
     }
@@ -594,20 +629,6 @@ const steps = [
   .ed-live .field {
     color: color-mix(in srgb, var(--win-ink) 72%, var(--win-code));
     white-space: pre-wrap;
-  }
-
-  @media (max-width: 760px) {
-    .ed-code {
-      font-size: 12px;
-    }
-
-    .mail-body {
-      padding-top: 24px;
-    }
-
-    .br-page {
-      padding: 32px 20px;
-    }
   }
 
   @media (max-width: 760px) {

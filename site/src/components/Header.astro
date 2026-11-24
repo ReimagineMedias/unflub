@@ -104,22 +104,21 @@ const links = [
     visibility: hidden;
   }
 
+  /* Opacity only, so reduced motion keeps it too. */
   @supports (animation-timeline: view()) {
-    @media (prefers-reduced-motion: no-preference) {
-      .night {
-        transition: none;
-        animation:
-          nightfall linear both,
-          daybreak linear forwards;
-      }
+    .night {
+      transition: none;
+      animation:
+        nightfall linear both,
+        daybreak linear forwards;
+    }
 
-      /* Separate rule so the timeline is not folded into the shorthand. Ranges match .dusk in global.css. */
-      .site-header .night {
-        animation-timeline: --story, --story;
-        animation-range:
-          entry 15% entry 55%,
-          exit 25% exit 60%;
-      }
+    /* Separate rule so the timeline is not folded into the shorthand. Ranges match .dusk in global.css. */
+    .site-header .night {
+      animation-timeline: --story, --story;
+      animation-range:
+        entry 15% entry 55%,
+        exit 25% exit 60%;
     }
   }
 

@@ -85,15 +85,20 @@ import { PERFORMANCE } from "../data/performance";
   /* Each number rises into place as its card enters, and is settled by the time the card is 60% in view.
      Opacity and transform only, never a clip, so stopping mid-scroll never cuts a glyph. */
   @supports (animation-timeline: view()) {
-    @media (prefers-reduced-motion: no-preference) {
-      .num-in {
-        animation: surface linear both;
-      }
+    .num-in {
+      animation: surface linear both;
+    }
 
-      /* Separate rule so the timeline is not folded into the shorthand. */
+    /* Separate rule so the timeline is not folded into the shorthand. */
+    .stats .num-in {
+      animation-timeline: view();
+      animation-range: entry 0% entry 60%;
+    }
+
+    /* Reduced motion: the same fade in, without the rise. */
+    @media (prefers-reduced-motion: reduce) {
       .stats .num-in {
-        animation-timeline: view();
-        animation-range: entry 0% entry 60%;
+        animation-name: surface-still;
       }
     }
   }
@@ -102,6 +107,12 @@ import { PERFORMANCE } from "../data/performance";
     from {
       opacity: 0;
       transform: translateY(24px);
+    }
+  }
+
+  @keyframes surface-still {
+    from {
+      opacity: 0;
     }
   }
 
