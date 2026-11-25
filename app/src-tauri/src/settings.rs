@@ -1,10 +1,11 @@
 //! Persisted user settings. The app owns this file; the engine gets a `unflub_core::Config` from it.
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::{
     fs, io,
-    path::PathBuf,
-    sync::{Mutex, PoisonError},
+    path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard, PoisonError},
 };
 
 /// The settings file's format. Bump it and add a step to `migrations.rs` whenever a change needs
@@ -263,17 +264,64 @@ fn sanitised_language(tag: &str) -> String {
     }
 }
 
+/// Backups of settings files that couldn't be read (`settings.json.bak-<UTC time>`) kept.
+const BACKUPS_KEPT: usize = 3;
+
+/// Read `obj` field by field: a value this version can't read (a wrong type, or an option from
+/// a newer unflub) falls back to its default, and every other field is kept. Returns the
+/// settings and the values that couldn't be read.
+fn from_object(obj: Map<String, Value>) -> (Settings, Map<String, Value>) {
+    if let Ok(settings) = serde_json::from_value(Value::Object(obj.clone())) {
+        return (settings, Map::new());
+    }
+    let (mut readable, mut unread) = (Map::new(), Map::new());
+    for (key, value) in obj {
+        let alone = Map::from_iter([(key.clone(), value.clone())]);
+        if serde_json::from_value::<Settings>(Value::Object(alone)).is_ok() {
+            readable.insert(key, value);
+        } else {
+            unread.insert(key, value);
+        }
+    }
+    let settings = serde_json::from_value(Value::Object(readable)).unwrap_or_default();
+    (settings, unread)
+}
+
+/// What the store knows about the file beyond the settings themselves.
+#[derive(Default)]
+struct FileState {
+    /// Values from the file this version couldn't read, by key. Each is written back while
+    /// that setting still has its default, so a newer unflub finds the user's choice again.
+    unread: Map<String, Value>,
+}
+
+impl FileState {
+    /// Put the unread values back into `obj` (settings about to be written) where the setting
+    /// still has its default. One the user has changed since is dropped.
+    fn restore_unread(&mut self, obj: &mut Map<String, Value>) {
+        if self.unread.is_empty() {
+            return;
+        }
+        let defaults = serde_json::to_value(Settings::default()).unwrap_or_default();
+        self.unread
+            .retain(|key, _| obj.get(key).is_none_or(|v| Some(v) == defaults.get(key)));
+        for (key, value) in &self.unread {
+            obj.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 pub struct Store {
     path: PathBuf,
     /// Held for every write, and across read, change and write in [`Store::update`].
-    writing: Mutex<()>,
+    writing: Mutex<FileState>,
 }
 
 impl Store {
     pub fn new(dir: PathBuf) -> Self {
         Self {
             path: dir.join("settings.json"),
-            writing: Mutex::new(()),
+            writing: Mutex::new(FileState::default()),
         }
     }
 
@@ -281,22 +329,34 @@ impl Store {
         self.path.exists()
     }
 
-    /// Missing or unreadable files fall back to defaults; a corrupt file is kept as `.bak`. An
+    /// Missing or unreadable files fall back to defaults; a file that isn't a JSON object is
+    /// moved to a timestamped backup (the last [`BACKUPS_KEPT`] are kept). A field this version
+    /// can't read gets its default and the rest of the file is kept (see [`from_object`]). An
     /// older file is migrated (`migrations.rs`) and written back.
     pub fn load(&self) -> Settings {
         let Ok(text) = fs::read_to_string(&self.path) else {
             return Settings::default();
         };
-        let parsed = serde_json::from_str::<serde_json::Value>(&text)
+        // Notepad's "UTF-8 with BOM".
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+        let parsed = serde_json::from_str::<Value>(text)
             .ok()
-            .filter(serde_json::Value::is_object)
+            .filter(Value::is_object)
             .map(crate::migrations::migrate)
-            .and_then(|(value, migrated_from)| {
-                let settings = serde_json::from_value::<Settings>(value).ok()?;
-                Some((settings.sanitised(), migrated_from))
+            .and_then(|(value, migrated_from)| match value {
+                Value::Object(obj) => Some((from_object(obj), migrated_from)),
+                _ => None,
             });
         match parsed {
-            Some((settings, migrated_from)) => {
+            Some(((settings, unread), migrated_from)) => {
+                let settings = settings.sanitised();
+                if !unread.is_empty() {
+                    let keys: Vec<_> = unread.keys().collect();
+                    eprintln!(
+                        "settings: using defaults for {keys:?}, which this version can't read"
+                    );
+                }
+                self.lock().unread = unread;
                 if let Some(from) = migrated_from {
                     // Keep the old file beside the new one, in case the migration got it wrong.
                     let _ = fs::copy(
@@ -310,17 +370,61 @@ impl Store {
                 settings
             }
             None => {
-                let _ = fs::rename(&self.path, self.path.with_extension("json.bak"));
+                match self.back_up(|from, to| fs::rename(from, to)) {
+                    Ok(to) => eprintln!("settings: unreadable, moved to {}", to.display()),
+                    Err(e) => eprintln!("settings: unreadable, and can't move it aside: {e}"),
+                }
                 Settings::default()
             }
         }
     }
 
+    /// Move or copy (`how`) the settings file to `settings.json.bak-<UTC time>`, then delete all
+    /// but the newest [`BACKUPS_KEPT`] of those.
+    fn back_up(&self, how: impl FnOnce(&Path, &Path) -> io::Result<()>) -> io::Result<PathBuf> {
+        let now = time::OffsetDateTime::now_utc();
+        let stamp = format!(
+            "{:04}{:02}{:02}T{:02}{:02}{:02}.{:06}",
+            now.year(),
+            u8::from(now.month()),
+            now.day(),
+            now.hour(),
+            now.minute(),
+            now.second(),
+            now.microsecond()
+        );
+        let prefix = "settings.json.bak-";
+        let mut to = self.path.with_file_name(format!("{prefix}{stamp}"));
+        let mut n = 1;
+        while to.exists() {
+            n += 1;
+            to = self.path.with_file_name(format!("{prefix}{stamp}-{n}"));
+        }
+        how(&self.path, &to)?;
+        if let Some(dir) = self.path.parent() {
+            let mut backups: Vec<_> = fs::read_dir(dir)?
+                .filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with(prefix))
+                .collect();
+            // Oldest first: the names sort by time.
+            backups.sort();
+            let surplus = backups.len().saturating_sub(BACKUPS_KEPT);
+            for name in &backups[..surplus] {
+                let _ = fs::remove_file(dir.join(name));
+            }
+        }
+        Ok(to)
+    }
+
+    fn lock(&self) -> MutexGuard<'_, FileState> {
+        self.writing.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Atomic and flushed (`files::replace`), so a crash or power loss never leaves half a file.
     /// Saves never overlap.
     pub fn save(&self, settings: &Settings) -> io::Result<()> {
-        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
-        self.write(settings)
+        self.write(&mut self.lock(), settings)
     }
 
     /// Change the settings in `current` and save them, as one step: `change` sees the latest
@@ -332,18 +436,22 @@ impl Store {
         current: &Mutex<Settings>,
         change: impl FnOnce(&mut Settings),
     ) -> io::Result<(Settings, Settings)> {
-        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut file = self.lock();
         let prev = current.lock().unwrap().clone();
         let mut next = prev.clone();
         change(&mut next);
         let next = next.sanitised();
-        self.write(&next)?;
+        self.write(&mut file, &next)?;
         *current.lock().unwrap() = next.clone();
         Ok((prev, next))
     }
 
-    fn write(&self, settings: &Settings) -> io::Result<()> {
-        crate::files::replace(&self.path, &serde_json::to_vec_pretty(settings)?)
+    fn write(&self, file: &mut FileState, settings: &Settings) -> io::Result<()> {
+        let mut value = serde_json::to_value(settings)?;
+        if let Value::Object(obj) = &mut value {
+            file.restore_unread(obj);
+        }
+        crate::files::replace(&self.path, &serde_json::to_vec_pretty(&value)?)
     }
 }
 
@@ -523,14 +631,116 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn corrupt_file_falls_back_and_is_kept() {
-        let dir = std::env::temp_dir().join(format!("unflub-test-{}", std::process::id()));
-        let store = Store::new(dir.clone());
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("unflub-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("settings.json"), "{ not json").unwrap();
-        assert_eq!(store.load(), Settings::default());
-        assert!(dir.join("settings.json.bak").exists());
+        dir
+    }
+
+    fn backups(dir: &Path) -> Vec<String> {
+        let mut names: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("settings.json.bak-"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Review #88: every corruption keeps its own backup, up to the last three.
+    #[test]
+    fn corrupt_files_fall_back_and_keep_the_last_three_backups() {
+        let dir = temp_dir("settings-corrupt");
+        let store = Store::new(dir.clone());
+        for i in 0..5 {
+            fs::write(dir.join("settings.json"), format!("{{ broken {i}")).unwrap();
+            assert_eq!(store.load(), Settings::default());
+            assert!(!dir.join("settings.json").exists(), "moved aside");
+        }
+        let kept = backups(&dir);
+        assert_eq!(kept.len(), BACKUPS_KEPT);
+        let contents: Vec<_> = kept
+            .iter()
+            .map(|n| fs::read_to_string(dir.join(n)).unwrap())
+            .collect();
+        assert_eq!(contents, ["{ broken 2", "{ broken 3", "{ broken 4"]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Review #88: a wrong-typed field resets only itself; personal words, shortcuts, excluded
+    /// apps and the welcome stay.
+    #[test]
+    fn one_bad_field_keeps_the_rest() {
+        let dir = temp_dir("settings-badfield");
+        fs::write(
+            dir.join("settings.json"),
+            r#"{ "schemaVersion": 2, "onboarded": true, "confidence": "0.8", "theme": "ink",
+                 "personalWords": ["rmgn"], "userRules": [["omw", "on my way"]],
+                 "excludedApps": ["code.exe"], "pillOpacity": 0.5 }"#,
+        )
+        .unwrap();
+        let store = Store::new(dir.clone());
+        let s = store.load();
+        assert!(s.onboarded);
+        assert_eq!(s.confidence, Settings::default().confidence);
+        assert_eq!(s.theme, Theme::Ink);
+        assert_eq!(s.personal_words, ["rmgn"]);
+        assert_eq!(s.user_rules, [("omw".to_string(), "on my way".to_string())]);
+        assert_eq!(s.excluded_apps, ["code.exe"]);
+        assert_eq!(s.pill_opacity, 0.5);
+        assert!(backups(&dir).is_empty(), "nothing was lost, so no backup");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Review #88: a file from a newer unflub (a beta, then back to stable) with an option this
+    /// version doesn't know keeps everything, and saving writes that option back until the user
+    /// picks another.
+    #[test]
+    fn an_unknown_option_from_a_newer_version_survives() {
+        let dir = temp_dir("settings-newer");
+        fs::write(
+            dir.join("settings.json"),
+            r#"{ "schemaVersion": 3, "onboarded": true, "theme": "midnight",
+                 "personalWords": ["rmgn"], "futureThing": 1 }"#,
+        )
+        .unwrap();
+        let store = Store::new(dir.clone());
+        let current = Mutex::new(store.load());
+        {
+            let s = current.lock().unwrap();
+            assert_eq!(s.theme, Theme::Unflub, "the default, for this version");
+            assert_eq!(s.personal_words, ["rmgn"]);
+            assert!(s.onboarded);
+        }
+        let on_disk = || -> Value {
+            serde_json::from_slice(&fs::read(dir.join("settings.json")).unwrap()).unwrap()
+        };
+        store.update(&current, |s| s.enabled = false).unwrap();
+        let written = on_disk();
+        assert_eq!(written["theme"], "midnight");
+        assert_eq!(written["schemaVersion"], 3);
+        assert_eq!(written["futureThing"], 1);
+        assert_eq!(written["enabled"], false);
+        // Loading it again gives the same settings.
+        assert_eq!(Store::new(dir.clone()).load(), *current.lock().unwrap());
+        // The user picks a theme here: that choice wins from now on.
+        store.update(&current, |s| s.theme = Theme::Paper).unwrap();
+        store.update(&current, |s| s.theme = Theme::Unflub).unwrap();
+        assert_eq!(on_disk()["theme"], "unflub");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_utf8_bom_is_fine() {
+        let dir = temp_dir("settings-bom");
+        fs::write(
+            dir.join("settings.json"),
+            "\u{feff}{ \"schemaVersion\": 2, \"personalWords\": [\"rmgn\"] }",
+        )
+        .unwrap();
+        assert_eq!(Store::new(dir.clone()).load().personal_words, ["rmgn"]);
+        assert!(backups(&dir).is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 }
