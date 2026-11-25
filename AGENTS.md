@@ -151,8 +151,8 @@ Repo is private until v0.1, then flipped public.
   and scenes by width and height (`min(vw, vh)` in clamps); check 1280x720 and 1280x800, not just 1440x900.
 - Launch plan and post drafts live in `docs/launch/` (2026-11-17). Before turning on Cloudflare Web Analytics, the
   CSP in `site/public/_headers` must allow `https://static.cloudflareinsights.com` and the CSP test in
-  `site/tests/site.test.mjs` must accept it. The download API only records `ref` values `site`, `github`, `readme`,
-  `other` (`D:\Code\rmgn-api\src\products\unflub.ts`); channel refs like `hn` count as `other` until added.
+  `site/tests/site.test.mjs` must accept it. The download API records `ref` values `site`, `github`, `readme`, `hn`,
+  `ph`, `reddit`, `x`, `linkedin`, `alternativeto`, `winget` (`D:\Code\rmgn-api\src\products\unflub.ts`); others count as `other`.
   Reddit: r/windows, r/productivity and r/dyslexia forbid promotion; r/Windows11 and r/rust allow weekly threads only.
   Launch captures go in git-ignored `site/.local/launch/`.
 - Downloads (site): `PUBLIC_TURNSTILE_SITE_KEY` (public; invisible widget for unflub.rmgn.net and localhost) turns on
