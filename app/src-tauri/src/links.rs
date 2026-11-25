@@ -13,9 +13,15 @@ pub const API_BASE: &str = "https://api.rmgn.net/unflub/v1";
 /// the installers.
 pub const DL_BASE: &str = "https://dl.rmgn.net/unflub";
 
-/// Prefixes the app may open in the browser. Mirrors the `opener:allow-open-url` scope in
-/// `capabilities/default.json`, so a link from the manifest's message can't open anything else.
-pub const OPENABLE: &[&str] = &["https://github.com/", "https://unflub.rmgn.net/"];
+/// What the app may open in the browser: an entry ending in `/` is a prefix, anything else must
+/// match exactly. Only our own GitHub owner, so a message link can't point at someone else's
+/// repository or release. Mirrors the `opener:allow-open-url` scope in
+/// `capabilities/default.json` and the API's `messageLinks` (rmgn-api `src/products/unflub.ts`).
+pub const OPENABLE: &[&str] = &[
+    "https://github.com/ReimagineMedias/",
+    SPONSOR_URL,
+    "https://unflub.rmgn.net/",
+];
 
 /// Where installers are published: the GitHub Release assets.
 pub const RELEASE_DOWNLOADS: &str = "https://github.com/ReimagineMedias/unflub/releases/download/";
@@ -42,7 +48,19 @@ pub fn redirect_allowed(url: &reqwest::Url) -> bool {
 
 /// True when `url` may be opened in the browser.
 pub fn openable(url: &str) -> bool {
-    OPENABLE.iter().any(|p| url.starts_with(p)) && !url.contains(char::is_whitespace)
+    let allowed = OPENABLE.iter().any(|p| {
+        if p.ends_with('/') {
+            url.starts_with(p)
+        } else {
+            url == *p
+        }
+    });
+    // No "/../" either: the browser would resolve it out of the allowed prefix.
+    allowed
+        && !url.contains(char::is_whitespace)
+        && !url.contains("/..")
+        && !url.contains("%2e")
+        && !url.contains("%2E")
 }
 
 #[cfg(test)]
@@ -66,6 +84,11 @@ mod tests {
             "https://unflub.rmgn.ca/",
             "file:///C:/Windows",
             "https://github.com/x y",
+            "https://github.com/someone-else/unflub/releases",
+            "https://github.com/ReimagineMediasX/",
+            "https://github.com/ReimagineMedias/../evil/x",
+            "https://github.com/ReimagineMedias/%2e%2e/evil",
+            "https://github.com/sponsors/ReimagineMediasX",
         ] {
             assert!(!openable(bad), "{bad}");
         }
@@ -141,7 +164,17 @@ mod tests {
             .iter()
             .map(|a| a["url"].as_str().unwrap())
             .collect();
-        let want: Vec<String> = OPENABLE.iter().map(|p| format!("{p}*")).collect();
+        // Prefixes get a trailing wildcard; exact entries stay exact.
+        let want: Vec<String> = OPENABLE
+            .iter()
+            .map(|p| {
+                if p.ends_with('/') {
+                    format!("{p}*")
+                } else {
+                    (*p).to_string()
+                }
+            })
+            .collect();
         assert_eq!(urls, want);
     }
 
