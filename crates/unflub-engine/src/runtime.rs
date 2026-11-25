@@ -16,14 +16,18 @@ use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use unflub_core::{Engine, Source, SpellBackend};
+use unflub_core::{Engine, SkipCounts, Source, SpellBackend};
+use unflub_engine::category::category_of;
 use unflub_engine::look::OsLook;
 use unflub_engine::pill::pill_config;
 use unflub_engine::pipe::Pipe;
-use unflub_engine::protocol::{EngineSettings, FromEngine, ToEngine};
+use unflub_engine::protocol::{
+    EngineSettings, FixSource, FromEngine, ReinstallReason, ToEngine, Trigger,
+};
 use unflub_engine::{frame, session};
+use unflub_windows::stats::UsageCounters;
 use unflub_windows::{
     Correction, Hook, HookEvent, HookOptions, LiveConfig, LiveEngine, Overlay, OverlayHandle,
     PillConfig, PillStyle, WindowsSpellBackend,
@@ -31,7 +35,7 @@ use unflub_windows::{
 
 use crate::Args;
 
-/// How often the word count goes to the app (only when it moved).
+/// How often the word count and the usage counts go to the app (only when they moved).
 const WORDS_EVERY: Duration = Duration::from_secs(10);
 
 enum Msg {
@@ -92,6 +96,8 @@ pub fn run(args: &Args) -> i32 {
         pill: None,
         test_engine: None,
         words_checked: Arc::default(),
+        usage: Arc::default(),
+        skips: Arc::default(),
     };
     let worker = std::thread::Builder::new()
         .name("unflub-engine".into())
@@ -157,12 +163,18 @@ struct State {
     /// `--test-ipc` builds the engine (so the index and settings are exercised) without a hook.
     test_engine: Option<Engine>,
     words_checked: Arc<AtomicU64>,
+    /// What the hook and the spell checker count for the usage stats.
+    usage: Arc<UsageCounters>,
+    /// What the engine counts as skipped words for the usage stats.
+    skips: Arc<SkipCounts>,
 }
 
 impl State {
     fn run(mut self, rx: Receiver<Msg>) {
+        let mut sent_at = Instant::now();
         loop {
-            match rx.recv_timeout(WORDS_EVERY) {
+            let wait = WORDS_EVERY.saturating_sub(sent_at.elapsed());
+            match rx.recv_timeout(wait) {
                 Ok(Msg::Configure(next)) => {
                     self.settings = Some(*next);
                     self.sync();
@@ -172,17 +184,42 @@ impl State {
                 // app shares, is never written.
                 Ok(Msg::Learned(word)) => self.out.send(&FromEngine::Learned { word }),
                 Ok(Msg::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
-                Err(RecvTimeoutError::Timeout) => self.send_words_checked(),
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            // On time even while fixes keep the channel busy.
+            if sent_at.elapsed() >= WORDS_EVERY {
+                self.send_counts();
+                sent_at = Instant::now();
             }
         }
         self.stop();
-        self.send_words_checked();
+        self.send_counts();
     }
 
-    fn send_words_checked(&self) {
+    /// The word count and the usage counts, when they moved.
+    fn send_counts(&self) {
         let count = self.words_checked.swap(0, Ordering::Relaxed);
         if count > 0 {
             self.out.send(&FromEngine::WordsChecked { count });
+        }
+        let taken = self.usage.take();
+        let skipped_excluded = self.skips.excluded_app.swap(0, Ordering::Relaxed);
+        let skipped_code = self.skips.code_context.swap(0, Ordering::Relaxed);
+        let moved = taken.active_minutes > 0
+            || taken.skipped_secure > 0
+            || skipped_excluded > 0
+            || skipped_code > 0
+            || !taken.decide_all_us.is_empty()
+            || !taken.spellcheck_us.is_empty();
+        if moved {
+            self.out.send(&FromEngine::UsageCounts {
+                active_minutes: taken.active_minutes,
+                skipped_secure: taken.skipped_secure,
+                skipped_excluded,
+                skipped_code,
+                decide_all_us: taken.decide_all_us,
+                spellcheck_us: taken.spellcheck_us,
+            });
         }
     }
 
@@ -221,7 +258,11 @@ impl State {
                 &self.app_exe,
                 self.dry_run,
                 &self.tx,
-                &self.words_checked,
+                Counters {
+                    words_checked: &self.words_checked,
+                    usage: &self.usage,
+                    skips: &self.skips,
+                },
             );
             let hooked = self.running.is_some();
             if self.dry_run {
@@ -283,12 +324,17 @@ impl State {
                 } => self.out.send(&FromEngine::Corrected {
                     keep_word: unflub_windows::policy::keep_words(app.as_deref()),
                     user_rule: replacement.source == Source::UserRule,
+                    // The app's name stays here; only its kind goes to the app.
+                    category: category_of(app.as_deref()),
+                    trigger: Trigger::of(replacement.insert.chars().last().unwrap_or(' ')),
+                    source: FixSource::from(replacement.source),
                     original: replacement.original,
                     corrected: replacement.corrected,
                     decide_us: timing.decide.as_micros() as u64,
                     inject_us: timing.inject.as_micros() as u64,
                     pill,
                 }),
+                HookEvent::UndoPending { .. } => self.out.send(&FromEngine::UndoArmed),
                 HookEvent::Undone {
                     replacement, app, ..
                 } => self.out.send(&FromEngine::Undone {
@@ -305,7 +351,9 @@ impl State {
             HookEvent::Warning(w) => eprintln!("unflub-engine: {w}"),
             HookEvent::HooksReinstalled { reason } => {
                 eprintln!("unflub-engine: hooks installed again ({reason})");
-                self.out.send(&FromEngine::HookReinstalled);
+                self.out.send(&FromEngine::HookReinstalled {
+                    reason: ReinstallReason::parse(reason),
+                });
             }
             HookEvent::CorrectorPanicked(_) => {
                 // The message may hold typed text; it stays here.
@@ -338,6 +386,13 @@ impl State {
     }
 }
 
+/// Where a started stack counts.
+struct Counters<'a> {
+    words_checked: &'a Arc<AtomicU64>,
+    usage: &'a Arc<UsageCounters>,
+    skips: &'a Arc<SkipCounts>,
+}
+
 /// Build the spell checker and engine, and install the hook. `None` if the hook can't be
 /// installed.
 fn start(
@@ -345,14 +400,18 @@ fn start(
     app_exe: &str,
     dry_run: bool,
     tx: &Sender<Msg>,
-    words_checked: &Arc<AtomicU64>,
+    counters: Counters<'_>,
 ) -> Option<Running> {
-    let backend = spell_backend(&s.core.language);
+    let backend = spell_backend(&s.core.language).map(|mut b| {
+        b.time_checks_into(counters.usage.clone());
+        b
+    });
     let mut engine = Engine::new(
         s.core.clone(),
         backend.map(|b| Box::new(b) as Box<dyn SpellBackend>),
     );
-    engine.count_words_into(words_checked.clone());
+    engine.count_words_into(counters.words_checked.clone());
+    engine.count_skips_into(counters.skips.clone());
     let learned = tx.clone();
     let (corrector, config) = LiveEngine::new(engine, move |word| {
         let _ = learned.send(Msg::Learned(word));
@@ -363,6 +422,7 @@ fn start(
     let options = HookOptions {
         excluded_apps: vec![app_exe.to_lowercase()],
         dry_run,
+        usage: Some(counters.usage.clone()),
     };
     let (hook, events) = match Hook::start(corrector, options) {
         Ok(h) => h,

@@ -94,9 +94,12 @@ mod tests {
     fn an_unknown_message_is_skipped_without_losing_the_stream() {
         let mut buf = Vec::new();
         write(&mut buf, &serde_json::json!({"type": "from-the-future"})).unwrap();
-        write(&mut buf, &FromEngine::HookReinstalled).unwrap();
+        write(&mut buf, &FromEngine::HookReinstalled { reason: None }).unwrap();
         let mut r = Cursor::new(buf);
         assert!(next(&mut r).is_err());
-        assert_eq!(next(&mut r).unwrap(), FromEngine::HookReinstalled);
+        assert_eq!(
+            next(&mut r).unwrap(),
+            FromEngine::HookReinstalled { reason: None }
+        );
     }
 }

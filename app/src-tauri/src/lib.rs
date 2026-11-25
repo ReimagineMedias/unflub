@@ -1,5 +1,6 @@
 mod crash;
 mod engine;
+mod facts;
 mod install;
 mod keys;
 mod links;
@@ -34,7 +35,7 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_opener::OpenerExt;
 use updates::{UpdateStatus, Updates};
-use usage::Usage;
+use usage::{Feature, Usage};
 
 const SETTINGS_WINDOW: &str = "settings";
 const TRAY_ID: &str = "main";
@@ -127,10 +128,16 @@ fn get_settings(app: AppHandle) -> serde_json::Value {
 fn set_settings(app: AppHandle, mut settings: Settings) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     let pending = state.pending_learned.lock().unwrap().clone();
+    let added = words_added(
+        &state.settings.lock().unwrap().personal_words,
+        &settings.personal_words,
+        &pending,
+    );
     merge_learned(&mut settings.personal_words, &pending);
     // The window doesn't set the file's schema version.
     settings.schema_version = state.settings.lock().unwrap().schema_version;
     let saved = apply_settings(&app, settings).map_err(|e| e.to_string())?;
+    app.state::<Usage>().personal_words_added(added);
     // Saved to disk now; words learned during the save stay pending.
     state
         .pending_learned
@@ -155,6 +162,24 @@ fn reset_settings(app: AppHandle) -> Result<serde_json::Value, String> {
     apply_settings(&app, fresh)
         .map(|s| for_window(&s))
         .map_err(|e| e.to_string())
+}
+
+/// How many of `next` the user added in the window: not in `prev`, and not one of the words
+/// learned by undo that are being merged in (ignoring case).
+fn words_added(prev: &[String], next: &[String], learned: &[String]) -> u64 {
+    let known: std::collections::HashSet<String> = prev
+        .iter()
+        .chain(learned)
+        .map(|w| w.to_lowercase())
+        .collect();
+    let mut added = std::collections::HashSet::new();
+    for w in next {
+        let key = w.to_lowercase();
+        if !known.contains(&key) {
+            added.insert(key);
+        }
+    }
+    added.len() as u64
 }
 
 /// Add each of `learned` to `words` unless it is already there (ignoring case).
@@ -194,9 +219,12 @@ fn system_look() -> SystemLook {
 fn send_preview(app: AppHandle) -> SendPreview {
     let settings = effective_settings(&app);
     let version = app.package_info().version.to_string();
-    let stats = settings
-        .share_usage_stats
-        .then(|| pretty(&app.state::<Usage>().payload(&settings, &version)));
+    let stats = settings.share_usage_stats.then(|| {
+        pretty(
+            &app.state::<Usage>()
+                .payload(&settings, &version, &env_facts(&app)),
+        )
+    });
     let headers = updates::request_headers(&app)
         .into_iter()
         .map(|(k, v)| {
@@ -210,6 +238,59 @@ fn send_preview(app: AppHandle) -> SendPreview {
         stats,
         headers,
         crash_reports_available: crash::enabled(),
+    }
+}
+
+/// What the settings window reports for the usage stats. A closed list: anything else is
+/// refused before it reaches this function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum UsageEvent {
+    /// The Stats page was opened.
+    StatsPageView,
+    /// The tour was started again (not the first-run one).
+    TourReplay,
+    /// The first-run tour was finished, or skipped (kept as `env.tour`).
+    TourCompleted,
+    TourSkipped,
+    /// The user put off an offered update ("Later" or closing its notice).
+    UpdateDismissed,
+}
+
+/// `invoke("usage_event", { event: "stats_page_view" })`. Counted only while usage stats are
+/// on; the tour's outcome is kept either way (`facts.rs`).
+#[tauri::command]
+fn usage_event(app: AppHandle, event: UsageEvent) {
+    let usage = app.state::<Usage>();
+    match event {
+        UsageEvent::StatsPageView => usage.feature(Feature::StatsPageView),
+        UsageEvent::TourReplay => usage.feature(Feature::TourReplay),
+        UsageEvent::TourCompleted => app
+            .state::<facts::Facts>()
+            .set_tour(facts::TourState::Completed),
+        UsageEvent::TourSkipped => app
+            .state::<facts::Facts>()
+            .set_tour(facts::TourState::Skipped),
+        UsageEvent::UpdateDismissed => usage.update(usage::UpdateStep::Dismissed),
+    }
+}
+
+/// The facts the usage stats' `env` group is bucketed from, as they are now.
+pub(crate) fn env_facts(app: &AppHandle) -> usage::EnvFacts {
+    let today = facts::day_of(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs()),
+    );
+    let facts = app.state::<facts::Facts>();
+    usage::EnvFacts {
+        install_source: app.state::<AppInfo>().install_source,
+        days_since_install: facts.days_since_install(today),
+        windows_build: system::windows_build(),
+        keyboard_langid: system::keyboard_langid(),
+        cpu_cores: std::thread::available_parallelism().ok().map(|n| n.get()),
+        ram_gb: system::installed_ram_gb(),
+        tour: facts.tour(),
     }
 }
 
@@ -331,6 +412,7 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
         sync_autostart(app, next.start_at_login);
     }
     if prev.enabled != next.enabled {
+        app.state::<Usage>().set_paused(!next.enabled);
         if !next.enabled {
             // Pausing ends the engine, and with it the interference.
             set_interference(app, false);
@@ -342,6 +424,9 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
         let managed = app.state::<AppInfo>().managed;
         app.state::<Usage>()
             .set_on(managed.effective(next.clone()).share_usage_stats);
+    }
+    if prev.theme != next.theme {
+        app.state::<Usage>().feature(Feature::ThemeChange);
     }
     if prev.stats_keep_words && !next.stats_keep_words {
         app.state::<Stats>().forget_words();
@@ -373,6 +458,7 @@ fn apply_remote(app: &AppHandle) {
 
 /// Undoing a fix taught the engine `word`: keep it in the personal dictionary for next time.
 fn learn_word(app: &AppHandle, word: String) {
+    app.state::<Usage>().learned_pair();
     // Learned: its undo count has done its job.
     app.state::<Arc<undo_counts::UndoCounts>>().forget(&word);
     let state = app.state::<AppState>();
@@ -404,9 +490,19 @@ fn observe(app: &AppHandle, event: Observed) {
             inject,
             pill,
             keep_word,
+            trigger,
+            source,
+            category,
         } => {
             let settings = current_settings(app);
-            usage.correction(decide, inject, pill);
+            usage.correction(&usage::Fix {
+                decide,
+                inject,
+                pill,
+                trigger,
+                source,
+                category,
+            });
             app.state::<Stats>().correction(
                 &original,
                 &corrected,
@@ -430,8 +526,11 @@ fn observe(app: &AppHandle, event: Observed) {
                     .record(&original, &corrected);
             }
         }
+        Observed::UndoArmed => usage.undo_armed(),
         Observed::CorrectorPanicked => usage.crash(),
-        Observed::HookReinstalled => usage.hook_reinstall(),
+        Observed::HookReinstalled { reason } => usage.hook_reinstall(reason),
+        Observed::HookStartFailed => usage.hook_unavailable(),
+        Observed::UsageCounts(counts) => usage.engine_counts(&counts),
         Observed::InputInterference { active } => {
             if active {
                 usage.self_pause();
@@ -439,11 +538,7 @@ fn observe(app: &AppHandle, event: Observed) {
             set_interference(app, active);
         }
         Observed::HookUnavailable { active } => {
-            if active {
-                // No field of its own in the contract's health group: a failed hook start is
-                // counted with the hook (re)installs it leads to.
-                usage.hook_reinstall();
-            }
+            // Each failed start is counted as `HookStartFailed`; this only drives the tray.
             app.state::<AppState>()
                 .hook_unavailable
                 .store(active, std::sync::atomic::Ordering::Relaxed);
@@ -605,6 +700,7 @@ fn refresh_window_icon(app: &AppHandle, enabled: bool) {
 /// Open the settings window, on `page` if given (`?page=` for a new window, an event for an
 /// open one).
 fn open_settings(app: &AppHandle, page: Option<&str>) {
+    app.state::<Usage>().feature(Feature::SettingsOpen);
     if let Some(win) = app.get_webview_window(SETTINGS_WINDOW) {
         if let Some(page) = page {
             let _ = win.emit(OPEN_PAGE_EVENT, page);
@@ -805,7 +901,7 @@ pub fn run() {
             app.manage(crashes);
             app.manage(Updates::new(config_dir.clone(), local_dir));
             app.manage(net::Rollout::new(config_dir.clone()));
-            let store = Store::new(config_dir);
+            let store = Store::new(config_dir.clone());
             let first_run = !store.exists();
             let settings = store.load();
             app.manage(Remote::new(
@@ -822,7 +918,17 @@ pub fn run() {
             if crashed_last_time {
                 usage.crash();
             }
+            usage.start_paused(!settings.enabled);
             app.manage(usage);
+            let today = facts::day_of(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs()),
+            );
+            app.manage(facts::Facts::load(
+                data_dir.clone(),
+                facts::first_run_day(first_run, &config_dir, today),
+            ));
             let counts = Arc::new(undo_counts::UndoCounts::new(
                 &data_dir,
                 settings.stats_keep_words,
@@ -906,7 +1012,8 @@ pub fn run() {
             answer_crash_report,
             remote_message,
             dismiss_message,
-            input_interference
+            input_interference,
+            usage_event
         ])
         .build(tauri::generate_context!())
         .expect("error while building unflub");
@@ -976,6 +1083,46 @@ mod tests {
         );
         assert_eq!(perf_idle_dir(args(&["unflub.exe", "--perf-idle"])), None);
         assert_eq!(perf_idle_dir(args(&["unflub.exe", "--background"])), None);
+    }
+
+    #[test]
+    fn only_words_the_user_added_count() {
+        let s = |w: &[&str]| w.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+        assert_eq!(words_added(&s(&["rmgn"]), &s(&["rmgn", "unflub"]), &[]), 1);
+        assert_eq!(
+            words_added(&s(&["rmgn"]), &s(&["RMGN", "Unflub", "unflub"]), &[]),
+            1,
+            "case and repeats"
+        );
+        assert_eq!(
+            words_added(&s(&["rmgn"]), &s(&["rmgn", "teh"]), &s(&["Teh"])),
+            0,
+            "learned by undo"
+        );
+        assert_eq!(
+            words_added(&s(&["rmgn", "x"]), &s(&["x"]), &[]),
+            0,
+            "removed"
+        );
+    }
+
+    #[test]
+    fn usage_events_are_a_closed_list() {
+        for (name, event) in [
+            ("stats_page_view", UsageEvent::StatsPageView),
+            ("tour_replay", UsageEvent::TourReplay),
+            ("tour_completed", UsageEvent::TourCompleted),
+            ("tour_skipped", UsageEvent::TourSkipped),
+            ("update_dismissed", UsageEvent::UpdateDismissed),
+        ] {
+            assert_eq!(
+                serde_json::from_value::<UsageEvent>(serde_json::json!(name)).unwrap(),
+                event
+            );
+        }
+        for bad in ["settings_open", "StatsPageView", "chrome.exe", ""] {
+            assert!(serde_json::from_value::<UsageEvent>(serde_json::json!(bad)).is_err());
+        }
     }
 
     #[test]

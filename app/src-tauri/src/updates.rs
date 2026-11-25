@@ -23,12 +23,17 @@
 //!
 //! Nothing here shows a dialog: the settings UI reads [`UpdateStatus`] through `update_status`
 //! and the [`STATUS_EVENT`] event, and the tray menu follows the same status.
+//!
+//! The usage stats count the funnel here: an update offered (once per version per run),
+//! downloaded, its installer started, and failed downloads or installs. "Dismissed" comes from
+//! the settings window (`usage_event`).
 
 use crate::{
     links,
     manifest::{self, Expected, Offer},
     net,
     remote::{RefreshError, Remote},
+    usage::{UpdateStep, Usage},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -125,6 +130,8 @@ pub struct Updates {
     stamp: PathBuf,
     /// Downloaded updates.
     cache_dir: PathBuf,
+    /// The last version a check offered this run, so each counts once in the usage stats.
+    offered: Mutex<Option<String>>,
 }
 
 impl Updates {
@@ -136,7 +143,18 @@ impl Updates {
             busy: AtomicBool::new(false),
             stamp: config_dir.join("last-update-check"),
             cache_dir: local_data_dir.join("updates"),
+            offered: Mutex::new(None),
         }
+    }
+
+    /// True the first time this run that `version` is offered.
+    fn first_offer(&self, version: &str) -> bool {
+        let mut offered = self.offered.lock().unwrap();
+        if offered.as_deref() == Some(version) {
+            return false;
+        }
+        *offered = Some(version.to_string());
+        true
     }
 
     pub fn status(&self) -> UpdateStatus {
@@ -243,6 +261,8 @@ fn updater(app: &AppHandle, version: &str) -> Result<Updater, String> {
         .timeout(REQUEST_TIMEOUT)
         // Windows installers need unflub closed: unhook and remove the tray icon first.
         .on_before_exit(move || {
+            // The installer starts next; `stop_engine` saves the count.
+            exit_handle.state::<Usage>().update(UpdateStep::Installed);
             crate::stop_engine(&exit_handle);
             exit_handle.cleanup_before_exit();
         })
@@ -380,6 +400,9 @@ async fn found_update(app: &AppHandle, found: Option<Found>) -> UpdateStatus {
     let version = found.update.version.clone();
     let notes = found.notes.clone();
     let critical = found.critical;
+    if updates.first_offer(&version) {
+        app.state::<Usage>().update(UpdateStep::Offered);
+    }
     let already = updates
         .downloaded
         .lock()
@@ -418,6 +441,7 @@ async fn found_update(app: &AppHandle, found: Option<Found>) -> UpdateStatus {
     );
     match download(&updates, &found).await {
         Ok(path) => {
+            app.state::<Usage>().update(UpdateStep::Downloaded);
             *updates.downloaded.lock().unwrap() = Some(path);
             *updates.update.lock().unwrap() = Some(found);
             UpdateStatus::Ready {
@@ -428,6 +452,7 @@ async fn found_update(app: &AppHandle, found: Option<Found>) -> UpdateStatus {
         }
         Err(e) => {
             eprintln!("update download: {e}");
+            app.state::<Usage>().update(UpdateStep::Failed);
             updates.discard_download();
             *updates.update.lock().unwrap() = Some(found);
             UpdateStatus::Available {
@@ -619,6 +644,7 @@ pub async fn install(app: &AppHandle, restart: bool) -> Result<(), String> {
     let result = bytes.and_then(|bytes| found.update.install(bytes).map_err(|e| e.to_string()));
     updates.busy.store(false, Ordering::Release);
     if let Err(message) = result {
+        app.state::<Usage>().update(UpdateStep::Failed);
         updates.discard_download();
         set_status(
             app,

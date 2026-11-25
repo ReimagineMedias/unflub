@@ -20,10 +20,10 @@
 //! Windows can also drop a low-level hook without telling us (a callback that timed out, or
 //! sometimes across sleep and a locked session). A watchdog compares `GetLastInputInfo` with the
 //! time of our last callback every few seconds: input the system saw but our hooks didn't means
-//! they are gone, so they are installed again (backing off while that keeps happening). They are
-//! also installed again after the computer resumes from sleep and when the session is unlocked
-//! (a message-only window receives those notifications). Each time is reported as
-//! [`HookEvent::HooksReinstalled`].
+//! they are gone, so they are installed again (backing off while that keeps happening, until a
+//! real callback arrives after the reinstall). They are also installed again once after each
+//! resume from sleep and when the session is unlocked (a message-only window receives those
+//! notifications). Each time is reported as [`HookEvent::HooksReinstalled`] with its reason.
 //!
 //! Limitation: a non-elevated process doesn't see keys typed into elevated (administrator)
 //! windows, and can't inject into them (UIPI). unflub simply does nothing there.
@@ -32,10 +32,11 @@ use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use unflub_core::{Action, Context, Key, Replacement};
+use unflub_core::{Action, Context, Key, Replacement, WordEnds};
 use windows::core::w;
 use windows::Win32::Foundation::{HANDLE, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -58,17 +59,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, KillTimer, PeekMessageW, PostThreadMessageW, RegisterClassW,
     SetTimer, SetWindowsHookExW, UnhookWindowsHookEx, DEVICE_NOTIFY_WINDOW_HANDLE,
     EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, HC_ACTION, HHOOK, HWND_MESSAGE, KBDLLHOOKSTRUCT,
-    LLKHF_EXTENDED, LLKHF_INJECTED, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PM_NOREMOVE,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_EX_STYLE, WINDOW_STYLE, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS, WM_APP, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_POWERBROADCAST,
-    WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_TIMER, WM_WTSSESSION_CHANGE, WM_XBUTTONDOWN,
-    WNDCLASSW, WTS_SESSION_UNLOCK,
+    LLKHF_EXTENDED, LLKHF_INJECTED, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
+    PBT_APMSUSPEND, PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_MBUTTONDOWN, WM_POWERBROADCAST, WM_QUIT, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_TIMER,
+    WM_WTSSESSION_CHANGE, WM_XBUTTONDOWN, WNDCLASSW, WTS_SESSION_UNLOCK,
 };
 
 use crate::focus::{self, FocusState, PasswordProbe};
 use crate::inject::{self, Finished, Input, Origin, Pipeline, RawEvent, SendOutcome, Tag};
 use crate::policy::{injection_veto, is_ime_language, Gate, GateDecision};
-use crate::stats::LatencyHistogram;
+use crate::stats::{LatencyHistogram, MinuteMarks, UsageCounters};
 use crate::translate::{KeyTranslator, Modifiers, RawKey, Typed};
 use crate::Corrector;
 
@@ -136,8 +137,12 @@ pub fn send_held_backspace_now() -> bool {
     true
 }
 
-/// Posted by the session window: the computer resumed or the session was unlocked.
+/// Posted by the session window: the computer resumed or the session was unlocked (`wParam`:
+/// [`REARM_RESUME`], [`REARM_UNLOCK`]), or is about to sleep ([`REARM_SUSPEND`]).
 const WM_APP_REARM: u32 = WM_APP + 2;
+const REARM_RESUME: usize = 0;
+const REARM_UNLOCK: usize = 1;
+const REARM_SUSPEND: usize = 2;
 /// How often the watchdog compares system input with our callbacks.
 const WATCHDOG_MS: u32 = 5_000;
 
@@ -150,6 +155,9 @@ pub struct HookOptions {
     /// [`DRY_RUN`](crate::policy::DRY_RUN) and the corrector is reset, as for any vetoed action.
     /// For measuring the hook on a machine someone is typing on.
     pub dry_run: bool,
+    /// Where the hook counts typing minutes, words skipped in secure fields and the time of
+    /// every decision on a word-ending key, for the app's anonymous usage stats.
+    pub usage: Option<Arc<UsageCounters>>,
 }
 
 /// Reported from the hook thread; read it on another thread (printing is too slow for the hook).
@@ -199,8 +207,8 @@ pub enum HookEvent {
     /// Something degraded but the hook keeps running (e.g. UI Automation unavailable).
     Warning(String),
     /// The keyboard and mouse hooks were installed again: the watchdog saw input they missed
-    /// (`"watchdog"`), or the computer resumed or the session was unlocked (`"resume"`,
-    /// `"unlock"`).
+    /// ([`REINSTALL_WATCHDOG`]), or the computer resumed or the session was unlocked
+    /// ([`REINSTALL_RESUME`], [`REINSTALL_UNLOCK`]).
     HooksReinstalled { reason: &'static str },
     /// `active`: our injected input stopped coming back through our hook (another program is
     /// interfering with keyboard input, or Windows dropped the hook mid-correction). Keys now
@@ -208,6 +216,11 @@ pub enum HookEvent {
     /// normal. See [`inject::Pipeline`].
     InputInterference { active: bool },
 }
+
+/// [`HookEvent::HooksReinstalled`] reasons.
+pub const REINSTALL_WATCHDOG: &str = "watchdog";
+pub const REINSTALL_RESUME: &str = "resume";
+pub const REINSTALL_UNLOCK: &str = "unlock";
 
 /// Where the time of one correction went.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -393,11 +406,17 @@ struct State {
     /// happening, so a program that eats only some of our input can't make us flap).
     degrade_backoff: Duration,
     next_probe: u16,
+    usage: Option<Arc<UsageCounters>>,
+    /// Which keys end a word, for counting words skipped in secure fields.
+    word_ends: WordEnds,
+    minutes: MinuteMarks,
 }
 
 thread_local! {
-    /// `GetTickCount` at our last keyboard or mouse callback, for the watchdog.
+    /// `GetTickCount` at our last keyboard or mouse callback (or (re)install), for the watchdog.
     static LAST_CALLBACK: Cell<u32> = const { Cell::new(0) };
+    /// A real keyboard or mouse callback arrived since the hooks were last (re)installed.
+    static CALLBACK_SEEN: Cell<bool> = const { Cell::new(false) };
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
     /// Set when an event arrived while the state was busy (re-entrancy); the next event sends
     /// a Reset first so the corrector never acts on a word it only partly saw.
@@ -491,6 +510,9 @@ fn run(
         probe_after: None,
         degrade_backoff: FIRST_DEGRADE_BACKOFF,
         next_probe: 0,
+        usage: options.usage.clone(),
+        word_ends: WordEnds::default(),
+        minutes: MinuteMarks::default(),
     };
     state.refresh_focus(None, Duration::ZERO);
     STATE.with(|s| *s.borrow_mut() = Some(state));
@@ -514,6 +536,7 @@ fn run(
         )
     };
     let mut watchdog = Watchdog::new(tick_now());
+    let mut resumes = ResumeGate::default();
 
     // SAFETY: standard message loop; hook callbacks are delivered inside GetMessageW. Thread
     // messages (no window) are ours: injector results, the stale-batch and watchdog timers,
@@ -527,23 +550,27 @@ fn run(
                 WM_TIMER if msg.hwnd.is_invalid() && msg.wParam.0 == watch_timer => {
                     with_state(|s| s.maybe_probe(false));
                     let now = tick_now();
-                    if watchdog
-                        .should_reinstall(now, hooks_missed_input(last_input(), last_callback()))
-                    {
-                        hooks.reinstall("watchdog");
+                    let missed = hooks_missed_input(last_input(), last_callback());
+                    if watchdog.should_reinstall(now, missed, callback_seen()) {
+                        hooks.reinstall(REINSTALL_WATCHDOG);
                     }
                 }
                 WM_TIMER if msg.hwnd.is_invalid() => {
                     with_state(State::on_timer);
                 }
                 WM_APP_REARM if msg.hwnd.is_invalid() => {
-                    let reason = if msg.wParam.0 == 1 {
-                        "unlock"
-                    } else {
-                        "resume"
+                    let reason = match msg.wParam.0 {
+                        REARM_SUSPEND => {
+                            resumes.on_suspend();
+                            None
+                        }
+                        REARM_UNLOCK => Some(REINSTALL_UNLOCK),
+                        _ => resumes.on_resume(tick_now()).then_some(REINSTALL_RESUME),
                     };
-                    hooks.reinstall(reason);
-                    watchdog = Watchdog::new(tick_now());
+                    if let Some(reason) = reason {
+                        hooks.reinstall(reason);
+                        watchdog = Watchdog::new(tick_now());
+                    }
                 }
                 _ => {
                     DispatchMessageW(&msg);
@@ -595,8 +622,21 @@ fn last_callback() -> u32 {
     LAST_CALLBACK.with(Cell::get)
 }
 
+fn callback_seen() -> bool {
+    CALLBACK_SEEN.with(Cell::get)
+}
+
+/// A real keyboard or mouse callback.
 fn mark_callback() {
     let _ = LAST_CALLBACK.try_with(|c| c.set(tick_now()));
+    let _ = CALLBACK_SEEN.try_with(|c| c.set(true));
+}
+
+/// The hooks were just (re)installed: input before now isn't theirs to have missed, but nothing
+/// has shown yet that they work.
+fn mark_installed() {
+    let _ = LAST_CALLBACK.try_with(|c| c.set(tick_now()));
+    let _ = CALLBACK_SEEN.try_with(|c| c.set(false));
 }
 
 /// Tick of the last input the system saw in this session, or 0 if unknown.
@@ -624,7 +664,9 @@ fn hooks_missed_input(last_input: u32, last_callback: u32) -> bool {
 
 /// Decides when to install the hooks again: at once the first time they miss input, then with
 /// a doubling pause while they keep missing it (touch input, or a secure desktop, can look like
-/// missed input forever), back to normal once they see input again.
+/// missed input forever), back to normal only once a real callback has arrived since the last
+/// reinstall. A quiet spell right after a reinstall (no input, so nothing missed) proves
+/// nothing and keeps the pause.
 struct Watchdog {
     not_before: u32,
     backoff_ms: u32,
@@ -641,9 +683,13 @@ impl Watchdog {
         }
     }
 
-    fn should_reinstall(&mut self, now: u32, missed: bool) -> bool {
+    /// `missed`: the system saw input our hooks didn't. `seen`: a real callback arrived since
+    /// the hooks were last (re)installed.
+    fn should_reinstall(&mut self, now: u32, missed: bool, seen: bool) -> bool {
         if !missed {
-            self.backoff_ms = Self::FIRST_BACKOFF_MS;
+            if seen {
+                self.backoff_ms = Self::FIRST_BACKOFF_MS;
+            }
             return false;
         }
         if (now.wrapping_sub(self.not_before) as i32) < 0 {
@@ -655,8 +701,42 @@ impl Watchdog {
     }
 }
 
-/// A message-only window that hears about resume from sleep and session unlock, and asks the
-/// hook thread to re-arm with `WM_APP_REARM` (`wParam` 0: resume, 1: unlock).
+/// One re-arm per resume. Windows sends `PBT_APMRESUMEAUTOMATIC` on every resume and
+/// `PBT_APMRESUMESUSPEND` as well when a user is present (sometimes minutes later), so a resume
+/// re-arms only if a suspend came before it. A system that never reports suspends falls back to
+/// at most one resume re-arm per [`ResumeGate::QUIET_MS`].
+#[derive(Debug, Default)]
+struct ResumeGate {
+    suspended: bool,
+    saw_suspend: bool,
+    last_rearm: Option<u32>,
+}
+
+impl ResumeGate {
+    const QUIET_MS: u32 = 60_000;
+
+    fn on_suspend(&mut self) {
+        self.suspended = true;
+        self.saw_suspend = true;
+    }
+
+    /// A resume notification at tick `now`: re-arm?
+    fn on_resume(&mut self, now: u32) -> bool {
+        let rearm = if self.saw_suspend {
+            std::mem::take(&mut self.suspended)
+        } else {
+            self.last_rearm
+                .is_none_or(|t| now.wrapping_sub(t) >= Self::QUIET_MS)
+        };
+        if rearm {
+            self.last_rearm = Some(now);
+        }
+        rearm
+    }
+}
+
+/// A message-only window that hears about sleep, resume and session unlock, and tells the hook
+/// thread with `WM_APP_REARM`.
 struct SessionWatch {
     hwnd: HWND,
     power: Option<HPOWERNOTIFY>,
@@ -719,13 +799,14 @@ unsafe extern "system" fn session_proc(
                 PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND
             ) =>
         {
-            Some(0)
+            Some(REARM_RESUME)
         }
-        WM_WTSSESSION_CHANGE if wparam.0 as u32 == WTS_SESSION_UNLOCK => Some(1),
+        WM_POWERBROADCAST if wparam.0 as u32 == PBT_APMSUSPEND => Some(REARM_SUSPEND),
+        WM_WTSSESSION_CHANGE if wparam.0 as u32 == WTS_SESSION_UNLOCK => Some(REARM_UNLOCK),
         _ => None,
     };
     if let Some(kind) = rearm {
-        // Resume sends both resume notifications; the second re-arm is cheap.
+        // The hook thread re-arms once per resume (`ResumeGate`).
         let _ = PostThreadMessageW(GetCurrentThreadId(), WM_APP_REARM, WPARAM(kind), LPARAM(0));
     }
     if msg == WM_POWERBROADCAST {
@@ -754,7 +835,7 @@ impl Installed {
             }
         }
         self.mouse = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), module, 0).ok();
-        mark_callback();
+        mark_installed();
         with_state(|s| {
             s.reset();
             let _ = s.events.send(HookEvent::HooksReinstalled { reason });
@@ -781,7 +862,7 @@ impl Installed {
 }
 
 unsafe fn install() -> Result<Installed, String> {
-    mark_callback();
+    mark_installed();
     let module = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
     let keyboard = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), module, 0)
         .map_err(|e| format!("keyboard hook: {e}"))?;
@@ -988,6 +1069,9 @@ impl State {
             _ => (Origin::User, injected),
         };
         let vk = kb.vkCode as u16;
+        if matches!(origin, Origin::User) && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+            self.note_typing();
+        }
         let ev = RawEvent {
             vk,
             scan: kb.scanCode as u16,
@@ -1076,6 +1160,12 @@ impl State {
             return false;
         }
         let blocked = self.focus.secure() || ime || self.excluded();
+        let word_end = self.word_ends.ends_word(key);
+        if word_end && self.focus.secure() && !ime && !self.excluded() {
+            if let Some(usage) = &self.usage {
+                usage.skipped_secure.fetch_add(1, Ordering::Relaxed);
+            }
+        }
         self.take_word_start();
         match self.gate.decide(key, blocked) {
             GateDecision::Feed => {}
@@ -1090,6 +1180,11 @@ impl State {
             return false;
         };
         let decide = decide_start.elapsed();
+        if word_end {
+            if let Some(usage) = &self.usage {
+                usage.record_decide(decide);
+            }
+        }
         let (replacement, undo) = match action {
             Action::Pass => return false,
             Action::Replace(r) => (r, false),
@@ -1281,6 +1376,15 @@ impl State {
         }
         owed.extend(self.pipeline.drain());
         owed
+    }
+
+    /// A user key-down: count the minute it falls in, once.
+    fn note_typing(&mut self) {
+        if let Some(usage) = &self.usage {
+            if self.minutes.new_minute(tick_now()) {
+                usage.active_minutes.fetch_add(1, Ordering::Relaxed);
+            }
+        }
     }
 
     /// The stale-batch timer fired.
@@ -1529,25 +1633,65 @@ mod watchdog_tests {
     #[test]
     fn watchdog_backs_off_while_input_keeps_being_missed() {
         let mut w = Watchdog::new(0);
-        assert!(!w.should_reinstall(5_000, false));
-        assert!(w.should_reinstall(10_000, true), "first miss: at once");
-        assert!(!w.should_reinstall(15_000, true));
-        assert!(w.should_reinstall(40_000, true), "after 30 s");
-        assert!(!w.should_reinstall(80_000, true), "then 60 s");
-        assert!(w.should_reinstall(100_000, true));
-        // Seeing input again resets the pause.
-        assert!(!w.should_reinstall(105_000, false));
-        assert!(w.should_reinstall(230_000, true));
-        assert!(!w.should_reinstall(240_000, true));
-        assert!(w.should_reinstall(260_000, true));
+        assert!(!w.should_reinstall(5_000, false, true));
+        assert!(
+            w.should_reinstall(10_000, true, true),
+            "first miss: at once"
+        );
+        assert!(!w.should_reinstall(15_000, true, false));
+        assert!(w.should_reinstall(40_000, true, false), "after 30 s");
+        assert!(!w.should_reinstall(80_000, true, false), "then 60 s");
+        assert!(w.should_reinstall(100_000, true, false));
+        // A real callback after the reinstall, and no missed input: back to normal.
+        assert!(!w.should_reinstall(105_000, false, true));
+        assert!(w.should_reinstall(230_000, true, false));
+        assert!(!w.should_reinstall(240_000, true, false));
+        assert!(w.should_reinstall(260_000, true, false));
         // The pause never exceeds ten minutes.
         let mut w = Watchdog::new(0);
         let mut now = 0u32;
         for _ in 0..20 {
-            while !w.should_reinstall(now, true) {
+            while !w.should_reinstall(now, true, false) {
                 now += 1_000;
             }
         }
         assert_eq!(w.backoff_ms, Watchdog::MAX_BACKOFF_MS);
+    }
+
+    /// The bug this guards: every reinstall marked a callback, so the next quiet tick (no input
+    /// at all, so nothing missed) reset the pause, and a hook Windows keeps dropping was
+    /// reinstalled every 30 s forever.
+    #[test]
+    fn a_quiet_tick_after_a_reinstall_keeps_the_backoff() {
+        let mut w = Watchdog::new(0);
+        assert!(w.should_reinstall(10_000, true, true));
+        // Quiet: no input since the reinstall, so nothing was missed, but no callback either.
+        assert!(!w.should_reinstall(15_000, false, false));
+        assert!(!w.should_reinstall(20_000, false, false));
+        assert!(w.should_reinstall(40_000, true, false), "30 s pause");
+        assert!(!w.should_reinstall(45_000, false, false));
+        assert!(!w.should_reinstall(80_000, true, false), "then 60 s");
+        assert!(w.should_reinstall(100_000, true, false));
+        // Reset by the quiet ticks, this would be back to 60 s.
+        assert_eq!(w.backoff_ms, 8 * Watchdog::FIRST_BACKOFF_MS);
+    }
+
+    #[test]
+    fn one_rearm_per_resume() {
+        let mut g = ResumeGate::default();
+        // No suspend reported yet: the first resume re-arms, its twin doesn't.
+        assert!(g.on_resume(1_000));
+        assert!(!g.on_resume(2_000), "PBT_APMRESUMESUSPEND after AUTOMATIC");
+        // With suspends reported, each resume after one re-arms once, however late the twin.
+        g.on_suspend();
+        assert!(g.on_resume(10_000_000));
+        assert!(!g.on_resume(10_300_000), "user arrived five minutes later");
+        g.on_suspend();
+        assert!(g.on_resume(20_000_000));
+        // Without suspend notifications: at most one a minute.
+        let mut g = ResumeGate::default();
+        assert!(g.on_resume(u32::MAX - 10_000));
+        assert!(!g.on_resume(u32::MAX));
+        assert!(g.on_resume(60_000), "across the tick wrap");
     }
 }

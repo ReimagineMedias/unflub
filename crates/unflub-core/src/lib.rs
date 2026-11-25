@@ -26,6 +26,7 @@ use std::time::Duration;
 
 pub use config::{Config, EngineMode, UndoMode};
 pub use dict::Dictionary;
+pub use session::is_word_char;
 
 use case::Case;
 use rank::Ranker;
@@ -108,6 +109,45 @@ pub enum Source {
 pub trait SpellBackend: Send {
     fn is_correct(&self, word: &str) -> bool;
     fn auto_replacement(&self, word: &str) -> Option<String>;
+}
+
+/// Words that ended without being checked, for the app's anonymous usage stats. Relaxed adds;
+/// the reader takes each with `swap(0)`.
+#[derive(Debug, Default)]
+pub struct SkipCounts {
+    /// Words typed in an app on the user's exclusion list.
+    pub excluded_app: AtomicU64,
+    /// Words the code-skip rules left alone (backticks, paths, `snake_case`, digits, `camelCase`,
+    /// all caps).
+    pub code_context: AtomicU64,
+}
+
+/// Tells when a key ends a word: a boundary right after word characters. Feed it every key.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WordEnds {
+    open: bool,
+}
+
+impl WordEnds {
+    /// True when `key` ends the word typed before it.
+    pub fn ends_word(&mut self, key: Key) -> bool {
+        match key {
+            Key::Char(_) => {
+                self.open = true;
+                false
+            }
+            Key::Boundary(c) if is_word_char(c) => {
+                self.open = true;
+                false
+            }
+            Key::Boundary(_) => std::mem::take(&mut self.open),
+            Key::Backspace => false,
+            Key::DeleteWordLeft | Key::Reset => {
+                self.open = false;
+                false
+            }
+        }
+    }
 }
 
 /// Events the UI may want: corrections to show in the pill, undos, learned words.
@@ -196,6 +236,10 @@ pub struct Engine {
     lower: String,
     /// Words looked at on a boundary, for the app's local stats. One relaxed add per word.
     words_checked: Option<Arc<AtomicU64>>,
+    /// Words not checked, by reason, for the anonymous usage stats.
+    skips: Option<Arc<SkipCounts>>,
+    /// Word ends seen while the app is excluded.
+    excluded_words: WordEnds,
 }
 
 /// A [`Config`] with its lookups (excluded apps, personal words, rules) already built, for
@@ -285,6 +329,8 @@ impl Engine {
             word: String::with_capacity(64),
             lower: String::with_capacity(64),
             words_checked: None,
+            skips: None,
+            excluded_words: WordEnds::default(),
         };
         engine.seed_undo_counts();
         engine
@@ -294,6 +340,18 @@ impl Engine {
     /// takes the count with `swap(0)`.
     pub fn count_words_into(&mut self, counter: Arc<AtomicU64>) {
         self.words_checked = Some(counter);
+    }
+
+    /// Add to `counts` for every word left unchecked in an excluded app or by the code-skip
+    /// rules.
+    pub fn count_skips_into(&mut self, counts: Arc<SkipCounts>) {
+        self.skips = Some(counts);
+    }
+
+    fn skipped(&self, counter: fn(&SkipCounts) -> &AtomicU64) {
+        if let Some(skips) = &self.skips {
+            counter(skips).fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Feed one key. Must return within the hook budget.
@@ -314,8 +372,12 @@ impl Engine {
         if !self.config.enabled || ctx.secure || excluded {
             // Keep nothing from secure fields or excluded apps.
             self.session.reset();
+            if self.config.enabled && !ctx.secure && self.excluded_words.ends_word(key) {
+                self.skipped(|s| &s.excluded_app);
+            }
             return Action::Pass;
         }
+        self.excluded_words = WordEnds::default();
         match key {
             Key::Reset => self.session.reset(),
             Key::DeleteWordLeft => self.session.reset_at_word_start(),
@@ -477,6 +539,7 @@ impl Engine {
         }
         let skip_code = self.config.skip_code;
         if skip_code && (self.session.backticks || cur.code_like) {
+            self.skipped(|s| &s.code_context);
             return None;
         }
         if skip_code
@@ -485,6 +548,7 @@ impl Engine {
                 .chars(cur.start, cur.end)
                 .any(|c| c == '_' || c.is_ascii_digit())
         {
+            self.skipped(|s| &s.code_context);
             return None;
         }
         // Leading apostrophes and hyphens (quotes, dashes) stay put; only the word is replaced.
@@ -500,6 +564,7 @@ impl Engine {
         }
         let case = case::pattern(word);
         if skip_code && matches!(case, Case::Upper | Case::Mixed) {
+            self.skipped(|s| &s.code_context);
             return None;
         }
         self.lower.clear();
