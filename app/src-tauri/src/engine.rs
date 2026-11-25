@@ -36,7 +36,9 @@ use crate::settings::{self, Appearance, Settings, Theme};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use unflub_engine::protocol::{self, EngineSettings, PillSettings};
+use unflub_engine::protocol::{
+    self, AppCategory, EngineSettings, FixSource, PillSettings, ReinstallReason, Trigger,
+};
 
 pub use host::EngineHost;
 
@@ -55,7 +57,14 @@ pub enum Observed {
         pill: bool,
         /// The local Stats page may keep the words (not in terminals).
         keep_word: bool,
+        /// What ended the word, which part of the engine fixed it and in what kind of app, for
+        /// the usage stats.
+        trigger: Trigger,
+        source: FixSource,
+        category: AppCategory,
     },
+    /// A first Backspace after a fix is held (the pill asks "Undo?").
+    UndoArmed,
     Undone {
         original: String,
         corrected: String,
@@ -64,9 +73,16 @@ pub enum Observed {
         keep_word: bool,
     },
     CorrectorPanicked,
-    /// The engine's watchdog installed the hooks again (Windows dropped them, or the computer
-    /// resumed or was unlocked).
-    HookReinstalled,
+    /// The engine installed the hooks again: its watchdog saw them miss input, or the computer
+    /// resumed or was unlocked (`None` from an engine that didn't say).
+    HookReinstalled {
+        reason: Option<ReinstallReason>,
+    },
+    /// A start couldn't install the keyboard hook or never got ready (each failed start, unlike
+    /// [`Observed::HookUnavailable`], which only reports changes).
+    HookStartFailed,
+    /// Counts and timings from the engine for the usage stats.
+    UsageCounts(crate::usage::EngineCounts),
     /// The engine process ended without being asked to. It is restarted with backoff.
     EngineCrashed,
     /// The engine paused itself because its injected input stopped coming back (another
@@ -553,6 +569,7 @@ mod host {
         fn failed_start(&mut self) {
             let started = self.running.as_ref().map(|r| r.started);
             self.stop();
+            (self.observer)(Observed::HookStartFailed);
             self.set_hook_unavailable(true);
             self.failures = failures_after(
                 self.failures,
@@ -662,6 +679,9 @@ mod host {
                     inject_us,
                     pill,
                     keep_word,
+                    trigger,
+                    source,
+                    category,
                 } => observer(Observed::Corrected {
                     keep_word,
                     original,
@@ -670,7 +690,11 @@ mod host {
                     decide: Duration::from_micros(decide_us),
                     inject: Duration::from_micros(inject_us),
                     pill,
+                    trigger,
+                    source,
+                    category,
                 }),
+                FromEngine::UndoArmed => observer(Observed::UndoArmed),
                 FromEngine::Undone {
                     original,
                     corrected,
@@ -688,7 +712,24 @@ mod host {
                 FromEngine::Learned { word } => {
                     (learned.lock().unwrap_or_else(|e| e.into_inner()))(word)
                 }
-                FromEngine::HookReinstalled => observer(Observed::HookReinstalled),
+                FromEngine::HookReinstalled { reason } => {
+                    observer(Observed::HookReinstalled { reason })
+                }
+                FromEngine::UsageCounts {
+                    active_minutes,
+                    skipped_secure,
+                    skipped_excluded,
+                    skipped_code,
+                    decide_all_us,
+                    spellcheck_us,
+                } => observer(Observed::UsageCounts(crate::usage::EngineCounts {
+                    active_minutes,
+                    skipped_secure,
+                    skipped_excluded,
+                    skipped_code,
+                    decide_all_us,
+                    spellcheck_us,
+                })),
                 FromEngine::CorrectorPanicked => observer(Observed::CorrectorPanicked),
                 FromEngine::InputInterference { active } => {
                     observer(Observed::InputInterference { active })

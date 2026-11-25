@@ -93,6 +93,62 @@ fn counts_words_checked() {
 }
 
 #[test]
+fn counts_words_skipped_in_excluded_apps_and_code() {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use unflub_core::SkipCounts;
+    let skips = Arc::new(SkipCounts::default());
+    let mut engine = Engine::new(
+        Config {
+            excluded_apps: vec!["keepass.exe".into()],
+            ..config()
+        },
+        None,
+    );
+    engine.count_skips_into(skips.clone());
+    let mut t = Typist::with_engine(engine);
+    let excluded = Context {
+        app: Some("keepass.exe"),
+        secure: false,
+    };
+    // Two words end; the space after the comma ends none.
+    t.type_in("teh cat, ", &excluded);
+    assert_eq!(skips.excluded_app.swap(0, Ordering::Relaxed), 2);
+    // Secure fields are counted by the adapter, not here.
+    t.type_in(
+        "teh ",
+        &Context {
+            app: Some("keepass.exe"),
+            secure: true,
+        },
+    );
+    assert_eq!(skips.excluded_app.load(Ordering::Relaxed), 0);
+
+    // After the reset above, a boundary first so the first word counts as fully seen.
+    t.type_str("\nmy_var useState NASA src2 fine ");
+    assert_eq!(skips.code_context.load(Ordering::Relaxed), 4);
+    assert_eq!(skips.excluded_app.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn word_ends_need_a_word_before_the_boundary() {
+    use unflub_core::WordEnds;
+    let mut w = WordEnds::default();
+    let ends: Vec<bool> = "it's ok, fine."
+        .chars()
+        .map(|c| w.ends_word(common::key_for(c)))
+        .collect();
+    assert_eq!(ends.iter().filter(|e| **e).count(), 3, "{ends:?}");
+    let mut w = WordEnds::default();
+    w.ends_word(Key::Char('a'));
+    w.ends_word(Key::Reset);
+    assert!(!w.ends_word(Key::Boundary(' ')), "a reset forgets the word");
+    w.ends_word(Key::Char('a'));
+    w.ends_word(Key::Backspace);
+    assert!(w.ends_word(Key::Boundary(' ')));
+}
+
+#[test]
 fn punctuation_boundaries_keep_their_character() {
     let mut t = Typist::bundled();
     assert_eq!(t.type_str("teh. adn, taht!\n"), "the. and, that!\n");

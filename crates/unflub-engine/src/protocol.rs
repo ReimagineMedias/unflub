@@ -19,6 +19,8 @@
 use serde::{Deserialize, Serialize};
 use unflub_core::Config;
 
+pub use crate::category::AppCategory;
+
 /// Bump on any change a peer of the previous version would misread.
 pub const PROTOCOL: u32 = 1;
 
@@ -36,7 +38,8 @@ pub enum ToEngine {
 }
 
 /// Engine to app. The words in `Corrected`, `Undone` and `Learned` go only to the app's local
-/// Stats page and personal dictionary.
+/// Stats page and personal dictionary. The rest (trigger, source, app category, counts and
+/// timings) feeds the anonymous usage stats; the focused app's name never crosses the pipe.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum FromEngine {
@@ -63,7 +66,18 @@ pub enum FromEngine {
         /// when missing.
         #[serde(default)]
         keep_word: bool,
+        /// The key that ended the word.
+        #[serde(default)]
+        trigger: Trigger,
+        /// Which part of the engine made the fix.
+        #[serde(default)]
+        source: FixSource,
+        /// The kind of app it happened in.
+        #[serde(default)]
+        category: AppCategory,
     },
+    /// A first Backspace after a fix is held: the pill asks "Undo?".
+    UndoArmed,
     Undone {
         original: String,
         corrected: String,
@@ -81,8 +95,27 @@ pub enum FromEngine {
     Learned {
         word: String,
     },
-    /// The hook watchdog installed the hooks again.
-    HookReinstalled,
+    /// The hooks were installed again, and why (missing from an older engine).
+    HookReinstalled {
+        #[serde(default)]
+        reason: Option<ReinstallReason>,
+    },
+    /// Counts and timings since the last of these (sent with the word count, every few
+    /// seconds while there is something to send). Times in microseconds.
+    UsageCounts {
+        /// Minutes with at least one key typed.
+        active_minutes: u64,
+        /// Words that ended in a password field (or one not yet known to be safe).
+        skipped_secure: u64,
+        /// Words typed in an app on the user's exclusion list.
+        skipped_excluded: u64,
+        /// Words the code-skip rules left alone.
+        skipped_code: u64,
+        /// Every decision on a word-ending key, fixed or not.
+        decide_all_us: Vec<u32>,
+        /// Each Windows spell checker `Check` call.
+        spellcheck_us: Vec<u32>,
+    },
     /// The corrector panicked; keys pass through until the engine restarts.
     CorrectorPanicked,
     /// `active`: our injected input stopped coming back (another program is interfering with
@@ -91,6 +124,74 @@ pub enum FromEngine {
     InputInterference {
         active: bool,
     },
+}
+
+/// What ended a fixed word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Trigger {
+    #[default]
+    Space,
+    Punctuation,
+    EnterTab,
+}
+
+impl Trigger {
+    /// The trigger for the boundary character a fix ended with.
+    pub fn of(boundary: char) -> Self {
+        match boundary {
+            '\n' | '\r' | '\t' => Self::EnterTab,
+            c if c.is_whitespace() => Self::Space,
+            _ => Self::Punctuation,
+        }
+    }
+}
+
+/// Which part of the engine made a fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FixSource {
+    /// unflub's own dictionary and ranking.
+    #[default]
+    Core,
+    /// The Windows spell checker's own replacement.
+    Os,
+    /// One of the user's shortcuts.
+    UserRule,
+}
+
+impl From<unflub_core::Source> for FixSource {
+    fn from(s: unflub_core::Source) -> Self {
+        match s {
+            unflub_core::Source::Bundled => Self::Core,
+            unflub_core::Source::System => Self::Os,
+            unflub_core::Source::UserRule => Self::UserRule,
+        }
+    }
+}
+
+/// Why the hooks were installed again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReinstallReason {
+    /// The watchdog saw input the hooks missed.
+    Watchdog,
+    /// The computer resumed from sleep.
+    Resume,
+    /// The session was unlocked.
+    Unlock,
+}
+
+impl ReinstallReason {
+    /// From the adapter's `HookEvent::HooksReinstalled` reason.
+    pub fn parse(reason: &str) -> Option<Self> {
+        match reason {
+            "watchdog" => Some(Self::Watchdog),
+            "resume" => Some(Self::Resume),
+            "unlock" => Some(Self::Unlock),
+            _ => None,
+        }
+    }
 }
 
 /// What the engine runs with: the core config plus the pill. The app has already applied the
@@ -203,7 +304,11 @@ mod tests {
                 inject_us: 400,
                 pill: true,
                 keep_word: true,
+                trigger: Trigger::Punctuation,
+                source: FixSource::Os,
+                category: AppCategory::CodeEditor,
             },
+            FromEngine::UndoArmed,
             FromEngine::Undone {
                 original: "teh".into(),
                 corrected: "the".into(),
@@ -214,7 +319,17 @@ mod tests {
             FromEngine::Learned {
                 word: "rmgn".into(),
             },
-            FromEngine::HookReinstalled,
+            FromEngine::HookReinstalled {
+                reason: Some(ReinstallReason::Unlock),
+            },
+            FromEngine::UsageCounts {
+                active_minutes: 3,
+                skipped_secure: 1,
+                skipped_excluded: 2,
+                skipped_code: 4,
+                decide_all_us: vec![80, 120],
+                spellcheck_us: vec![40],
+            },
             FromEngine::CorrectorPanicked,
             FromEngine::InputInterference { active: true },
         ] {
@@ -226,6 +341,30 @@ mod tests {
     fn the_wire_format_is_tagged_json() {
         let json = serde_json::to_string(&FromEngine::Ready { hooked: false }).unwrap();
         assert_eq!(json, r#"{"type":"ready","hooked":false}"#);
+    }
+
+    #[test]
+    fn triggers_and_reasons() {
+        assert_eq!(Trigger::of(' '), Trigger::Space);
+        assert_eq!(Trigger::of('\u{a0}'), Trigger::Space);
+        assert_eq!(Trigger::of('\n'), Trigger::EnterTab);
+        assert_eq!(Trigger::of('\t'), Trigger::EnterTab);
+        for c in ['.', ',', '!', '?', ')', ';'] {
+            assert_eq!(Trigger::of(c), Trigger::Punctuation, "{c}");
+        }
+        for (s, r) in [
+            ("watchdog", ReinstallReason::Watchdog),
+            ("resume", ReinstallReason::Resume),
+            ("unlock", ReinstallReason::Unlock),
+        ] {
+            assert_eq!(ReinstallReason::parse(s), Some(r));
+        }
+        assert_eq!(ReinstallReason::parse("other"), None);
+        // An older engine's message still reads, with no reason.
+        assert_eq!(
+            serde_json::from_str::<FromEngine>(r#"{"type":"hook-reinstalled"}"#).unwrap(),
+            FromEngine::HookReinstalled { reason: None }
+        );
     }
 
     /// A newer app may add settings; an older engine keeps the rest.
