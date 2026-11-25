@@ -1543,6 +1543,7 @@ impl State {
 
     /// Caret moved, focus changed, or we lost track: forget the word and start fresh.
     fn reset(&mut self) {
+        self.translator.forget_selection();
         self.drop_held();
         self.gate.on_reset();
         self.reset_corrector();

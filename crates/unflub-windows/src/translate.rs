@@ -124,6 +124,9 @@ pub fn classify_char(c: char) -> Key {
     }
 }
 
+/// The A key (select all with Ctrl).
+const VK_A: u16 = 0x41;
+
 fn is_modifier(vk: u16) -> bool {
     matches!(
         vk,
@@ -163,10 +166,12 @@ fn is_reset_key(vk: u16) -> bool {
     )
 }
 
-/// Turns raw events into [`Key`]s. Holds the only state translation needs: a pending dead key.
+/// Turns raw events into [`Key`]s. Holds the only state translation needs: a pending dead key,
+/// and whether the last key was Ctrl+A.
 #[derive(Debug, Default)]
 pub struct KeyTranslator {
     dead_pending: bool,
+    select_all: bool,
 }
 
 impl KeyTranslator {
@@ -177,6 +182,12 @@ impl KeyTranslator {
     /// True after a dead key until the next non-modifier key.
     pub fn dead_pending(&self) -> bool {
         self.dead_pending
+    }
+
+    /// A click or focus change came between: a Delete now deletes what is at the caret, not a
+    /// whole selected field.
+    pub fn forget_selection(&mut self) {
+        self.select_all = false;
     }
 
     /// Translate one event. `None` means "not interesting, don't tell the engine" (key-ups,
@@ -192,13 +203,23 @@ impl KeyTranslator {
         }
         if key.foreign_injected {
             self.dead_pending = false;
+            self.select_all = false;
             return Some(Key::Reset);
         }
         if is_modifier(key.vk) {
             return None;
         }
+        let select_all = std::mem::take(&mut self.select_all);
         // Whatever follows a dead key composes with it in the app; we can't see the result.
-        if std::mem::take(&mut self.dead_pending) || mods.win || is_reset_key(key.vk) {
+        if std::mem::take(&mut self.dead_pending) || mods.win {
+            return Some(Key::Reset);
+        }
+        // Ctrl+A then Delete or Backspace empties the field: the caret is at a word start.
+        if select_all && !mods.shift && !mods.shortcut() && matches!(key.vk, vk::DELETE | vk::BACK)
+        {
+            return Some(Key::DeleteWordLeft);
+        }
+        if is_reset_key(key.vk) {
             return Some(Key::Reset);
         }
         let any = mods.shift || mods.ctrl || mods.alt;
@@ -230,6 +251,7 @@ impl KeyTranslator {
         }
         // Ctrl or Alt alone is a shortcut. Both together may be AltGr typing a character.
         if (mods.ctrl || mods.alt) && !mods.altgr() {
+            self.select_all = key.vk == VK_A && mods.ctrl && !mods.shift;
             return Some(Key::Reset);
         }
         match typed() {
@@ -349,6 +371,62 @@ mod tests {
             assert_eq!(got, Some(Key::Reset), "vk {vk:#x}");
             assert!(!typed_called.get(), "vk {vk:#x} must not call ToUnicodeEx");
         }
+    }
+
+    /// #112: Ctrl+A then Delete or Backspace empties the field, so the next word is fully seen.
+    #[test]
+    fn select_all_then_delete_is_a_word_start() {
+        for del in [vk::DELETE, vk::BACK] {
+            let mut t = KeyTranslator::new();
+            assert_eq!(
+                t.translate(down(0x41), CTRL, || panic!("not called")),
+                Some(Key::Reset)
+            );
+            // A bare modifier in between changes nothing.
+            assert_eq!(t.translate(down(0xA2), NONE, || Typed::Other), None);
+            assert_eq!(
+                t.translate(down(del), NONE, || Typed::Other),
+                Some(Key::DeleteWordLeft),
+                "vk {del:#x}"
+            );
+            // Only once: the next Delete is a plain one again.
+            assert_eq!(
+                t.translate(down(vk::DELETE), NONE, || Typed::Other),
+                Some(Key::Reset)
+            );
+        }
+        // Anything else in between, or a click (the hook forgets the selection), ends it.
+        let mut t = KeyTranslator::new();
+        t.translate(down(0x41), CTRL, || Typed::Other);
+        t.translate(down(vk::LEFT), NONE, || Typed::Other);
+        assert_eq!(
+            t.translate(down(vk::DELETE), NONE, || Typed::Other),
+            Some(Key::Reset)
+        );
+        let mut t = KeyTranslator::new();
+        t.translate(down(0x41), CTRL, || Typed::Other);
+        t.forget_selection();
+        assert_eq!(
+            t.translate(down(vk::BACK), NONE, || Typed::Other),
+            Some(Key::Backspace)
+        );
+        // Ctrl+Shift+A is not select all, and Shift+Delete after it is a cut, left as a reset.
+        let mut t = KeyTranslator::new();
+        let ctrl_shift = Modifiers {
+            shift: true,
+            ..CTRL
+        };
+        t.translate(down(0x41), ctrl_shift, || Typed::Other);
+        assert_eq!(
+            t.translate(down(vk::DELETE), NONE, || Typed::Other),
+            Some(Key::Reset)
+        );
+        let mut t = KeyTranslator::new();
+        t.translate(down(0x41), CTRL, || Typed::Other);
+        assert_eq!(
+            t.translate(down(vk::DELETE), SHIFT, || Typed::Other),
+            Some(Key::Reset)
+        );
     }
 
     #[test]

@@ -44,6 +44,7 @@ pub enum Key {
     /// Ctrl+Backspace: the app deleted back to a word start. Exactly what it deleted varies by
     /// app (a word, its trailing spaces, a run of punctuation), so the text before the caret is
     /// unknown, but the caret now sits at a word start: the next word counts as fully seen.
+    /// Adapters also send it for Ctrl+A then Delete or Backspace (the field was emptied).
     DeleteWordLeft,
     /// Anything that moves the caret or makes our view of the text stale: arrows, Home/End,
     /// mouse clicks, focus changes, shortcuts with Ctrl/Alt/Win, IME composition.
