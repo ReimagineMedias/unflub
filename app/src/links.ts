@@ -3,6 +3,8 @@ export const LINKS = {
   sponsor: "https://github.com/sponsors/ReimagineMedias",
   repo: "https://github.com/ReimagineMedias/unflub",
   site: "https://unflub.rmgn.net/",
+  terms: "https://unflub.rmgn.net/terms/",
+  privacy: "https://unflub.rmgn.net/privacy/",
 } as const;
 
 /**

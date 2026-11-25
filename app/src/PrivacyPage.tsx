@@ -1,6 +1,17 @@
-import { Disclosure, Row, Segmented, Switch } from "./components";
-import { t } from "./i18n";
+import { ExternalLink, Row, Segmented, Switch } from "./components";
+import { t, type StringKey } from "./i18n";
+import { LINKS } from "./links";
 import type { AppInfo, Settings } from "./types";
+
+/** What a usage report holds, one plain line per group (the groups of the report's contract). */
+const SENT: [StringKey, StringKey][] = [
+  ["privacy.sent.health", "privacy.sent.health.text"],
+  ["privacy.sent.fixes", "privacy.sent.fixes.text"],
+  ["privacy.sent.apps", "privacy.sent.apps.text"],
+  ["privacy.sent.env", "privacy.sent.env.text"],
+  ["privacy.sent.features", "privacy.sent.features.text"],
+  ["privacy.sent.updates", "privacy.sent.updates.text"],
+];
 
 /** What leaves the computer, and the switches for it. */
 export function PrivacyPage({ settings: s, info, update }: {
@@ -16,17 +27,30 @@ export function PrivacyPage({ settings: s, info, update }: {
       <p className="lead">{t("privacy.lead")}</p>
 
       <div className="section-title">{t("privacy.sharing")}</div>
-      <Disclosure />
+      <div className="disclosure">
+        <p>{t("privacy.usage.lead")}</p>
+        <p className="muted">{t("privacy.usage.never")} {t("privacy.usage.why")}</p>
+      </div>
       <div className="card">
-        <Row label={t("privacy.stats")} hint={m?.disableUsageStats ? t("privacy.managed") : undefined}>
+        <Row label={t("privacy.stats")} hint={m?.disableUsageStats ? t("privacy.managed") : t("privacy.stats.hint")}>
           <Switch label={t("privacy.stats")} disabled={m?.disableUsageStats}
             checked={s.shareUsageStats && !m?.disableUsageStats} onChange={(v) => update({ shareUsageStats: v })} />
         </Row>
-        <Row label={t("privacy.crashes")} hint={m?.disableCrashReports ? t("privacy.managed") : undefined}>
+        <Row label={t("privacy.crashes")} hint={m?.disableCrashReports ? t("privacy.managed") : t("privacy.crashes.hint")}>
           <Switch label={t("privacy.crashes")} disabled={m?.disableCrashReports}
             checked={s.sendCrashReports && !m?.disableCrashReports} onChange={(v) => update({ sendCrashReports: v })} />
         </Row>
       </div>
+
+      <div className="section-title">{t("privacy.sent")}</div>
+      <div className="card">
+        <ul className="sent">
+          {SENT.map(([label, text]) => (
+            <li key={label}><strong>{t(label)}:</strong> {t(text)}</li>
+          ))}
+        </ul>
+      </div>
+      <p className="note"><ExternalLink href={LINKS.privacy}>{t("privacy.details")}</ExternalLink></p>
 
       <div className="section-title">{t("privacy.updates")}</div>
       <div className="card">
