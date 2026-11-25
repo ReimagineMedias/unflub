@@ -740,8 +740,9 @@ impl Engine {
                 (flagged, true, 1.0, keep)
             }
             EngineMode::Aggressive => {
-                let flagged =
-                    flagged_by_system(&self.backend, &self.word).unwrap_or(false) || !known;
+                // Aggressive lowers the bar for a fix, not for calling a word wrong: a word the
+                // OS checker accepts (`Oh`, `Mr`) stays even if the bundled list lacks it.
+                let flagged = flagged_by_system(&self.backend, &self.word).unwrap_or(!known);
                 (flagged, true, 0.0, None)
             }
         };
