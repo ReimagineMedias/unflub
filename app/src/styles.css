@@ -105,12 +105,12 @@ main > p.lead { margin: 0 0 22px; color: var(--muted); max-width: 60ch; }
 .row .label small { color: var(--muted); font-size: 12.5px; }
 .row.stack { flex-direction: column; align-items: stretch; gap: 12px; }
 
-.switch { position: relative; width: 40px; height: 22px; border-radius: 999px; border: 0; padding: 0; cursor: pointer; flex: none;
+.switch { position: relative; width: 40px; height: 24px; border-radius: 999px; border: 0; padding: 0; cursor: pointer; flex: none;
   background: color-mix(in srgb, var(--ink) 18%, transparent); box-shadow: inset 0 0 0 1px var(--muted); transition: background 0.2s var(--ease); }
-.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%;
   background: var(--raised); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); transition: transform 0.22s var(--ease); }
 .switch[aria-checked="true"] { background: var(--accent); box-shadow: none; }
-.switch[aria-checked="true"]::after { transform: translateX(18px); background: var(--accent-ink); }
+.switch[aria-checked="true"]::after { transform: translateX(16px); background: var(--accent-ink); }
 
 .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: color-mix(in srgb, var(--ink) 6%, transparent); flex-wrap: wrap; }
 .seg button { border: 0; background: none; padding: 6px 12px; border-radius: 7px; cursor: pointer; color: var(--muted); white-space: nowrap; transition: background 0.15s, color 0.15s; }
@@ -118,7 +118,7 @@ main > p.lead { margin: 0 0 22px; color: var(--muted); max-width: 60ch; }
 .seg button[aria-pressed="true"] { background: var(--raised); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--line); }
 
 .slider { display: flex; align-items: center; gap: 12px; min-width: 240px; }
-.slider input { flex: 1; accent-color: var(--accent); }
+.slider input { flex: 1; height: 24px; margin: 0; accent-color: var(--accent); }
 .slider output { font: 12px var(--mono); color: var(--muted); min-width: 52px; text-align: right; }
 
 .themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
@@ -132,7 +132,7 @@ main > p.lead { margin: 0 0 22px; color: var(--muted); max-width: 60ch; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px; background: var(--raised); box-shadow: 0 0 0 1px var(--line); font: 12.5px var(--mono); }
-.chip button { border: 0; background: none; cursor: pointer; width: 18px; height: 18px; border-radius: 50%; color: var(--muted); display: grid; place-items: center; }
+.chip button { border: 0; background: none; cursor: pointer; width: 24px; height: 24px; margin: -3px; border-radius: 50%; color: var(--muted); display: grid; place-items: center; }
 .chip button:hover { background: var(--hover); color: var(--ink); }
 .add { display: flex; gap: 8px; }
 .add input, .rule input { flex: 1; min-width: 0; padding: 8px 12px; border-radius: 9px; border: 0; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); user-select: text; }
@@ -148,6 +148,8 @@ main > p.lead { margin: 0 0 22px; color: var(--muted); max-width: 60ch; }
 .rule .arrow { color: var(--muted); text-align: center; }
 .icon-btn { border: 0; background: none; cursor: pointer; width: 28px; height: 28px; border-radius: 8px; color: var(--muted); display: grid; place-items: center; }
 .icon-btn:hover { background: var(--hover); color: var(--ink); }
+
+details.exact summary { min-height: 24px; padding: 2px 0; cursor: pointer; }
 
 /* Live pill preview */
 .preview { position: relative; margin: 4px 0 0; padding: 40px 18px 22px; border-radius: 10px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); font-size: 15px; line-height: 1.8; min-height: 108px; }
