@@ -487,6 +487,14 @@ jobs:
             echo "Signed $(basename "$f")"
           done
 
+      # A wrong private key would ship updates that every app rejects. Checked against the public
+      # key in tauri.conf.json with Node's own crypto, without the private key in the environment.
+      - name: Updater signatures match the app's key
+        run: |
+          set -euo pipefail
+          mapfile -t sigs < <(ls -- release-files/*.sig)
+          node scripts/verify-updater-sig.mjs "${sigs[@]%.sig}"
+
       - name: latest.json, SHA256SUMS.txt and the registration body
         run: |
           set -euo pipefail
