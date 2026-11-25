@@ -227,12 +227,13 @@ fn days_bucket(days: i64) -> &'static str {
 
 /// The contract's builds: 19045 (Windows 10 22H2), 22621 and 22631 (Windows 11 22H2, 23H2),
 /// 26100 (24H2), 26200 (25H2). A build between two of them (Insider, servicing) counts as the
-/// one below it; 22000 to 22620 (Windows 11 21H2) and anything after 26200 as `other-newer`.
+/// one below it, 22000 to 22620 is Windows 11 21H2 (`22000`), and anything after 26200 is
+/// `other-newer`.
 fn build_bucket(build: u32) -> &'static str {
     match build {
         0..=19044 => "<19045",
         19045..=21999 => "19045",
-        22000..=22620 => "other-newer",
+        22000..=22620 => "22000",
         22621..=22630 => "22621",
         22631..=26099 => "22631",
         26100..=26199 => "26100",
@@ -1148,6 +1149,7 @@ mod tests {
             &[
                 "<19045",
                 "19045",
+                "22000",
                 "22621",
                 "22631",
                 "26100",
@@ -1385,7 +1387,9 @@ mod tests {
         assert_eq!(days_bucket(90), "90+");
         assert_eq!(build_bucket(19044), "<19045");
         assert_eq!(build_bucket(19045), "19045");
-        assert_eq!(build_bucket(22000), "other-newer", "Windows 11 21H2");
+        assert_eq!(build_bucket(21999), "19045");
+        assert_eq!(build_bucket(22000), "22000", "Windows 11 21H2");
+        assert_eq!(build_bucket(22620), "22000");
         assert_eq!(build_bucket(22621), "22621");
         assert_eq!(build_bucket(22631), "22631");
         assert_eq!(build_bucket(22635), "22631", "an Insider build of 23H2");
