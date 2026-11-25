@@ -666,6 +666,20 @@ fn glue_characters_do_not_trigger() {
     assert_eq!(t.type_str(text), text);
 }
 
+/// #104: hashtags are tags, often run-together words, like @mentions.
+#[test]
+fn hashtags_are_left_alone() {
+    let mut t = Typist::bundled();
+    let text = "love #rustlang and #teh today ";
+    assert_eq!(t.type_str(text), text);
+    // Without code skipping they are words again.
+    let mut t = Typist::new(Config {
+        skip_code: false,
+        ..config()
+    });
+    assert_eq!(t.type_str("ok #teh "), "ok #the ");
+}
+
 #[test]
 fn leading_quote_stays_put() {
     let mut t = Typist::bundled();
