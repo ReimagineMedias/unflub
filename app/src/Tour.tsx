@@ -85,6 +85,19 @@ export function Tour({ settings: s, info, update, onClose }: {
   const [fixed, setFixed] = useState(false);
   const [undone, setUndone] = useState<string | null>(null);
   const managed = info?.managed;
+  const root = useRef<HTMLDivElement>(null);
+  const shownStep = useRef(step);
+
+  // Steps 1 and 2 move focus into their practice box. On the others the button that was pressed is
+  // gone or reused, so focus would fall to the page: put it on the new step's title instead.
+  useEffect(() => {
+    if (shownStep.current === step) return;
+    shownStep.current = step;
+    if (step <= 2) return;
+    const h1 = root.current?.querySelector<HTMLElement>("h1");
+    h1?.setAttribute("tabindex", "-1");
+    h1?.focus();
+  }, [step]);
 
   const done = () => {
     if (!s.onboarded) update({ onboarded: true });
@@ -92,10 +105,10 @@ export function Tour({ settings: s, info, update, onClose }: {
   };
 
   return (
-    <div className="tour">
+    <div className="tour" ref={root}>
       <div className="tour-head">
         <AppIcon className="tour-logo" />
-        <small className="muted">{t("tour.step", { n: step, total: STEPS })}</small>
+        <small className="muted" role="status">{t("tour.step", { n: step, total: STEPS })}</small>
         <div className="dots" aria-hidden="true">
           {Array.from({ length: STEPS }, (_, i) => <i key={i} className={i + 1 <= step ? "on" : undefined} />)}
         </div>
@@ -151,7 +164,7 @@ export function Tour({ settings: s, info, update, onClose }: {
           {step < STEPS && <button className="btn ghost" onClick={() => setStep(STEPS)}>{t("tour.skip")}</button>}
           {step < STEPS
             ? <button className="btn" disabled={(step === 1 && !fixed) || (step === 2 && !undone)} onClick={() => setStep(step + 1)}>{t("tour.next")}</button>
-            : <button className="btn" autoFocus onClick={done}>{t(s.onboarded ? "tour.done" : "tour.continue")}</button>}
+            : <button className="btn" onClick={done}>{t(s.onboarded ? "tour.done" : "tour.continue")}</button>}
         </div>
       </div>
       {step === STEPS && !s.onboarded && (
