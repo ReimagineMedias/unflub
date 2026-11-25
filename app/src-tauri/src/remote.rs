@@ -259,10 +259,7 @@ impl Remote {
     }
 
     fn write(&self, name: PathBuf, bytes: &[u8]) -> std::io::Result<()> {
-        fs::create_dir_all(&self.dir)?;
-        let tmp = name.with_extension("tmp");
-        fs::write(&tmp, bytes)?;
-        fs::rename(&tmp, &name)
+        crate::files::replace(&name, bytes)
     }
 
     fn save_meta(&self, meta: &Meta) {

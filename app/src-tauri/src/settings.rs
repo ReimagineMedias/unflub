@@ -309,14 +309,9 @@ impl Store {
         }
     }
 
-    /// Atomic write: temp file then rename, so a crash never leaves half a file.
+    /// Atomic and flushed (`files::replace`), so a crash or power loss never leaves half a file.
     pub fn save(&self, settings: &Settings) -> io::Result<()> {
-        if let Some(dir) = self.path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_vec_pretty(settings)?)?;
-        fs::rename(tmp, &self.path)
+        crate::files::replace(&self.path, &serde_json::to_vec_pretty(settings)?)
     }
 }
 

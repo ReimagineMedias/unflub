@@ -684,14 +684,9 @@ impl Usage {
             return;
         }
         let tally = self.tally.lock().unwrap().clone();
-        if let Some(dir) = self.path.parent() {
-            let _ = fs::create_dir_all(dir);
-        }
-        let tmp = self.path.with_extension("json.tmp");
         let written = serde_json::to_vec(&tally)
             .map_err(std::io::Error::other)
-            .and_then(|bytes| fs::write(&tmp, bytes))
-            .and_then(|()| fs::rename(&tmp, &self.path));
+            .and_then(|bytes| crate::files::replace(&self.path, &bytes));
         if let Err(e) = written {
             eprintln!("usage stats: can't save ({e})");
         }

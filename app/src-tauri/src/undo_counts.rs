@@ -128,14 +128,9 @@ impl UndoCounts {
         if !self.persist.load(Ordering::Relaxed) {
             return;
         }
-        if let Some(dir) = self.path.parent() {
-            let _ = fs::create_dir_all(dir);
-        }
-        let tmp = self.path.with_extension("json.tmp");
         let written = serde_json::to_vec(counts)
             .map_err(std::io::Error::other)
-            .and_then(|bytes| fs::write(&tmp, bytes))
-            .and_then(|()| fs::rename(&tmp, &self.path));
+            .and_then(|bytes| crate::files::replace(&self.path, &bytes));
         if let Err(e) = written {
             eprintln!("undo counts: can't save ({e})");
         }

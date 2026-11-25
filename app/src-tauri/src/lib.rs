@@ -1,6 +1,7 @@
 mod crash;
 mod engine;
 mod facts;
+mod files;
 mod install;
 mod keys;
 mod links;
