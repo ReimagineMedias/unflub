@@ -393,8 +393,8 @@ uninstaller's confirm page; it is off by default.
 |---|---|---|---|
 | App | `%LOCALAPPDATA%\unflub` (MSI: `Program Files\unflub`) | removed | removed |
 | Start menu shortcut | | removed | removed |
-| Start at login | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\unflub` | removed | removed |
-| Task Manager's startup switch | `HKCU\...\Explorer\StartupApproved\Run\unflub` | removed | removed |
+| Start at login | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\unflub` | removed | removed for the account that uninstalls only |
+| Task Manager's startup switch | `HKCU\...\Explorer\StartupApproved\Run\unflub` | removed | removed for the account that uninstalls only |
 | Installer bookkeeping | `HKCU\Software\Reimagine Media (RMGN)\unflub` (from the publisher name) | removed | n/a |
 | Settings, last update check | `%APPDATA%\ca.rmgn.unflub` | with the checkbox | kept |
 | Web view cache | `%LOCALAPPDATA%\ca.rmgn.unflub` | with the checkbox | kept |
@@ -411,6 +411,16 @@ Remove-Item "$env:APPDATA\ca.rmgn.unflub", "$env:LOCALAPPDATA\ca.rmgn.unflub" -R
 Remove-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name unflub -ErrorAction SilentlyContinue
 Remove-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run -Name unflub -ErrorAction SilentlyContinue
 ```
+
+**The MSI only cleans up the account that uninstalls it.** It installs for every account, but
+each account that turns on start at login gets its own `Run` entry, which unflub writes to that
+account's `HKCU`. An uninstaller can't safely reach other accounts' `HKCU` (a signed-out
+account's is not even loaded), so on a shared PC their entries stay behind and point at the
+deleted `unflub.exe` (Task Manager can still list unflub under Startup apps). Each of those
+accounts removes them with the last two commands above.
+Reinstalling the MSI makes the entries work again, since the path is the same. Fixing this for
+good means MSI installs start at login from `HKLM\...\Run`, written by the MSI, instead of from
+each account's `HKCU`: an app change, tracked in #128.
 
 **Start at login follows Windows.** The toggle in Settings > General reads the `Run` entry and
 Task Manager's switch each time the window opens and at startup, so turning unflub off in Task

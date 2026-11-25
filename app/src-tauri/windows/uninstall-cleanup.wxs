@@ -6,6 +6,8 @@
   Windows Installer doesn't know about it. On a real uninstall (not an upgrade) this removes it for
   the user who uninstalls. The actions are deferred and impersonated, so reg.exe runs as that user
   rather than as LocalSystem, and they ignore failures (the entry may not exist).
+  Other accounts that turned on start at login keep their HKCU entries, pointing at the removed
+  unflub.exe: an uninstaller can't safely reach their HKCU (docs/releasing.md#uninstalling, issue 128).
   The MSI has no "delete app data" option: settings stay in %APPDATA%\ca.rmgn.unflub.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
