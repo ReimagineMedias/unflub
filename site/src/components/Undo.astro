@@ -180,6 +180,15 @@ const steps = [
       grid-template-columns: 1fr;
     }
 
+    /* The note wraps to three lines on a phone; keep it clear of the "added to Your words" toast. */
+    .undo :global(.notes) {
+      height: 284px;
+    }
+
+    .doc-title {
+      margin-bottom: 32px;
+    }
+
     .doc .field {
       font-size: 17px;
       --pill-size: 12.5px;

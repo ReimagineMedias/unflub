@@ -38,18 +38,17 @@ const promise = "Nothing you type leaves your computer.".split(" ");
     text-underline-offset: 0.25em;
   }
 
-  /* The words light up one after another as the statement crosses the screen. */
+  /* The words light up one after another as the statement crosses the screen. Opacity only, so reduced motion
+     keeps it too. */
   @supports (animation-timeline: view()) {
-    @media (prefers-reduced-motion: no-preference) {
-      .w {
-        animation: light linear both;
-      }
+    .w {
+      animation: light linear both;
+    }
 
-      /* Separate rule so the timeline is not folded into the shorthand. */
-      .promise .w {
-        animation-timeline: view();
-        animation-range: entry 80% cover 50%;
-      }
+    /* Separate rule so the timeline is not folded into the shorthand. */
+    .promise .w {
+      animation-timeline: view();
+      animation-range: entry 80% cover 50%;
     }
   }
 

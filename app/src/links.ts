@@ -6,11 +6,15 @@ export const LINKS = {
 } as const;
 
 /**
- * A link the opener plugin may open: the scope in capabilities/default.json allows these two
- * sites only. Use `<ExternalLink>`; raw `<a>` links do nothing in the app window.
+ * A link the opener plugin may open: the scope in capabilities/default.json allows our GitHub
+ * owner, the sponsors page and the site only. Use `<ExternalLink>`; raw `<a>` links do nothing in
+ * the app window.
  */
 export type ExternalUrl = `https://github.com/${string}` | `https://unflub.rmgn.net/${string}`;
 
+const PREFIXES = ["https://github.com/ReimagineMedias/", "https://unflub.rmgn.net/"];
+
 export function isExternalUrl(url: string): url is ExternalUrl {
-  return (url.startsWith("https://github.com/") || url.startsWith("https://unflub.rmgn.net/")) && !/\s/.test(url);
+  const allowed = url === LINKS.sponsor || PREFIXES.some((p) => url.startsWith(p));
+  return allowed && !/\s/.test(url) && !url.includes("/..") && !/%2e/i.test(url);
 }

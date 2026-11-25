@@ -2,7 +2,8 @@
 /**
  * One word, up close: a pinned scene. As you scroll, the sentence types itself (each character owns a slice of the
  * scroll range), the typo turns into the fix, and the fixed word comes forward with its capsule.
- * Without scroll timelines, or with reduced motion, it shows the finished frame.
+ * Reduced motion keeps the pin and the swap from typo to fix, without the typing and movement.
+ * Without scroll timelines it shows the finished frame.
  */
 const pre = "Running late, ";
 const typo = "teh";
@@ -107,51 +108,63 @@ const postChars = [...post].map((c, k) => ({ c, s: 76 + k * 0.9 }));
     text-decoration-thickness: 1px;
   }
 
+  /* The pin, and the typo-to-fix swap, are the same with reduced motion. Only the moving parts (typing, the word
+     coming forward, the capsule rising, the underline drawing) are left out: the full sentence shows with its
+     typo, then the fix lands with its underline, capsule and hint, and they stay. */
   @supports (animation-timeline: view()) {
-    @media (prefers-reduced-motion: no-preference) {
-      .close {
-        height: 200vh;
-        padding: 0;
-        view-timeline: --close block;
-      }
+    .close {
+      height: 200vh;
+      padding: 0;
+      view-timeline: --close block;
+    }
 
-      .frame {
-        position: sticky;
-        top: 0;
-        height: 100svh;
-      }
+    .frame {
+      position: sticky;
+      top: 0;
+      height: 100svh;
+    }
 
-      .typo {
-        visibility: visible;
-      }
+    .typo {
+      visibility: visible;
+    }
 
-      .ch,
-      .typo,
-      .fixd,
+    .ch,
+    .typo,
+    .fixd,
+    .fixd::after,
+    .cap,
+    .word,
+    .dim,
+    .title,
+    .hint {
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: --close;
+    }
+
+    .typo {
+      animation-name: out;
+      animation-range: contain 31% contain 32%;
+    }
+
+    .fixd {
+      animation-name: in;
+      animation-range: contain 31% contain 32%;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
       .fixd::after,
       .cap,
-      .word,
-      .dim,
-      .title,
       .hint {
-        animation-timing-function: linear;
-        animation-fill-mode: both;
-        animation-timeline: --close;
+        animation-name: in;
+        animation-range: contain 31% contain 32%;
       }
+    }
 
+    @media (prefers-reduced-motion: no-preference) {
       .ch {
         animation-name: key;
         animation-range: contain var(--s) contain calc(var(--s) + 0.2%);
-      }
-
-      .typo {
-        animation-name: out;
-        animation-range: contain 31% contain 32%;
-      }
-
-      .fixd {
-        animation-name: in;
-        animation-range: contain 31% contain 32%;
       }
 
       .fixd::after {
