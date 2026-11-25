@@ -9,6 +9,7 @@ const BIGRAMS: &str = include_str!("../data/frequency_bigramdictionary_en_243_34
 const EXTRA_WORDS: &str = include_str!("../data/extra_words.txt");
 const CONTRACTIONS: &str = include_str!("../data/contractions.txt");
 const TECH_WORDS: &str = include_str!("../data/tech_words.txt");
+const SPELLING_VARIANTS: &str = include_str!("../data/spelling_variants.txt");
 
 /// Longest dictionary word kept, in bytes.
 const MAX_WORD: usize = 32;
@@ -97,6 +98,7 @@ impl Dictionary {
                     EXTRA_WORDS,
                     CONTRACTIONS,
                     TECH_WORDS,
+                    SPELLING_VARIANTS,
                 ))
             })
             .clone()
@@ -108,6 +110,7 @@ impl Dictionary {
         extra: &'a str,
         contractions: &'a str,
         tech: &'a str,
+        variants: &'a str,
     ) -> Self {
         fn add<'a>(
             w: &'a str,
@@ -140,6 +143,22 @@ impl Dictionary {
             .flat_map(str::split_ascii_whitespace);
         for w in tech_words {
             add(w, TECH_COUNT, &mut counts, &mut index);
+        }
+        // American and British spellings: the one the list lacks gets the other's count, so
+        // neither is a typo of the other.
+        for line in variants
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+        {
+            let mut parts = line.split_ascii_whitespace();
+            let (Some(a), Some(b)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            match (index.get(a), index.get(b)) {
+                (Some(&i), None) => add(b, counts[i].1, &mut counts, &mut index),
+                (None, Some(&i)) => add(a, counts[i].1, &mut counts, &mut index),
+                _ => {}
+            }
         }
 
         let uni_total: f64 = counts.iter().map(|&(_, c)| c).sum();
@@ -363,6 +382,7 @@ mod tests {
             "ok 3\n",
             "can't cannot\n",
             "# comment\nimpl usize the\n",
+            "",
         );
         assert_eq!(d.word_count(), 6);
         assert!(d.id(b"usize").is_some());
@@ -377,5 +397,25 @@ mod tests {
         let (t, n) = (d.id(b"the").unwrap(), d.id(b"then").unwrap());
         assert!(d.bigram(t, n).is_some());
         assert!(d.bigram(n, t).is_none());
+    }
+
+    #[test]
+    fn spelling_variants_share_a_count() {
+        let d = Dictionary::build(
+            "the 100\ncolour 40\nbehavior 30\n",
+            "",
+            "",
+            "",
+            "",
+            "color colour\nbehavior behaviour\nfoo bar\n",
+        );
+        let (us, gb) = (d.id(b"color").unwrap(), d.id(b"colour").unwrap());
+        assert_eq!(d.log_p(us), d.log_p(gb));
+        let (us, gb) = (d.id(b"behavior").unwrap(), d.id(b"behaviour").unwrap());
+        assert_eq!(d.log_p(us), d.log_p(gb));
+        assert!(
+            d.id(b"foo").is_none(),
+            "neither spelling known: nothing added"
+        );
     }
 }

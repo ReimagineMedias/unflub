@@ -8,6 +8,7 @@ The engine embeds these files with `include_str!` and builds its index from them
 | `frequency_bigramdictionary_en_243_342.txt` | [SymSpell](https://github.com/wolfgarbe/SymSpell/blob/master/SymSpell/frequency_bigramdictionary_en_243_342.txt) | MIT, Copyright (c) 2018 Wolf Garbe |
 | `extra_words.txt` | unflub: everyday and technical words the SymSpell list lacks, with hand-assigned counts | MIT (this repository) |
 | `tech_words.txt` | unflub: about 1,000 programming terms (keywords, standard types, tools, jargon), loaded as known words with a modest count | MIT (this repository) |
+| `spelling_variants.txt` | unflub: American and British spellings of the same word; the one the frequency list lacks gets the other's count | MIT (this repository) |
 | `contractions.txt` | unflub: contractions and their expansions, used to give contractions realistic counts | MIT (this repository) |
 
 The SymSpell files were taken from commit `91fe939e9c1259813ee817e95239629c5badf8ec`
