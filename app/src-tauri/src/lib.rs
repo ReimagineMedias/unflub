@@ -135,9 +135,12 @@ fn set_settings(app: AppHandle, mut settings: Settings) -> Result<serde_json::Va
         &pending,
     );
     merge_learned(&mut settings.personal_words, &pending);
-    // The window doesn't set the file's schema version.
-    settings.schema_version = state.settings.lock().unwrap().schema_version;
-    let saved = apply_settings(&app, settings).map_err(|e| e.to_string())?;
+    let saved = update_settings(&app, |current| {
+        // The window doesn't set the file's schema version.
+        settings.schema_version = current.schema_version;
+        *current = settings;
+    })
+    .map_err(|e| e.to_string())?;
     app.state::<Usage>().personal_words_added(added);
     // Saved to disk now; words learned during the save stay pending.
     state
@@ -152,17 +155,17 @@ fn set_settings(app: AppHandle, mut settings: Settings) -> Result<serde_json::Va
 fn reset_settings(app: AppHandle) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     state.pending_learned.lock().unwrap().clear();
-    let current = current_settings(&app);
-    // A reset is about preferences: the welcome isn't shown again.
-    let fresh = Settings {
-        schema_version: current.schema_version,
-        onboarded: current.onboarded,
-        extra: current.extra,
-        ..Settings::default()
-    };
-    apply_settings(&app, fresh)
-        .map(|s| for_window(&s))
-        .map_err(|e| e.to_string())
+    update_settings(&app, |current| {
+        // A reset is about preferences: the welcome isn't shown again.
+        *current = Settings {
+            schema_version: current.schema_version,
+            onboarded: current.onboarded,
+            extra: std::mem::take(&mut current.extra),
+            ..Settings::default()
+        };
+    })
+    .map(|s| for_window(&s))
+    .map_err(|e| e.to_string())
 }
 
 /// How many of `next` the user added in the window: not in `prev`, and not one of the words
@@ -401,13 +404,15 @@ fn effective_settings(app: &AppHandle) -> Settings {
         .effective(current_settings(app))
 }
 
-/// Persist, sync side effects (login item, tray, privacy switches), then tell every window.
-fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> {
-    let next = next.sanitised();
+/// Change the settings and save them, sync side effects (login item, tray, privacy switches),
+/// then tell every window. `change` gets the latest settings, and changes never overlap
+/// (`Store::update`), so a word learned while the window saves isn't lost.
+fn update_settings(
+    app: &AppHandle,
+    change: impl FnOnce(&mut Settings),
+) -> std::io::Result<Settings> {
     let state = app.state::<AppState>();
-    let prev = state.settings.lock().unwrap().clone();
-    state.store.save(&next)?;
-    *state.settings.lock().unwrap() = next.clone();
+    let (prev, next) = state.store.update(&state.settings, change)?;
 
     if prev.start_at_login != next.start_at_login {
         sync_autostart(app, next.start_at_login);
@@ -440,10 +445,12 @@ fn apply_settings(app: &AppHandle, next: Settings) -> std::io::Result<Settings> 
         // Learning off: the counts have no use left (the engine forgets its own below).
         counts.clear();
     }
+    // Another change may have landed since ours: the engine and the windows get the latest.
+    let latest = current_settings(app);
     if let Some(engine) = state.engine.lock().unwrap().as_ref() {
-        engine.apply(&next);
+        engine.apply(&latest);
     }
-    emit_settings(app, &next);
+    emit_settings(app, &latest);
     Ok(next)
 }
 
@@ -467,13 +474,17 @@ fn learn_word(app: &AppHandle, word: String) {
         &mut state.pending_learned.lock().unwrap(),
         std::slice::from_ref(&word),
     );
-    let mut next = state.settings.lock().unwrap().clone();
     let key = word.to_lowercase();
-    if next.personal_words.iter().any(|w| w.to_lowercase() == key) {
+    let known = |s: &Settings| s.personal_words.iter().any(|w| w.to_lowercase() == key);
+    if known(&current_settings(app)) {
         return;
     }
-    next.personal_words.push(word);
-    if let Err(e) = apply_settings(app, next) {
+    let learned = update_settings(app, |s| {
+        if !known(s) {
+            s.personal_words.push(word);
+        }
+    });
+    if let Err(e) = learned {
         eprintln!("saving a learned word: {e}");
     }
 }
@@ -578,7 +589,7 @@ fn stop_engine(app: &AppHandle) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
-    // Take it out first: the engine thread may call apply_settings while it winds down.
+    // Take it out first: the engine thread may call update_settings while it winds down.
     let engine = state.engine.lock().unwrap().take();
     if let Some(engine) = engine {
         engine.shutdown();
@@ -633,15 +644,13 @@ fn sync_login_truth(app: &AppHandle) {
     // Record the OS's answer without writing it back, so a Task Manager "Disable" stays
     // re-enableable from Task Manager.
     let state = app.state::<AppState>();
-    let next = {
-        let mut settings = state.settings.lock().unwrap();
-        settings.start_at_login = actual;
-        settings.clone()
-    };
-    if let Err(e) = state.store.save(&next) {
-        eprintln!("start at login: {e}");
+    match state
+        .store
+        .update(&state.settings, |s| s.start_at_login = actual)
+    {
+        Ok((_, next)) => emit_settings(app, &next),
+        Err(e) => eprintln!("start at login: {e}"),
     }
-    emit_settings(app, &next);
 }
 
 fn tray_image(enabled: bool) -> Image<'static> {
@@ -814,9 +823,7 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "toggle" => {
-                let mut next = current_settings(app);
-                next.enabled = !next.enabled;
-                let _ = apply_settings(app, next);
+                let _ = update_settings(app, |s| s.enabled = !s.enabled);
             }
             "settings" => open_settings(app, None),
             "update" => match app.state::<Updates>().status() {

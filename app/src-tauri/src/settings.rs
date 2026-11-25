@@ -1,7 +1,11 @@
 //! Persisted user settings. The app owns this file; the engine gets a `unflub_core::Config` from it.
 
 use serde::{Deserialize, Serialize};
-use std::{fs, io, path::PathBuf};
+use std::{
+    fs, io,
+    path::PathBuf,
+    sync::{Mutex, PoisonError},
+};
 
 /// The settings file's format. Bump it and add a step to `migrations.rs` whenever a change needs
 /// more than serde defaults (a renamed field, a changed meaning, a value to fill in).
@@ -261,12 +265,15 @@ fn sanitised_language(tag: &str) -> String {
 
 pub struct Store {
     path: PathBuf,
+    /// Held for every write, and across read, change and write in [`Store::update`].
+    writing: Mutex<()>,
 }
 
 impl Store {
     pub fn new(dir: PathBuf) -> Self {
         Self {
             path: dir.join("settings.json"),
+            writing: Mutex::new(()),
         }
     }
 
@@ -310,7 +317,32 @@ impl Store {
     }
 
     /// Atomic and flushed (`files::replace`), so a crash or power loss never leaves half a file.
+    /// Saves never overlap.
     pub fn save(&self, settings: &Settings) -> io::Result<()> {
+        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        self.write(settings)
+    }
+
+    /// Change the settings in `current` and save them, as one step: `change` sees the latest
+    /// settings even when another thread just changed them, and the file and `current` always
+    /// end up with the same value. Nothing changes in memory when the save fails. Returns the
+    /// settings before and after.
+    pub fn update(
+        &self,
+        current: &Mutex<Settings>,
+        change: impl FnOnce(&mut Settings),
+    ) -> io::Result<(Settings, Settings)> {
+        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let prev = current.lock().unwrap().clone();
+        let mut next = prev.clone();
+        change(&mut next);
+        let next = next.sanitised();
+        self.write(&next)?;
+        *current.lock().unwrap() = next.clone();
+        Ok((prev, next))
+    }
+
+    fn write(&self, settings: &Settings) -> io::Result<()> {
         crate::files::replace(&self.path, &serde_json::to_vec_pretty(settings)?)
     }
 }
@@ -455,6 +487,40 @@ mod tests {
         );
         let s = Settings::default();
         assert_eq!(s.clone().sanitised().excluded_apps, s.excluded_apps);
+    }
+
+    /// Review #141: saves from many threads at once all succeed, none is lost, and the file
+    /// ends up with what memory holds.
+    #[test]
+    fn concurrent_updates_are_serialised() {
+        let dir = std::env::temp_dir().join(format!("unflub-settings-race-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = std::sync::Arc::new(Store::new(dir.clone()));
+        let current = std::sync::Arc::new(Mutex::new(Settings::default()));
+        let threads: Vec<_> = (0..8)
+            .map(|t| {
+                let (store, current) = (store.clone(), current.clone());
+                std::thread::spawn(move || {
+                    for i in 0..300 {
+                        store
+                            .update(&current, |s| s.personal_words.push(format!("w{t}x{i}")))
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let in_memory = current.lock().unwrap().clone();
+        assert_eq!(in_memory.personal_words.len(), 8 * 300, "no update lost");
+        assert_eq!(store.load(), in_memory, "disk and memory agree");
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["settings.json"], "no temp file left");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

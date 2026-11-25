@@ -275,9 +275,7 @@ pub fn answer(app: &AppHandle, answer: Answer) {
         }
         Answer::Send => send_in_background(app.clone()),
         Answer::AlwaysSend => {
-            let mut next = crate::current_settings(app);
-            next.send_crash_reports = true;
-            if let Err(e) = crate::apply_settings(app, next) {
+            if let Err(e) = crate::update_settings(app, |s| s.send_crash_reports = true) {
                 eprintln!("crash reports: {e}");
             }
             send_in_background(app.clone());
