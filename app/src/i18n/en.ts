@@ -153,6 +153,7 @@ export const en = {
   "dictionary.words.hint": "Names, slang, product names. Words you undo land here too.",
   "dictionary.words.placeholder": "Add a word",
   "dictionary.words.empty": "No words yet.",
+  "dictionary.words.single": "One word at a time. Phrases go under Shortcuts.",
   "dictionary.shortcuts": "Shortcuts",
   "dictionary.shortcuts.hint": "Typed exactly, then replaced when you finish the word.",
   "dictionary.shortcuts.empty": "No shortcuts yet.",

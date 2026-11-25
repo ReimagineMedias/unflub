@@ -377,7 +377,7 @@ export default function App() {
             <div className="card">
               <Row stack label={t("dictionary.words")} hint={t("dictionary.words.hint")}>
                 <ChipList items={s.personalWords} onChange={(v) => update({ personalWords: v })}
-                  placeholder={t("dictionary.words.placeholder")} empty={t("dictionary.words.empty")} />
+                  placeholder={t("dictionary.words.placeholder")} empty={t("dictionary.words.empty")} single={t("dictionary.words.single")} />
               </Row>
               <Row stack label={t("dictionary.shortcuts")} hint={t("dictionary.shortcuts.hint")}>
                 <RuleList rules={s.userRules} onChange={(v) => update({ userRules: v })} />
