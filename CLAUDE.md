@@ -114,8 +114,15 @@ Repo is private until v0.1, then flipped public.
   is dropped unless the cached verified manifest still offers that exact file (`still_offered`). Only `install-source` = installer
   self-updates (`install.rs`); winget, chocolatey, scoop, store show "Update with ..." instead. Release builds only.
 - Privacy/network map is in `docs/architecture.md#network-and-privacy`. Usage stats (`usage.rs`) and crash reports
-  (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON (the tour asks only about crash reports; usage stats are switched off only in Settings > Privacy, and the tour's last step shows the Terms line, owner 2026-11-25); tests pin the
-  payload keys to the contract allowlist. Manifest flags (`remote.rs`) may only switch things off (tested). Machine
+  (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON. The tour asks only about crash reports and
+  shows the Terms line on its last step; usage stats are switched off only in Settings > Privacy. Tests pin the payload
+  keys to the contract allowlist. Usage report schema 3 since 2026-11-25 (spec `.local/telemetry-v3-spec.md`; the API
+  must accept 3 before an app sending it ships): one frozen report per day (retried alone while the next day counts),
+  counts capped at 1,000,000 and minutes at 1440, worst-case body ~1.8 KB of the 2 KB limit (size test). App categories
+  come from `crates/unflub-engine/src/category.rs` in the engine; only the category crosses the pipe. First-run day and
+  tour outcome live in `install-facts.json` (`facts.rs`), sent only as buckets. The window reports what Rust can't see
+  through `usage_event` (`stats_page_view`, `tour_replay`, `tour_completed`, `tour_skipped`, `update_dismissed`).
+  Manifest flags (`remote.rs`) may only switch things off (tested). Machine
   policy `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`). Typo-fix pair sharing was cut from v0.1.
 - Settings have `schemaVersion` (`migrations.rs`, step by step, keeps `settings.json.v<N>`), and unknown fields survive
   in `Settings::extra`. All window strings are in `app/src/i18n/en.ts` (`t()`), tray strings in `strings.rs`. External
@@ -123,7 +130,9 @@ Repo is private until v0.1, then flipped public.
   on raw `<a>` in `app/src`.
 - The hook ignores unflub's own exe (HookOptions.excluded_apps), so Settings is never autocorrected; the first-run
   tour's practice box uses a separate engine over IPC (`tour.rs`). The adapter's hook watchdog (GetLastInputInfo vs
-  last callback, plus resume/unlock re-arm) reinstalls dropped LL hooks (`HookEvent::HooksReinstalled`).
+  last callback, plus resume/unlock re-arm) reinstalls dropped LL hooks (`HookEvent::HooksReinstalled`). Its backoff
+  resets only after a real callback following a reinstall, and a resume re-arms once (`ResumeGate`); both are pure
+  logic tested in `hook.rs`.
 - Preview the settings UI in a plain browser (`cd app; npx vite`): query params `?welcome` (first run), `?page=tour`,
   `?update=ready&critical`, `?crash`, `?managed`, `?source=scoop`, `?theme=ink&mode=dark`.
 - Uninstall: Tauri's NSIS template already deletes `HKCU\...\Run\unflub` (not on `/UPDATE`) and has a "Delete the
