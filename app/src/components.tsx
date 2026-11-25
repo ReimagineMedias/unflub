@@ -22,7 +22,7 @@ export function AppIcon({ className }: { className?: string }) {
   );
 }
 
-/** Short, plain list of what is shared. Used by the tour and the Privacy page. */
+/** Short, plain list of what is shared. Used by the tour; the Privacy page has the full list. */
 export function Disclosure() {
   return (
     <div className="disclosure">

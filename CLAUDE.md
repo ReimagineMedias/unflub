@@ -111,13 +111,14 @@ Repo is private until v0.1, then flipped public.
   is dropped unless the cached verified manifest still offers that exact file (`still_offered`). Only `install-source` = installer
   self-updates (`install.rs`); winget, chocolatey, scoop, store show "Update with ..." instead. Release builds only.
 - Privacy/network map is in `docs/architecture.md#network-and-privacy`. Usage stats (`usage.rs`) and crash reports
-  (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON; tests pin the payload keys to the
-  contract allowlist. Usage report schema 3 since 2026-11-25 (spec `.local/telemetry-v3-spec.md`; the API must accept
-  3 before an app sending it ships): one frozen report per day (retried alone while the next day counts), counts
-  capped at 1,000,000 and minutes at 1440, worst-case body ~1.8 KB of the 2 KB limit (size test). App categories come
-  from `crates/unflub-engine/src/category.rs` in the engine; only the category crosses the pipe. First-run day and
-  tour outcome live in `install-facts.json` (`facts.rs`), sent only as buckets. The window reports what Rust can't
-  see through `usage_event` (`stats_page_view`, `tour_replay`, `tour_completed`, `tour_skipped`, `update_dismissed`). Manifest flags (`remote.rs`) may only switch things off (tested). Machine
+  (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON (the tour asks only about crash reports; usage stats are switched off only in Settings > Privacy, and the tour's last step shows the Terms line, owner 2026-11-25); tests pin the
+  payload keys to the contract allowlist. Usage report schema 3 since 2026-11-25 (spec `.local/telemetry-v3-spec.md`;
+  the API must accept 3 before an app sending it ships): one frozen report per day (retried alone while the next day
+  counts), counts capped at 1,000,000 and minutes at 1440, worst-case body ~1.8 KB of the 2 KB limit (size test). App
+  categories come from `crates/unflub-engine/src/category.rs` in the engine; only the category crosses the pipe.
+  First-run day and tour outcome live in `install-facts.json` (`facts.rs`), sent only as buckets. The window reports
+  what Rust can't see through `usage_event` (`stats_page_view`, `tour_replay`, `tour_completed`, `tour_skipped`,
+  `update_dismissed`). Manifest flags (`remote.rs`) may only switch things off (tested). Machine
   policy `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`). Typo-fix pair sharing was cut from v0.1.
 - Settings have `schemaVersion` (`migrations.rs`, step by step, keeps `settings.json.v<N>`), and unknown fields survive
   in `Settings::extra`. All window strings are in `app/src/i18n/en.ts` (`t()`), tray strings in `strings.rs`. External
@@ -147,10 +148,15 @@ Repo is private until v0.1, then flipped public.
   trailing slashes and caching live in `site/vercel.json`, which `scripts/serve.mjs` and the tests also read. CI only
   checks, builds and tests. Performance figures live in `site/src/data/performance.ts`; keep them in step with
   docs/performance.md. Scripts must stay external files (the CSP has no 'unsafe-inline' for scripts; a test enforces it).
-- Site privacy copy (owner, 2026-11-17): "Nothing you type leaves your computer." The update check sends app version,
-  Windows version + architecture and anonymous first-of-day/week/month flags, no ID. Anonymous usage stats and crash
-  reports are on by default with a first-run choice. Typo pairs are not collected. The app's Stats page is local only.
-  Details live on /privacy; the home section stays one short statement. A test rejects the old ID/typo-pair wording.
+- Site privacy copy (owner, 2026-11-17; stats decision 2026-11-25): "Nothing you type leaves your computer." The
+  update check sends only `User-Agent: unflub/{version}` (`app/src-tauri/src/net.rs`); first-of-week/month flags ride
+  on the stats report (`X-First`). Usage stats are on by default with no first-run question: the first-run screen says
+  "unflub is free and self-funded. By continuing, you agree to the Terms." (links /terms/ and /privacy/), and the
+  switch lives in Settings > Privacy. /privacy/ lists every v3 report group (spec: `.local/telemetry-v3-spec.md` in
+  the main checkout); keep it in step when the report changes. Crash reports are asked after each crash (Send, Don't
+  send, Always send). Typo pairs are not collected. The app's Stats page is local only. /terms/ is plain-language
+  (MIT, as is, Ontario law, dated at the top). The home section stays one short statement. A test rejects the old
+  ID/typo-pair wording, including the phrase "install ID", so say "an ID for your copy of unflub" instead.
   Sponsor/star links come from `SITE.sponsor` and `SITE.repo` in `site/src/data/site.ts`.
 - Site design (owner, 2026-11-17): white day page, studio-lit capsule and grey cards, espresso pill nav; the home page
   sinks to near-black for `.story` (Everywhere, Undo, Speed, Privacy) via a fixed `.dusk` layer on a `--story` view
@@ -171,4 +177,9 @@ Repo is private until v0.1, then flipped public.
   After the check the page fetches `?format=json` from the API (4 s timeout) and opens the returned URL (only
   dl.rmgn.net or github.com). Any failure falls back to GitHub's latest release after a one-line message. Headless Chrome fails the real key;
   test the flow with Cloudflare's test keys (1x...BB pass, 3x...FF interactive) or by hand in a normal browser.
+- dl.rmgn.net publish runs here since 2026-11-23 (`.github/workflows/publish-dl.yml`): rmgn-api is private and the
+  org's free minutes ran out, so this public repo checks out ReimagineMedias/api read-only and runs its publisher.
+  Environment `dl-publish` (main only) holds the keys; variable `DL_PUBLISH_ACTORS` lists who may run it. Its
+  log must never show the publisher's output. Fallback from a PC: `node scripts/publish-dl.mjs --deploy` in
+  D:\Code\rmgn-api with the `.local` secrets (`.dev.vars`' CF_ACCOUNT_ID is quoted; strip the quotes).
 - In Git Bash, `--flag=/path`-style args get rewritten to Windows paths (MSYS); pass names, not leading-slash paths.

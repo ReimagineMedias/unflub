@@ -1,0 +1,90 @@
+---
+import Subpage from "../layouts/Subpage.astro";
+import { SITE } from "../data/site";
+---
+
+<Subpage
+  title="Terms of use: free, open source, provided as is"
+  description="The plain-language terms for unflub: free and open source under the MIT License, provided as is, anonymous usage stats on by default, automatic updates."
+  crumb="Terms"
+>
+  <h1>Terms of use</h1>
+  <p class="lead">Last updated <time datetime="2026-11-25">November 25, 2026</time>.</p>
+  <p>
+    These terms cover your use of unflub. They are short on purpose. By installing or using unflub, you agree to them.
+  </p>
+
+  <h2>Who we are</h2>
+  <p>
+    unflub is made by Reimagine Media (<a href={SITE.org.url}>RMGN</a>), an unregistered studio in Ottawa, Canada, run by
+    Matias Suxo. "We" and "us" on this page mean RMGN.
+  </p>
+
+  <h2>What unflub is</h2>
+  <p>
+    unflub is a Windows app that fixes typos as you type, in any app. Corrections are worked out on your computer. Nothing you
+    type leaves it.
+  </p>
+
+  <h2>Free to use</h2>
+  <p>unflub is free. There is no paid tier, no account and no ads.</p>
+
+  <h2>Open source</h2>
+  <p>
+    The code is published under the <a href={SITE.license}>MIT License</a>. You may use, copy, change and share it under that
+    license. The unflub name and logo are <a href={SITE.trademarks}>trademarks of RMGN</a> and are not covered by it.
+  </p>
+
+  <h2>Provided as is</h2>
+  <p>
+    unflub is provided as is, without warranty of any kind. We work hard to make it fix the right words and leave the rest
+    alone, but it can still get a word wrong.
+  </p>
+  <p>
+    As far as the law allows, we are not liable for any loss or damage from using unflub. That includes text that was lost,
+    changed or corrected wrongly. The MIT License says the same.
+  </p>
+
+  <h2>Check what you type</h2>
+  <p>
+    You are responsible for what you type and send. Read it over before it goes somewhere important, such as an email, a
+    contract, a form or code. You can pause autocorrect, or leave an app out, at any time in Settings.
+  </p>
+
+  <h2>Usage stats</h2>
+  <p>
+    unflub sends anonymous usage stats once a day. They are on by default and never include what you type. You can turn them
+    off at any moment in Settings &gt; Privacy, and nothing more is sent after that. The
+    <a href="/privacy/">privacy page</a> lists exactly what is sent.
+  </p>
+
+  <h2>Updates</h2>
+  <p>
+    unflub checks for updates once a day and installs new versions automatically when you restart or quit it. Updates come
+    only from our signed releases, and unflub checks the signature before it installs anything. You can turn off Automatic updates in Settings &gt; Privacy.
+  </p>
+
+  <h2>Contact</h2>
+  <p>
+    For questions, bugs and wrong fixes, <a href={SITE.issues}>open an issue on GitHub</a>. To report a security problem,
+    please use <a href={SITE.securityReport}>a private report</a> instead, as our
+    <a href={SITE.security}>security policy</a> describes.
+  </p>
+
+  <h2>Governing law</h2>
+  <p>These terms are governed by the laws of Ontario and the federal laws of Canada that apply there.</p>
+
+  <h2>Changes to these terms</h2>
+  <p>
+    We may update these terms. When we do, the date at the top of this page changes. If you keep using unflub after a change,
+    the new terms apply.
+  </p>
+
+  <p class="small note-legal">These are plain-language terms, not legal advice.</p>
+</Subpage>
+
+<style>
+  .note-legal {
+    margin-top: 48px;
+  }
+</style>

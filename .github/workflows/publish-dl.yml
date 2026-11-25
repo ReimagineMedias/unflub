@@ -1,0 +1,85 @@
+name: Publish dl.rmgn.net
+
+# Rebuilds dl.rmgn.net from rmgn-api's release state, signs the manifests and deploys the static rmgn-dl
+# Worker. The publisher's code lives in the private ReimagineMedias/api repo; it runs here because this repo
+# is public, so its Actions minutes are free. rmgn-api starts it after every admin change (workflow_dispatch,
+# PUBLISH_REPO in its wrangler.jsonc), and the daily run re-signs manifests before their 7-day expiry.
+#
+# Nothing private reaches this public log: the publisher's and wrangler's output goes to a file on the runner
+# and is never printed. To debug a failure, run the same command locally (D:\Code\rmgn-api, docs/setup.md).
+# Only actors listed in the DL_PUBLISH_ACTORS repository variable (a JSON array of logins) can run it, and the
+# dl-publish environment, which holds every secret, only accepts the main branch.
+on:
+  workflow_dispatch:
+    inputs:
+      product:
+        description: Product whose state changed (all products are rebuilt)
+        required: false
+      reason:
+        description: What changed
+        required: false
+  schedule:
+    - cron: "41 3 * * *"
+
+permissions:
+  contents: read
+
+# One publish at a time. A newer request waits and replaces any older waiting one; it reads the newest state.
+concurrency:
+  group: publish-dl
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.repository == 'ReimagineMedias/unflub' && github.ref == 'refs/heads/main' &&
+      contains(fromJSON(vars.DL_PUBLISH_ACTORS || '[]'), github.triggering_actor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: dl-publish
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ReimagineMedias/api
+          ref: main
+          path: api
+          # Fine-grained token: Contents read on ReimagineMedias/api only.
+          token: ${{ secrets.RMGN_API_READ_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Install and build the publisher
+        working-directory: api
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund --loglevel=error > "$RUNNER_TEMP/install.log" 2>&1 \
+            || { echo "::error::npm ci failed (output withheld: public log)"; exit 1; }
+          npm run -s build:publisher > "$RUNNER_TEMP/build.log" 2>&1 \
+            || { echo "::error::build:publisher failed (output withheld: public log)"; exit 1; }
+      - id: publish
+        name: Build, sign, verify, deploy
+        working-directory: api
+        env:
+          MANIFEST_SIGNING_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
+          RMGN_ADMIN_TOKEN: ${{ secrets.RMGN_ADMIN_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node scripts/publish-dl.mjs --deploy > "$RUNNER_TEMP/publish.log" 2>&1 \
+            || { echo "::error::publish failed (output withheld: public log; rerun locally)"; exit 1; }
+      - name: Summary
+        if: ${{ always() }}
+        env:
+          OUTCOME: ${{ steps.publish.outcome }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$OUTCOME" = "success" ]; then mark="✅"; else mark="❌"; fi
+          {
+            echo "### dl.rmgn.net publish"
+            echo ""
+            echo "| Trigger | Build, sign, verify, deploy |"
+            echo "|---|---|"
+            echo "| ${EVENT} | ${mark} |"
+          } >> "$GITHUB_STEP_SUMMARY"
