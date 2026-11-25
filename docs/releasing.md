@@ -72,7 +72,9 @@ API contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
    - The release job signs each installer for the updater (`tauri signer sign --app-version`,
      Tauri's CLI from `app/package-lock.json`, installed with `--ignore-scripts`) and writes its
      `.sig`. The build jobs never get the key: they run npm and Cargo build scripts, and any of
-     those could read it from the environment.
+     those could read it from the environment. `scripts/verify-updater-sig.mjs` then checks every
+     `.sig` against the public key in `tauri.conf.json`, so a wrong key fails the run instead of
+     shipping updates the app rejects.
    - VirusTotal scans each `*-setup.exe` and `*.msi`, and the two executables inside them on
      their own (`unflub.exe` and `unflub-engine.exe`, from the build jobs' `binaries-*`
      artifacts, never published), and fails the run if more than two engines flag one (skipped,
