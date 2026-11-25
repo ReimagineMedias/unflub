@@ -19,22 +19,22 @@
 [data-theme="paper"][data-mode="light"] {
   --bg: #e7e2da; --surface: #f3efe9; --raised: #fbf9f6; --ink: #292827; --muted: #4e4843;
   --accent: #a77a55; --accent-ink: #fbf9f6; --line: rgba(41, 40, 39, 0.12); --hover: rgba(41, 40, 39, 0.05);
-  --pill-bg: #292827; --pill-ink: #e7e2da; --pill-key: #c69c72; --focus: var(--ink);
+  --pill-bg: #292827; --pill-ink: #e7e2da; --pill-key: #e6bd92; --focus: var(--ink);
 }
 [data-theme="paper"][data-mode="dark"] {
   --bg: #292827; --surface: #33312f; --raised: #3d3b38; --ink: #e7e2da; --muted: #b3aaa1;
   --accent: #c69c72; --accent-ink: #292827; --line: rgba(231, 226, 218, 0.1); --hover: rgba(231, 226, 218, 0.05);
-  --pill-bg: #e7e2da; --pill-ink: #292827; --pill-key: #6f4e30;
+  --pill-bg: #e7e2da; --pill-ink: #292827; --pill-key: #5e4228;
 }
 [data-theme="ink"][data-mode="light"] {
   --bg: #f4f4f5; --surface: #ffffff; --raised: #ffffff; --ink: #121214; --muted: #5b5f68;
   --accent: #a77a55; --accent-ink: #ffffff; --line: rgba(18, 18, 20, 0.09); --hover: rgba(18, 18, 20, 0.04);
-  --pill-bg: rgba(18, 18, 20, 0.88); --pill-ink: #ededef; --pill-key: #c69c72; --focus: var(--ink);
+  --pill-bg: rgba(18, 18, 20, 0.88); --pill-ink: #ededef; --pill-key: #e6bd92; --focus: var(--ink);
 }
 [data-theme="ink"][data-mode="dark"] {
   --bg: #121214; --surface: #1b1c20; --raised: #23242a; --ink: #ededef; --muted: #9096a0;
   --accent: #c69c72; --accent-ink: #121214; --line: rgba(237, 237, 239, 0.08); --hover: rgba(237, 237, 239, 0.04);
-  --pill-bg: rgba(237, 237, 239, 0.1); --pill-ink: #ededef; --pill-key: #c69c72;
+  --pill-bg: rgba(237, 237, 239, 0.1); --pill-ink: #ededef; --pill-key: #e6bd92;
 }
 /* System: OS accent, translucent surfaces over the window's Mica backdrop. */
 [data-theme="system"][data-mode="light"] {
