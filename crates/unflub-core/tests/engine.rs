@@ -938,6 +938,29 @@ fn possessives_keep_their_base() {
     );
 }
 
+/// #59: fixes that land on a proper noun come out capitalised, as on a phone keyboard.
+#[test]
+fn proper_noun_fixes_are_capitalised() {
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("we went to canda on wendesday in febuary "),
+        "we went to Canada on Wednesday in February "
+    );
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("in engish "), "in English ");
+    // Possessives too; typed capitals still win.
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("ok canda's "), "ok Canada's ");
+    let mut t = Typist::new(Config {
+        skip_code: false,
+        ..config()
+    });
+    assert_eq!(t.type_str("CANDA "), "CANADA ");
+    // A correctly typed word is not a fix: it stays as typed.
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("ok canada "), "ok canada ");
+}
+
 /// #103: a fix keeps the curly apostrophe the user typed.
 #[test]
 fn curly_apostrophes_are_kept() {

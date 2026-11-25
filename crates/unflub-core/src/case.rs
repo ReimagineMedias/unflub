@@ -47,9 +47,141 @@ pub fn apply(case: Case, word: &str) -> String {
     }
 }
 
+/// Words written with a capital wherever they appear (months, weekdays, holidays, languages and
+/// nationalities, places, brands), sorted. The bundled dictionary is all lowercase, so a fix
+/// landing on one of these is capitalised. Words that are also common lowercase words (`may`,
+/// `march`, `august`, `china`, `turkey`, `polish`, `google`, `apple`, `windows`) are left out.
+const ALWAYS_CAPITALISED: &[&str] = &[
+    "africa",
+    "african",
+    "alberta",
+    "america",
+    "american",
+    "april",
+    "arabic",
+    "asia",
+    "asian",
+    "australia",
+    "australian",
+    "berlin",
+    "boston",
+    "brazil",
+    "brazilian",
+    "britain",
+    "british",
+    "calgary",
+    "california",
+    "canada",
+    "canadian",
+    "chicago",
+    "chinese",
+    "christmas",
+    "danish",
+    "december",
+    "dutch",
+    "easter",
+    "edmonton",
+    "egypt",
+    "england",
+    "english",
+    "europe",
+    "european",
+    "facebook",
+    "february",
+    "finnish",
+    "florida",
+    "france",
+    "french",
+    "friday",
+    "german",
+    "germany",
+    "greek",
+    "halloween",
+    "hanukkah",
+    "hebrew",
+    "hindi",
+    "india",
+    "indian",
+    "instagram",
+    "ireland",
+    "irish",
+    "israel",
+    "italian",
+    "italy",
+    "january",
+    "japan",
+    "japanese",
+    "july",
+    "june",
+    "kenya",
+    "korea",
+    "korean",
+    "latin",
+    "linkedin",
+    "london",
+    "mexican",
+    "mexico",
+    "microsoft",
+    "monday",
+    "montreal",
+    "netflix",
+    "nigeria",
+    "norwegian",
+    "november",
+    "october",
+    "ontario",
+    "ottawa",
+    "pakistan",
+    "paris",
+    "portugal",
+    "portuguese",
+    "quebec",
+    "ramadan",
+    "russia",
+    "russian",
+    "saturday",
+    "scotland",
+    "scottish",
+    "seattle",
+    "september",
+    "spain",
+    "spanish",
+    "spotify",
+    "sunday",
+    "swedish",
+    "texas",
+    "thanksgiving",
+    "thursday",
+    "tokyo",
+    "toronto",
+    "tuesday",
+    "ukraine",
+    "ukrainian",
+    "vancouver",
+    "vietnam",
+    "wednesday",
+    "winnipeg",
+    "youtube",
+];
+
+/// A lowercase dictionary word that is always written with a capital (`canada`, `wednesday`).
+pub fn always_capitalised(word: &str) -> bool {
+    ALWAYS_CAPITALISED.binary_search(&word).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn always_capitalised_list() {
+        assert!(ALWAYS_CAPITALISED.windows(2).all(|w| w[0] < w[1]), "sorted");
+        assert!(ALWAYS_CAPITALISED
+            .iter()
+            .all(|w| w.bytes().all(|b| b.is_ascii_lowercase())));
+        assert!(always_capitalised("canada") && always_capitalised("wednesday"));
+        assert!(!always_capitalised("may") && !always_capitalised("the"));
+    }
 
     #[test]
     fn patterns() {
