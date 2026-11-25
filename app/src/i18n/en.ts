@@ -23,6 +23,7 @@ export const en = {
   "tour.back": "Back",
   "tour.skip": "Skip",
   "tour.done": "Done",
+  "tour.continue": "Continue",
   "tour.box": "Practice box",
   "tour.box.placeholder": "Type here",
   "tour.try.before": "Type ",
