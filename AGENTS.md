@@ -149,6 +149,9 @@ Repo is private until v0.1, then flipped public.
   sinks to near-black for `.story` (Everywhere, Undo, Speed, Privacy) via a fixed `.dusk` layer on a `--story` view
   timeline, and the nav pill inverts with it. `.story` also paints its own night so text never sits on white. Size type
   and scenes by width and height (`min(vw, vh)` in clamps); check 1280x720 and 1280x800, not just 1440x900.
+  Reduced motion (owner, 2026-11-24) is the same site: pins, night fade, nav inversion and scene end states stay;
+  only movement (typing, translate, scale) is gated on `no-preference`, and transitions keep 0.15s fades.
+  `scroll.ts` `scrollScenes` ignores motion; a test fails if a pin or the night sits behind `no-preference`.
 - Launch plan and post drafts live in `docs/launch/` (2026-11-17). Before turning on Cloudflare Web Analytics, the
   CSP in `site/public/_headers` must allow `https://static.cloudflareinsights.com` and the CSP test in
   `site/tests/site.test.mjs` must accept it. The download API records `ref` values `site`, `github`, `readme`, `hn`,

@@ -3,7 +3,8 @@
 import { reducedMotion } from "./typer";
 
 export const motion = !reducedMotion();
-export const scrollDriven = motion && CSS.supports("animation-timeline: view()");
+/** The pinned, scroll-driven scenes. Reduced motion keeps them (same page), with still keyframes instead of moving ones. */
+export const scrollScenes = CSS.supports("animation-timeline: view()");
 
 /** Calls `cb` with 0..1 while `el` is pinned: from its top reaching the viewport top to its bottom reaching the bottom.
     One rect read per frame, nothing written to layout. */
@@ -27,7 +28,7 @@ export function pinProgress(el: HTMLElement, cb: (p: number) => void): void {
 
 /** Fallback: without scroll-driven animations, [data-reveal] elements get `.in` once they come into view. */
 export function revealFallback(): void {
-  if (scrollDriven) return;
+  if (scrollScenes) return;
   const io = new IntersectionObserver(
     (entries) => {
       for (const e of entries) {
