@@ -282,9 +282,7 @@ export default function App() {
                   onChange={(v) => update({ learnAfterUndos: Number(v) })}
                   options={[
                     { value: "0", label: t("correction.learn.never") },
-                    { value: "1", label: "1" },
-                    { value: "2", label: "2" },
-                    { value: "3", label: t("correction.learn.three") },
+                    ...[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: t(n === 1 ? "correction.learn.one" : "correction.learn.many", { n }) })),
                   ]} />
               </Row>
             </div>
@@ -352,7 +350,7 @@ export default function App() {
                 </>
               )}
               <Row label={t("appearance.duration")} hint={t("appearance.duration.hint")}>
-                <Slider label={t("appearance.duration")} min={400} max={3000} step={100} value={s.pillDurationMs}
+                <Slider label={t("appearance.duration")} min={300} max={5000} step={100} value={s.pillDurationMs}
                   onChange={(v) => update({ pillDurationMs: v })} format={(v) => t("appearance.duration.value", { s: (v / 1000).toFixed(1) })} />
               </Row>
             </div>
