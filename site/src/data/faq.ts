@@ -14,7 +14,7 @@ export const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Does unflub send anything over the internet?",
-    a: "Never what you type, and never the words you misspell. Once a day it checks for updates, sending the app version, your Windows version and architecture, with no ID. Anonymous usage counts and crash reports are on unless you say no on first run, and one switch in Settings turns them off later.",
+    a: "Never what you type, and never the words you misspell. Once a day it checks for updates, sending only the app version. It also sends anonymous usage counts once a day. They are on by default, and you can turn them off any time in Settings > Privacy. Crash reports are only sent if you say yes after a crash.",
   },
   {
     q: "Will it mess with my code or my terminal?",

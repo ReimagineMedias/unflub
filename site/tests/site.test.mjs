@@ -42,6 +42,7 @@ test("sitemap lists every public page and not the 404", () => {
     "/download/",
     "/privacy/",
     "/spell-check-everywhere/",
+    "/terms/",
   ]);
 });
 

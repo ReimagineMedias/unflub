@@ -5,13 +5,13 @@ import { SITE } from "../data/site";
 
 <Subpage
   title="Privacy: nothing you type leaves your computer"
-  description="Nothing you type leaves your computer. What unflub shares, with no ID attached, and how to turn it off: a daily update check, usage counts and crash reports."
+  description="Nothing you type leaves your computer. What unflub's anonymous daily usage stats contain, with no ID attached, and how to turn them off in Settings."
   crumb="Privacy"
 >
   <h1>Nothing you type leaves your computer.</h1>
   <p class="lead">
-    You choose everything unflub does. No hidden settings. The code is public and free for anyone to read. Here is exactly what is
-    shared.
+    Corrections happen on your computer. The code is public and free for anyone to read. Here is exactly what unflub shares, and
+    how to turn it off.
   </p>
 
   <h2>What you type</h2>
@@ -26,32 +26,121 @@ import { SITE } from "../data/site";
     </li>
   </ul>
 
-  <h2>The daily update check</h2>
-  <p>Once a day, unflub asks whether a newer version is out. The request carries this and nothing else:</p>
-  <ul>
-    <li>the unflub version, such as {SITE.version}</li>
-    <li>your Windows version and processor type, x64 or ARM</li>
-    <li>three yes or no flags: whether this is the first check today, this week and this month</li>
-  </ul>
+  <h2>Usage stats are on by default</h2>
   <p>
-    The flags let us count how many people use unflub each day, week and month. There is no ID, so nothing ties one check to
-    the next or to you. Turn off Automatic updates on the About page in Settings and unflub stops checking.
+    unflub is free and self-funded. Once a day it sends a short, anonymous usage report. It helps us see what breaks, which
+    features people use and where autocorrect gets it wrong.
+  </p>
+  <ul>
+    <li>
+      Usage stats are on when you install unflub. The first-run screen says: "unflub is free and self-funded. By continuing, you
+      agree to the <a href="/terms/">Terms</a>."
+    </li>
+    <li>
+      You can turn them off at any moment in Settings &gt; Privacy. It takes effect right away, and nothing more is sent after
+      that. Counts not yet sent are deleted.
+    </li>
+    <li>There is one report a day, and every count in it covers that day only.</li>
+    <li>Reports carry no ID, so nothing ties one report to the next or to you.</li>
+  </ul>
+
+  <h2>What the daily report contains</h2>
+  <p>
+    Every value is a count, a yes or no, or a choice from a short fixed list. Our server refuses a report with anything else in
+    it.
   </p>
 
-  <h2>Usage stats and crash reports</h2>
+  <h3>The app and your computer</h3>
+  <ul>
+    <li>the unflub version, its release channel (stable or beta) and your processor type, x64 or ARM</li>
+    <li>
+      your Windows version, in broad groups: older than Windows 10 22H2, Windows 10 22H2, Windows 11 22H2, 23H2, 24H2, 25H2, or newer
+    </li>
+    <li>how you installed unflub: the installer, winget, Chocolatey, Scoop, the Microsoft Store or a portable copy</li>
+    <li>how long ago you installed it: today, 1 to 6 days, 7 to 29 days, 30 to 89 days, or 90 days or more</li>
+    <li>
+      the language of your keyboard layout: English, French, Spanish, German, Portuguese, Italian, Dutch or other
+    </li>
+    <li>the language unflub's settings window is set to</li>
+    <li>processor cores and memory, in ranges such as 5 to 8 cores or 9 to 16 GB</li>
+    <li>whether you finished, skipped or have not started the welcome tour</li>
+    <li>whether this is the first report this week and this month, so we can count weekly and monthly users</li>
+  </ul>
+
+  <h3>Your settings</h3>
+  <ul>
+    <li>the engine mode, the pill style, the theme, and light or dark</li>
+    <li>how many apps you left out, how many personal words and how many custom rules you have, never the apps or words</li>
+    <li>whether automatic updates are on</li>
+  </ul>
+
+  <h3>How corrections went</h3>
+  <ul>
+    <li>how many words unflub fixed, and how many fixes the pill showed</li>
+    <li>how many fixes you started to undo with Backspace, and how many you undid</li>
+    <li>what ended a fixed word: a space, punctuation, or Enter or Tab</li>
+    <li>where each fix came from: unflub's own dictionary, Windows spell check or one of your rules</li>
+    <li>how many fixes unflub stopped making after repeated undos, and how many words you added to your list</li>
+    <li>minutes autocorrect was on while you typed, times you turned it off, and minutes it was paused</li>
+    <li>times unflub left a word alone because it was in a password field, an app you left out, or code</li>
+  </ul>
+
+  <h3>What kind of app</h3>
   <p>
-    On first run, unflub asks whether to share these. They are on unless you say no, and one switch in Settings turns them off
-    any time.
+    Fixes per kind of app: browser, chat, code editor, office, notes, email or other. Your computer works out the kind from a
+    list built into unflub, and the app's name never leaves your computer. Terminals are never corrected, so they have no group.
   </p>
+
+  <h3>Features you use</h3>
   <ul>
     <li>
-      <strong>Usage stats.</strong> Anonymous counts, such as corrections per day, how often a fix gets undone, which settings are
-      on and how long a check takes. Never a word you typed.
-    </li>
-    <li>
-      <strong>Crash reports.</strong> If unflub crashes, it sends where in the code it failed. Any text is scrubbed out first.
+      how often you open Settings, open the Stats page, replay the tour, use a keyboard shortcut and change the theme
     </li>
   </ul>
+
+  <h3>Updates</h3>
+  <ul>
+    <li>how many updates were offered, downloaded, installed, failed or dismissed</li>
+  </ul>
+
+  <h3>Speed and health</h3>
+  <ul>
+    <li>
+      how long unflub takes to decide on a fix and to type it, and how long a Windows spell check takes, as the typical and slowest
+      times with how many were measured
+    </li>
+    <li>how much memory unflub uses while idle</li>
+    <li>how many times unflub crashed</li>
+    <li>
+      how many times unflub set up its keyboard hook again and why (a check found it missing, the computer woke from sleep, or it
+      was unlocked), and how many times the hook could not start
+    </li>
+    <li>how many times unflub paused itself because another program got in the way of keyboard input</li>
+  </ul>
+
+  <h2>What is never collected</h2>
+  <ul>
+    <li>what you type, any word, or the words you misspell and what they were fixed to</li>
+    <li>window titles, app or program names, or file paths</li>
+    <li>your Windows user name or your computer's name</li>
+    <li>your IP address: our server needs it to answer, like any web request, and never stores it</li>
+    <li>an ID for your copy of unflub or your computer, or anything else that links one report to another</li>
+  </ul>
+
+  <h2>Crash reports</h2>
+  <p>
+    If unflub crashes, nothing is sent then. The next time it starts, Settings asks whether to send the crash report: Send, Don't
+    send or Always send. A report holds where in the code it failed and technical details such as the unflub and Windows
+    versions. Text you typed is never in it, and your user folder is cut out of every file path.
+  </p>
+
+  <h2>The daily update check</h2>
+  <p>
+    Once a day, unflub downloads a signed list of releases from our server. Everyone gets the same file, and unflub decides on
+    your computer whether an update applies. The request carries only the unflub version, such as {SITE.version}. If an update
+    applies, unflub downloads it, checks its signature and installs it when you restart or quit unflub, never while you type.
+    You can turn off Automatic updates in Settings &gt; Privacy.
+  </p>
 
   <h2>Your Stats page stays home</h2>
   <p>
@@ -84,11 +173,13 @@ import { SITE } from "../data/site";
 
   <h2>Check for yourself</h2>
   <p>
-    The code is public, so you do not have to take our word for any of this. <a href={SITE.repo}>Read it on GitHub</a>, or
-    <a href={SITE.issues}>open an issue</a> if you have a question.
+    The code is public, so you do not have to take our word for any of this. <a href={SITE.repo}>Read it on GitHub</a>,
+    or <a href={SITE.issues}>open an issue</a> if you have a question. The <a href="/terms/">terms of use</a> cover the rest.
   </p>
 
-  <p class="small updated">Last updated November 2026. unflub is an <a href={SITE.org.url}>RMGN</a> product.</p>
+  <p class="small updated">
+    Last updated <time datetime="2026-11-25">November 25, 2026</time>. unflub is an <a href={SITE.org.url}>RMGN</a> product.
+  </p>
 </Subpage>
 
 <style>
