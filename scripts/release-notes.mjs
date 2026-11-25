@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // Release notes from Conventional Commits since the previous release tag, as Markdown on stdout.
 //
-//   node scripts/release-notes.mjs [--to <ref>] [--repo owner/name] [--version x.y.z]
+//   node scripts/release-notes.mjs [--to <ref>] [--repo owner/name] [--version x.y.z] [--app]
 //
 // --to       last commit to include (default HEAD; the release workflow passes the tag)
 // --repo     for commit and compare links (default ReimagineMedias/unflub)
 // --version  for installer names (default: app/src-tauri/tauri.conf.json)
+// --app      plain text for the app's About page (sent to api.rmgn.net): no links, commit hashes,
+//            PR numbers, scopes or install section, and no website changes
 //
 // feat, fix and perf are listed; a `!` or a BREAKING CHANGE footer goes under "Breaking changes".
-// Housekeeping (refactor, docs, ci, build, test, chore, style) is counted, not listed.
+// Housekeeping (refactor, docs, ci, build, test, chore, style) and changes to the release tooling
+// (scopes release, ci, build, deps, packaging) are counted, not listed.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -23,6 +26,7 @@ function arg(name, fallback) {
 }
 
 const to = arg("to", "HEAD");
+const forApp = process.argv.includes("--app");
 const repo = arg("repo", "ReimagineMedias/unflub");
 const version =
   arg("version") ?? JSON.parse(readFileSync(join(root, "app/src-tauri/tauri.conf.json"), "utf8")).version;
@@ -51,6 +55,10 @@ const SECTIONS = [
   ["other", "Other changes"],
 ];
 const QUIET = new Set(["refactor", "docs", "ci", "build", "test", "chore", "style", "revert"]);
+// Scopes that never change the app for its users, whatever the type (`fix(release): ...`).
+const QUIET_SCOPES = new Set(["release", "ci", "build", "deps", "packaging"]);
+// Not part of the app, so left out of the notes it shows. Still listed on GitHub.
+const NOT_IN_APP = new Set(["site"]);
 const HEADER = /^(\w+)(?:\(([^)]+)\))?(!)?: (.+)$/;
 
 const prev = previousTag();
@@ -65,16 +73,39 @@ for (const entry of log.split("\x1e")) {
   const link = `[${sha.slice(0, 7)}](https://github.com/${repo}/commit/${sha})`;
   const m = HEADER.exec(subject);
   if (!m) {
-    groups.other.push(`- ${subject} (${link})`);
+    if (!forApp) groups.other.push(`- ${subject} (${link})`);
     continue;
   }
   const [, type, scope, bang, text] = m;
   const breaking = Boolean(bang) || /^BREAKING[ -]CHANGE:/m.test(body);
-  const line = `- ${scope ? `**${scope}:** ` : ""}${text} (${link})`;
+  if (!breaking && (QUIET.has(type) || QUIET_SCOPES.has(scope))) {
+    quiet += 1;
+    continue;
+  }
+  if (forApp && (NOT_IN_APP.has(scope) || !(breaking || groups[type]))) continue;
+  const line = forApp
+    ? `- ${appText(text)}`
+    : `- ${scope ? `**${scope}:** ` : ""}${text} (${link})`;
   if (breaking) groups.breaking.push(line);
   else if (groups[type]) groups[type].push(line);
-  else if (QUIET.has(type)) quiet += 1;
   else groups.other.push(line);
+}
+
+/** A commit subject as a sentence for the app: no PR number, first letter upper case. */
+function appText(text) {
+  const plain = text.replace(/\s*\(#\d+\)$/, "").trim();
+  return plain.charAt(0).toUpperCase() + plain.slice(1);
+}
+
+if (forApp) {
+  // The About page shows the notes as plain text, so no Markdown.
+  const out = [];
+  for (const [key, title] of SECTIONS) {
+    if (groups[key].length) out.push(`${title}:`, ...groups[key], "");
+  }
+  if (out.length === 0) out.push("Small fixes and maintenance.", "");
+  process.stdout.write(out.join("\n"));
+  process.exit(0);
 }
 
 const out = [];
