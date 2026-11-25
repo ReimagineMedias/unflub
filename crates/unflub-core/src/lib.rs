@@ -748,13 +748,17 @@ impl Engine {
         if !flagged {
             return None;
         }
-        if system_fix {
+        // The OS's auto-replace list is en-US and blind to jargon: it turns `behaviour` into
+        // `behavior`, `systemd` into `system`, `boolean` into `Boolean`. Its fix is taken only
+        // for a word the bundled dictionary doesn't know (regional spellings and tech words are
+        // known) and only when it changes more than the case.
+        if system_fix && !known {
             if let Some(fix) = self
                 .backend
                 .as_ref()
                 .and_then(|b| b.auto_replacement(&self.word))
             {
-                if fix != self.word && !fix.is_empty() {
+                if !fix.is_empty() && !fix.eq_ignore_ascii_case(&self.word) {
                     return Some((Source::System, fix));
                 }
             }

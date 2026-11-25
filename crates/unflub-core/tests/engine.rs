@@ -835,16 +835,22 @@ fn abbreviation_fixes_keep_one_period() {
         };
         let checker = FakeChecker {
             known: vec!["ok", "saskatoon"],
-            fixes: vec![("approx", "approx.")],
+            // `aprox` is a misspelling the bundled dictionary doesn't know, so the OS fix applies
+            // (a known word such as `approx` is left alone since #61).
+            fixes: vec![("aprox", "approx.")],
         };
         let mut t = Typist::with_engine(Engine::new(config, Some(Box::new(checker))));
         assert_eq!(
-            t.type_str("ok approx. Saskatoon "),
+            t.type_str("ok aprox. Saskatoon "),
             "ok approx. Saskatoon ",
             "{mode:?} skip_code {skip_code}"
         );
         // Ended by a space, the OS fix still adds its period.
-        assert_eq!(t.type_str("approx "), "ok approx. Saskatoon approx. ");
+        assert_eq!(
+            t.type_str("aprox "),
+            "ok approx. Saskatoon approx. ",
+            "{mode:?} skip_code {skip_code}"
+        );
     }
 }
 
@@ -860,6 +866,32 @@ fn balanced_trusts_the_system_checker() {
     // Without a checker the bundled dictionary decides, as before.
     let mut t = with_backend(EngineMode::Balanced, None);
     assert_eq!(t.type_str("ok teh "), "ok the ");
+}
+
+/// #61: the OS auto-replace list is taken only for words the bundled dictionary doesn't know,
+/// and never for a change of case: regional spellings and jargon stay.
+#[test]
+fn system_fixes_skip_known_words_and_case_changes() {
+    let checker = || FakeChecker {
+        known: vec![],
+        fixes: vec![
+            ("behaviour", "behavior"),
+            ("organise", "organize"),
+            ("systemd", "system"),
+            ("memoize", "memorize"),
+            ("boolean", "Boolean"),
+            ("qualcomm", "QUALCOMM"),
+            ("recieve", "receive"),
+        ],
+    };
+    for mode in [EngineMode::Balanced, EngineMode::SystemOnly] {
+        let mut t = with_backend(mode, Some(checker()));
+        assert_eq!(
+            t.type_str("my behaviour organise systemd memoize boolean qualcomm recieve "),
+            "my behaviour organise systemd memoize boolean qualcomm receive ",
+            "{mode:?}"
+        );
+    }
 }
 
 /// Review S5: with a non-English language, the English dictionary rewrites nothing unless the
