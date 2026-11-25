@@ -137,8 +137,9 @@ main > p.lead { margin: 0 0 22px; color: var(--muted); max-width: 60ch; }
 .theme-card .name small { font: 11px var(--mono); color: var(--muted); font-weight: 400; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px; background: var(--raised); box-shadow: 0 0 0 1px var(--line); font: 12.5px var(--mono); }
-.chip button { border: 0; background: none; cursor: pointer; width: 24px; height: 24px; margin: -3px; border-radius: 50%; color: var(--muted); display: grid; place-items: center; }
+.chip { display: inline-flex; max-width: 100%; min-width: 0; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px; background: var(--raised); box-shadow: 0 0 0 1px var(--line); font: 12.5px var(--mono); }
+.chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip button { flex: none; border: 0; background: none; cursor: pointer; width: 24px; height: 24px; margin: -3px; border-radius: 50%; color: var(--muted); display: grid; place-items: center; }
 .chip button:hover { background: var(--hover); color: var(--ink); }
 .add { display: flex; gap: 8px; }
 .chip-hint { display: block; margin-top: 6px; }

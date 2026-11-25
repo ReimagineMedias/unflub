@@ -202,8 +202,8 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
       {items.length ? (
         <div className="chips">
           {items.map((it) => (
-            <span className="chip" key={it}>
-              {it}
+            <span className="chip" key={it} title={it}>
+              <span>{it}</span>
               <button aria-label={t("common.remove", { item: it })} onClick={() => onChange(items.filter((x) => x !== it))}>
                 <X />
               </button>
