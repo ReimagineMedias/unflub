@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { tourKey, tourReset } from "./api";
+import { reportUsage, tourKey, tourReset } from "./api";
 import { AppIcon, Disclosure, ExternalLink, Row, Switch, SuccessNote } from "./components";
 import { t } from "./i18n";
 import { LINKS } from "./links";
@@ -85,8 +85,15 @@ export function Tour({ settings: s, info, update, onClose }: {
   const [fixed, setFixed] = useState(false);
   const [undone, setUndone] = useState<string | null>(null);
   const managed = info?.managed;
+  // The first-run tour reports how it ended; any later one counts as a replay.
+  const [skipped, setSkipped] = useState(false);
+  const firstRun = useRef(!s.onboarded);
+  useEffect(() => {
+    if (!firstRun.current) reportUsage("tour_replay");
+  }, []);
 
   const done = () => {
+    if (firstRun.current) reportUsage(skipped ? "tour_skipped" : "tour_completed");
     if (!s.onboarded) update({ onboarded: true });
     onClose();
   };
@@ -148,7 +155,7 @@ export function Tour({ settings: s, info, update, onClose }: {
       <div className="tour-foot">
         {step > 1 ? <button className="btn ghost" onClick={() => setStep(step - 1)}>{t("tour.back")}</button> : <span />}
         <div className="actions">
-          {step < STEPS && <button className="btn ghost" onClick={() => setStep(STEPS)}>{t("tour.skip")}</button>}
+          {step < STEPS && <button className="btn ghost" onClick={() => { setSkipped(true); setStep(STEPS); }}>{t("tour.skip")}</button>}
           {step < STEPS
             ? <button className="btn" disabled={(step === 1 && !fixed) || (step === 2 && !undone)} onClick={() => setStep(step + 1)}>{t("tour.next")}</button>
             : <button className="btn" autoFocus onClick={done}>{t(s.onboarded ? "tour.done" : "tour.continue")}</button>}

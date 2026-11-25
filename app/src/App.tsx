@@ -3,7 +3,7 @@ import {
   answerCrashReport, appInfo, appVersion, checkForUpdates, crashReportPending, dismissMessage, getSettings, inTauri,
   inputInterference, onInputInterference,
   installUpdate, onCrashReport, onOpenPage, onRemoteMessage, onSettingsChanged, onUpdateStatus, remoteMessage,
-  resetSettings, setSettings, systemLook, updateStatus,
+  reportUsage, resetSettings, setSettings, systemLook, updateStatus,
 } from "./api";
 import { AppIcon, ChipList, ExternalLink, Logo, NavIcon, PowerSwitch, Row, RuleList, Segmented, Slider, Switch } from "./components";
 import { t, type StringKey } from "./i18n";
@@ -417,7 +417,7 @@ export default function App() {
                     {selfUpdates ? (
                       <>
                         <button className="btn" onClick={install}>{t("about.restart")}</button>
-                        <button className="btn ghost" onClick={() => setLaterFor(pending.version)}>{t("about.later")}</button>
+                        <button className="btn ghost" onClick={() => { setLaterFor(pending.version); reportUsage("update_dismissed"); }}>{t("about.later")}</button>
                       </>
                     ) : source === "portable" ? (
                       <ExternalLink className="btn" href={`${LINKS.site}download/`}>{t("about.via.download")}</ExternalLink>
