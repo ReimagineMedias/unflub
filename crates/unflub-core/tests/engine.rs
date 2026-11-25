@@ -964,6 +964,26 @@ fn aggressive_keeps_words_the_os_accepts() {
     );
 }
 
+/// #63: contractions typed without the apostrophe whose bare form the frequency list has as a
+/// word (`whats`, `heres`), and `alot`.
+#[test]
+fn chat_misspellings_are_fixed() {
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("ok whats up, thats it, heres one, wheres it, hes ok and shes not alot "),
+        "ok what's up, that's it, here's one, where's it, he's ok and she's not a lot "
+    );
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("Whats up "), "What's up ");
+    // With an OS checker that flags them, in the default mode.
+    let checker = FakeChecker {
+        known: vec!["ok", "it", "up"],
+        fixes: vec![],
+    };
+    let mut t = with_backend(EngineMode::Both, Some(checker));
+    assert_eq!(t.type_str("ok thats it "), "ok that's it ");
+}
+
 /// Quality lab: possessives with a known or capitalised base are never "fixed" into plurals or
 /// bare names; a typo in a lowercase base is fixed on the base, keeping the apostrophe typed.
 #[test]
