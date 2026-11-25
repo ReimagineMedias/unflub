@@ -90,7 +90,7 @@ export const en = {
   "correction.code": "Leave code alone",
   "correction.code.hint": "Skips camelCase, snake_case, paths, links and anything in `backticks`.",
   "correction.undo": "Undo a fix",
-  "correction.undo.hint": "While the pill is showing. The pill's duration under Appearance sets how long you have.",
+  "correction.undo.hint": "Right after a fix. The undo window under Appearance sets how long you have.",
   "correction.undo.twice": "Backspace twice",
   "correction.undo.twice.tip":
     "The first Backspace asks \"Undo?\" and the second puts your word back. Any other key deletes as usual, so you can still delete the space to add a comma.",
@@ -131,7 +131,8 @@ export const en = {
   "appearance.position.above": "Above the word",
   "appearance.position.below": "Below",
   "appearance.opacity": "Opacity",
-  "appearance.duration": "Stays for",
+  "appearance.duration": "Undo window",
+  "appearance.duration.hint": "How long the capsule stays, and how long you have to undo a fix.",
   "appearance.duration.value": "{s} s",
   "pillPreview.label": "Correction preview",
   "pillPreview.undo": "⌫ undo",
