@@ -179,17 +179,22 @@ const X = () => (
   </svg>
 );
 
-export function ChipList({ items, onChange, placeholder, empty, normalise = (s) => s.trim() }: {
+export function ChipList({ items, onChange, placeholder, empty, normalise = (s) => s.trim(), single }: {
   items: string[];
   onChange: (items: string[]) => void;
   placeholder: string;
   empty: string;
   normalise?: (s: string) => string;
+  /** Entries are one word: a space blocks adding, with this hint. */
+  single?: string;
 }) {
   const [draft, setDraft] = useState("");
+  const spaced = Boolean(single) && /\s/.test(draft.trim());
   const add = () => {
     const v = normalise(draft);
-    if (v && !items.includes(v)) onChange([...items, v]);
+    if (spaced) return;
+    // The engine compares words without case, so RMGN is the same entry as rmgn.
+    if (v && !items.some((x) => x.toLowerCase() === v.toLowerCase())) onChange([...items, v]);
     setDraft("");
   };
   return (
@@ -210,8 +215,9 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
       )}
       <form className="add" onSubmit={(e) => { e.preventDefault(); add(); }}>
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} spellCheck={false} />
-        <button className="btn" type="submit" disabled={!draft.trim()}>{t("common.add")}</button>
+        <button className="btn" type="submit" disabled={!draft.trim() || spaced}>{t("common.add")}</button>
       </form>
+      {spaced && <small className="muted chip-hint">{single}</small>}
     </>
   );
 }
