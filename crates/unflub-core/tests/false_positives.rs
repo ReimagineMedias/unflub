@@ -70,6 +70,28 @@ fn personal_words_are_never_corrected() {
     assert_eq!(t.type_str("rmgn teh Teh "), "rmgn teh Teh ");
 }
 
+/// #55: an elided prefix before an apostrophe is never deleted.
+#[test]
+fn elisions_keep_their_prefix() {
+    for word in [
+        "d'angelo",
+        "d'arcy",
+        "o'reilly",
+        "d'accord",
+        "n'est",
+        "c'est",
+        "c\u{2019}est",
+        "d'angelo's",
+    ] {
+        let mut t = Typist::bundled();
+        let text = format!("so {word} ok ");
+        assert_eq!(t.type_str(&text), text);
+    }
+    // Contractions with a typo still get fixed.
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("so do'nt "), "so don't ");
+}
+
 /// #58: possessives and plurals of the user's words are theirs too.
 #[test]
 fn personal_word_possessives_and_plurals_stay() {
