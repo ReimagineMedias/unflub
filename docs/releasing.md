@@ -65,6 +65,10 @@ API contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
    refuses a tag that doesn't match the version in the files, and a tag that already exists.
 
 4. **What the run does after the builds**, in order, stopping at the first failure:
+   - The release job signs each installer for the updater (`tauri signer sign --app-version`,
+     Tauri's CLI from `app/package-lock.json`, installed with `--ignore-scripts`) and writes its
+     `.sig`. The build jobs never get the key: they run npm and Cargo build scripts, and any of
+     those could read it from the environment.
    - VirusTotal scans each `*-setup.exe` and `*.msi`, and the two executables inside them on
      their own (`unflub.exe` and `unflub-engine.exe`, from the build jobs' `binaries-*`
      artifacts, never published), and fails the run if more than two engines flag one (skipped,
@@ -144,9 +148,10 @@ Get-Content -Raw D:\Code\unflub\.local\updater\unflub-updater.key | gh secret se
 Get-Content -Raw D:\Code\unflub\.local\updater\unflub-updater.password | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --env release
 ```
 
-The build jobs read the updater and Sentry secrets too; GitHub only gives environment secrets to
-jobs in that environment, so keep those two (and `SENTRY_*`) as repository secrets, and the
-API, Access and VirusTotal ones as `release` environment secrets.
+The build jobs run outside the `release` environment, so they get none of its secrets. Keep the
+updater key, API, Access and VirusTotal secrets there: only the release job reads them, and only
+its "Updater signatures" step sees the updater key. Secrets the build jobs need (`SENTRY_*` and
+the code signing ones) have to be repository secrets.
 
 > [!WARNING]
 > Back up both updater files (a password manager is fine). If the private key is lost, every
@@ -230,6 +235,8 @@ stacks show function names.
   gh api repos/OWNER/REPO/git/tags/SHA --jq .object.sha
   ```
 
+- The updater signing key is in the environment of one step: "Updater signatures" in the release
+  job, which runs no build scripts. The build jobs have no environment and never see it.
 - Permissions are least privilege: every workflow defaults to `contents: read`. Only the release
   job gets more: `contents: write` for the draft, `id-token: write` and `attestations: write` for
   provenance. It runs in the `release` environment. The CI's API token can only register a
@@ -289,9 +296,9 @@ review of the project.
    - `build`: upload the unsigned `*-setup.exe` and `*.msi` with `actions/upload-artifact`.
    - Submit them with `signpath/github-action-submit-signing-request@v2`
      (`wait-for-completion: true`, `output-artifact-directory: dist`).
-   - **Re-sign for the updater**: signing changes the files, so each `.sig` must be made again
-     from the signed file: `npx tauri signer sign -f <key file> -p <password> <file>`, with the key
-     and password written from the secrets to `$RUNNER_TEMP`.
+   - **Updater signatures**: signing changes the files, so the `.sig` must be made from the
+     signed file. The release job already signs whatever the `bundle-*` artifacts hold, so
+     upload the SignPath output under those names and nothing else changes.
 3. The exe inside the NSIS setup stays unsigned unless the SignPath policy also signs it before
    bundling (a two-pass build). Ask SignPath which they support for Tauri.
 

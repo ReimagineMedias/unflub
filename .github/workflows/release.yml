@@ -1,8 +1,9 @@
 name: Release
 
-# A version tag builds every installer, signs them for the updater, scans them, attaches them to a
-# draft GitHub Release (where installers live; the owner publishes it) and registers the release
-# with api.rmgn.net, where it lands PAUSED at 0%. Nobody gets it until the owner publishes the
+# A version tag builds every installer, signs them for the updater (in the release job, never where
+# the build scripts run), scans them, attaches them to a draft GitHub Release (where installers
+# live; the owner publishes it) and registers the release with api.rmgn.net, where it lands PAUSED
+# at 0%. Nobody gets it until the owner publishes the
 # draft, activates it in the dashboard (https://api.rmgn.net/dashboard/?product=unflub) and raises
 # the rollout; dl.rmgn.net then lists it in the signed manifest. Run it by hand with "dry run" to
 # build and check everything without publishing or registering anything.
@@ -154,8 +155,8 @@ jobs:
     name: Build (${{ matrix.name }})
     needs: prepare
     runs-on: ${{ matrix.os }}
-    # The updater signing key lives in the release environment, which only main, release/* and v* tags can use.
-    environment: release
+    # No environment: the build runs npm and Cargo build scripts, so it gets none of the release
+    # environment's secrets. The updater signing key is used only by the release job, after the build.
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
@@ -175,16 +176,6 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
-
-      - name: Updater signing key present
-        shell: bash
-        env:
-          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-        run: |
-          if [ "$HAS_KEY" != true ]; then
-            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets (docs/releasing.md). Without them the updater can't trust this build."
-            exit 1
-          fi
 
       - name: Linux libraries for Tauri
         if: runner.os == 'Linux'
@@ -263,8 +254,6 @@ jobs:
       - name: Build installers
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Compiled into the app (crash.rs). Unset: crash reports are off in this build.
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           # Read by artifact-signing-cli when Azure signing is on; empty otherwise.
@@ -274,8 +263,11 @@ jobs:
         with:
           # Build only. The release job uploads every platform at once, so parallel jobs never
           # race to rewrite latest.json on the release.
+          # Without tauri.release.conf.json (createUpdaterArtifacts): the updater signatures are made
+          # by the release job. On Windows the updater installs the setup.exe and MSI themselves, so
+          # the files are the same either way.
           projectPath: app
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json ${{ steps.sign.outputs.args }}
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} ${{ steps.sign.outputs.args }}
 
       - name: Collect bundles
         shell: bash
@@ -287,22 +279,19 @@ jobs:
           mkdir -p dist
           case "$RUNNER_OS" in
             Windows)
-              files=("$BUNDLE"/nsis/*-setup.exe{,.sig} "$BUNDLE"/msi/*.msi{,.sig}) ;;
+              files=("$BUNDLE"/nsis/*-setup.exe "$BUNDLE"/msi/*.msi) ;;
             macOS)
-              # Tauri names the updater bundle unflub.app.tar.gz; give it a version and arch like the rest.
-              for f in "$BUNDLE"/macos/*.app.tar.gz{,.sig}; do
-                name=$(basename "$f")
-                cp "$f" "dist/${name/.app.tar.gz/_${VERSION}_universal.app.tar.gz}"
+              # The updater bundle, as Tauri would make it with createUpdaterArtifacts, with a
+              # version and arch in its name like the rest. Untested while macOS is off.
+              for app in "$BUNDLE"/macos/*.app; do
+                name=$(basename "$app" .app)
+                tar -czf "dist/${name}_${VERSION}_universal.app.tar.gz" -C "$(dirname "$app")" "$(basename "$app")"
               done
               files=("$BUNDLE"/dmg/*.dmg) ;;
             Linux)
-              files=("$BUNDLE"/appimage/*.AppImage{,.sig} "$BUNDLE"/deb/*.deb{,.sig} "$BUNDLE"/rpm/*.rpm{,.sig}) ;;
+              files=("$BUNDLE"/appimage/*.AppImage "$BUNDLE"/deb/*.deb "$BUNDLE"/rpm/*.rpm) ;;
           esac
           if [ ${#files[@]} -gt 0 ]; then cp "${files[@]}" dist/; fi
-          # Every bundle the updater can install must carry its signature.
-          for f in dist/*-setup.exe dist/*.msi dist/*.AppImage dist/*.deb dist/*.rpm dist/*.app.tar.gz; do
-            [ -f "$f.sig" ] || { echo "::error::$(basename "$f") has no updater signature"; exit 1; }
-          done
           [ -n "$(ls dist)" ] || { echo "::error::no bundles in $BUNDLE"; exit 1; }
           ls -l dist
           # The two executables, for the antivirus scan and the signature check (not published).
@@ -428,6 +417,37 @@ jobs:
           pattern: binaries-*
           merge-multiple: true
           path: binaries
+
+      # The Tauri CLI for `tauri signer sign`, at the version in the lockfile. --ignore-scripts:
+      # no package's install script runs in the job that holds the signing key.
+      - name: Tauri CLI
+        working-directory: app
+        run: npm ci --ignore-scripts
+
+      - name: Updater signatures
+        working-directory: app
+        env:
+          # The only step that sees the updater key. Nothing built here runs: the bundles come
+          # from the build jobs as files, and the signer is Tauri's own CLI.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets to the release environment (docs/releasing.md). Without them the updater can't trust this build."
+            exit 1
+          fi
+          shopt -s nullglob
+          # Every bundle the updater can install. --app-version puts the version in the signed
+          # comment, as `tauri build` does.
+          files=(../release-files/*-setup.exe ../release-files/*.msi ../release-files/*.AppImage
+            ../release-files/*.deb ../release-files/*.rpm ../release-files/*.app.tar.gz)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no bundles to sign"; exit 1; }
+          for f in "${files[@]}"; do
+            npx --no-install tauri signer sign --app-version "$VERSION" "$f" > /dev/null
+            [ -s "$f.sig" ] || { echo "::error::$(basename "$f") has no updater signature"; exit 1; }
+            echo "Signed $(basename "$f")"
+          done
 
       - name: latest.json, SHA256SUMS.txt and the registration body
         run: |

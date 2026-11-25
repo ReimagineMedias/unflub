@@ -97,7 +97,9 @@ Repo is private until v0.1, then flipped public.
   the five version locations in sync (CI runs `--check`). macOS/Linux matrix rows exist with `"enabled": false`.
 - Updater signing keypair: `D:\Code\unflub\.local\updater\unflub-updater.key` and `.password` (git-ignored; never print
   or commit). Only the public key is in `tauri.conf.json`. Updater artifacts are on only with
-  `--config src-tauri/tauri.release.conf.json`, so a plain `npm run tauri build` needs no key.
+  `--config src-tauri/tauri.release.conf.json`, so a plain `npm run tauri build` needs no key. CI builds without it and
+  signs in the release job's "Updater signatures" step (`tauri signer sign --app-version`, #122); the build jobs have
+  no environment and never see the key.
 - Updates are static (`updates.rs`, `manifest.rs`, `remote.rs`): check ~2 min after launch then daily (min interval
   from the manifest's flags). Fetch `dl.rmgn.net/unflub/manifest/{channel}.json` + `.sig` (Ed25519 over the exact
   bytes, keys in `keys.rs`, ETag cached in `<data>/manifest/`); reject unsigned/invalid/>256 KB/older-`generated_at`
