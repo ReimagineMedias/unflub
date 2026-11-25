@@ -4,7 +4,8 @@ System-wide, phone-style autocorrect. RMGN product, site at unflub.rmgn.net (Ver
 dl.rmgn.net. All app/CI domains are rmgn.net since 2026-11-17 (bundle id stays `ca.rmgn.unflub`).
 Keep `AGENTS.md` identical in substance.
 
-Git workflow: PRs. Branch `type/topic`, open a PR on ReimagineMedias/unflub, merge only when the owner says so (squash).
+Git workflow: PRs. Branch `type/topic`, open a PR on ReimagineMedias/unflub, merge only when the owner says so (rebase merge, so every
+conventional commit lands on main; squash and merge commits are turned off in the repo settings).
 Repo is private until v0.1, then flipped public.
 
 ## Findings
@@ -82,7 +83,7 @@ Repo is private until v0.1, then flipped public.
   under `$ErrorActionPreference = 'Stop'`. The perf scripts handle both.
 - Release conventions (2026-11-17): SemVer tags `vX.Y.Z`, betas `X.Y.Z-beta.N` (beta channel, GitHub pre-release,
   setup.exe only since WiX rejects pre-release versions). `node scripts/prepare-release.mjs <v> --pr` opens the
-  `chore(release): <v>` PR with CHANGELOG.md; squash-merging it makes `release-tag.yml` tag and dispatch Release.
+  `chore(release): <v>` PR with CHANGELOG.md; rebase-merging it makes `release-tag.yml` tag and dispatch Release.
   GitHub Actions minutes: the repo is public since 2026-11-17 (free); the private rmgn-api repo shares the org's
   2,000 free minutes, so keep macOS/Windows CI off private repos.
 - Releases: see `docs/releasing.md`. A `v*.*.*` tag runs `.github/workflows/release.yml`: build, sign, VirusTotal,
@@ -142,10 +143,15 @@ Repo is private until v0.1, then flipped public.
   trailing slashes and caching live in `site/vercel.json`, which `scripts/serve.mjs` and the tests also read. CI only
   checks, builds and tests. Performance figures live in `site/src/data/performance.ts`; keep them in step with
   docs/performance.md. Scripts must stay external files (the CSP has no 'unsafe-inline' for scripts; a test enforces it).
-- Site privacy copy (owner, 2026-11-17): "Nothing you type leaves your computer." The update check sends app version,
-  Windows version + architecture and anonymous first-of-day/week/month flags, no ID. Anonymous usage stats and crash
-  reports are on by default with a first-run choice. Typo pairs are not collected. The app's Stats page is local only.
-  Details live on /privacy; the home section stays one short statement. A test rejects the old ID/typo-pair wording.
+- Site privacy copy (owner, 2026-11-17; stats decision 2026-11-25): "Nothing you type leaves your computer." The
+  update check sends only `User-Agent: unflub/{version}` (`app/src-tauri/src/net.rs`); first-of-week/month flags ride
+  on the stats report (`X-First`). Usage stats are on by default with no first-run question: the first-run screen says
+  "unflub is free and self-funded. By continuing, you agree to the Terms." (links /terms/ and /privacy/), and the
+  switch lives in Settings > Privacy. /privacy/ lists every v3 report group (spec: `.local/telemetry-v3-spec.md` in
+  the main checkout); keep it in step when the report changes. Crash reports are asked after each crash (Send, Don't
+  send, Always send). Typo pairs are not collected. The app's Stats page is local only. /terms/ is plain-language
+  (MIT, as is, Ontario law, dated at the top). The home section stays one short statement. A test rejects the old
+  ID/typo-pair wording, including the phrase "install ID", so say "an ID for your copy of unflub" instead.
   Sponsor/star links come from `SITE.sponsor` and `SITE.repo` in `site/src/data/site.ts`.
 - Site design (owner, 2026-11-17): white day page, studio-lit capsule and grey cards, espresso pill nav; the home page
   sinks to near-black for `.story` (Everywhere, Undo, Speed, Privacy) via a fixed `.dusk` layer on a `--story` view

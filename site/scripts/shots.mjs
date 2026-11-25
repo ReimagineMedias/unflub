@@ -6,7 +6,7 @@ import { withChrome } from "./chrome.mjs";
 const base = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "http://localhost:4321";
 const full = process.argv.includes("--full");
 const only = process.argv.find((a) => a.startsWith("--only="))?.slice(7);
-const pages = ["/", "/download/", "/privacy/", "/autocorrect-windows/", "/spell-check-everywhere/", "/nope/"].filter(
+const pages = ["/", "/download/", "/privacy/", "/terms/", "/autocorrect-windows/", "/spell-check-everywhere/", "/nope/"].filter(
   (p) => !only || (p.replaceAll("/", "") || "home") === only,
 );
 const sizes = [

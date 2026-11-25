@@ -59,8 +59,8 @@ API contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
    is set), writes `latest.json`, `SHA256SUMS.txt` and the registration body, and attaches them to
    the run as the `release-assets` artifact. Nothing is tagged, drafted or registered.
 
-3. **Squash-merge the PR, keeping its title.** `.github/workflows/release-tag.yml` sees
-   `chore(release): 0.2.0` on `main`, checks the files agree, tags the merge commit `v0.2.0` and
+3. **Rebase-merge the PR.** `.github/workflows/release-tag.yml` sees
+   `chore(release): 0.2.0` on `main`, checks the files agree, tags the release commit `v0.2.0` and
    starts the Release workflow on the tag. (Pushing a `v*` tag by hand starts it too.) The workflow
    refuses a tag that doesn't match the version in the files, and a tag that already exists.
 
