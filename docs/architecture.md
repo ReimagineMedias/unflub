@@ -93,7 +93,7 @@ COM multithreaded apartment:
 | `unflub-hook` | `WH_KEYBOARD_LL` and `WH_MOUSE_LL` hooks, focus WinEvents, calls the engine, holds and replays keys |
 | `unflub-inject` | `SendInput` for corrections and replayed keys, in hand-over order |
 | `unflub-uia` | Asks UI Automation whether the focused field is a password field |
-| `unflub-spell` | Slow `ComprehensiveCheck` lookups for the OS auto-replace cache, and adding learned words |
+| `unflub-spell` | Slow `ComprehensiveCheck` lookups for the OS auto-replace cache |
 | `unflub-overlay` | The correction pill window: finds the caret, draws the pill, runs its fades |
 | `unflub-caret` | Asks UI Automation where the caret is in browser and XAML fields, for the pill |
 
@@ -149,8 +149,9 @@ COM multithreaded apartment:
   including the default-excluded consoles a user takes off the list, never records its words
   on the local Stats page (`policy::keep_words`).
 - **Spell checker.** `Check` runs on the hook thread (it is fast). The OS auto-replace lookup
-  only reads a cache; misses are looked up in the background and used next time. Learning a
-  word writes the user's dictionary, so it also happens in the background.
+  only reads a cache; misses are looked up in the background and used next time. Learned words
+  never go to the Windows dictionary (no `ISpellChecker::Add`, a test enforces it): they are
+  unflub's own personal words in its settings (see "Undo teaches" below).
 - **Elevated windows.** A normal process can't see keys typed into administrator windows or
   inject into them, so unflub does nothing there.
 - **Hook watchdog.** Windows can drop a low-level hook without a word (a callback that took too
