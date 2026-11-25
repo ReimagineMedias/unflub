@@ -96,13 +96,14 @@ export function StatsPage({ settings, update }: { settings: Settings; update: (p
           <Switch label={t("stats.keepWords")} checked={settings.statsKeepWords} onChange={(v) => update({ statsKeepWords: v })} />
         </Row>
         <Row label={t("stats.clear")} hint={t("stats.clear.hint")}>
-          <button className="btn ghost" onBlur={() => setConfirming(false)} onClick={() => {
+          <button className="btn ghost clear" onBlur={() => setConfirming(false)} onClick={() => {
             if (!confirming) return setConfirming(true);
             setConfirming(false);
             void clearStats().then(setView);
           }}>
             {confirming ? t("stats.clear.confirm") : t("stats.clear.button")}
           </button>
+          <span className="sr-only" role="status">{confirming ? t("stats.clear.status") : ""}</span>
         </Row>
       </div>
     </>

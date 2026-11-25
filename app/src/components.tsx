@@ -107,7 +107,7 @@ export function Switch({ checked, onChange, label, disabled }: {
 /** The sidebar's on/off switch for autocorrect: the unflub mark, a label and a knob. */
 export function PowerSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <button className="power" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}>
+    <button className="power" role="switch" aria-checked={checked} aria-label={t("general.autocorrect")} onClick={() => onChange(!checked)}>
       <span className="power-label">{checked ? t("status.on") : t("status.paused")}</span>
       <span className="power-knob">
         <svg viewBox="0 0 64 64" aria-hidden="true">
@@ -119,20 +119,38 @@ export function PowerSwitch({ checked, onChange }: { checked: boolean; onChange:
   );
 }
 
-/** `title` on an option is its tooltip: the technical detail behind a plain label. */
+/**
+ * `title` on an option is its tooltip: the technical detail behind a plain label. The focused
+ * option's title is also shown under the group and set as its description, so keyboard, touch and
+ * screen reader users get it too. Every title shares one grid cell, so the group always reserves the
+ * tallest one's height and nothing below moves while tabbing.
+ */
 export function Segmented<T extends string>({ value, options, onChange, label }: {
   value: T;
   options: { value: T; label: string; title?: string }[];
   onChange: (v: T) => void;
   label: string;
 }) {
+  const tipId = useId();
+  const [focused, setFocused] = useState<T | null>(null);
+  const tips = options.filter((o) => o.title);
   return (
-    <div className="seg" role="group" aria-label={label}>
-      {options.map((o) => (
-        <button key={o.value} title={o.title} aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
-          {o.label}
-        </button>
-      ))}
+    <div className="seg-group" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(null); }}>
+      <div className="seg" role="group" aria-label={label}>
+        {options.map((o) => (
+          <button key={o.value} title={o.title} aria-pressed={o.value === value} aria-describedby={o.title && o.value === focused ? `${tipId}-${o.value}` : undefined}
+            onFocus={() => setFocused(o.value)} onClick={() => onChange(o.value)}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {tips.length > 0 && (
+        <div className="seg-tips">
+          {tips.map((o) => (
+            <small key={o.value} id={`${tipId}-${o.value}`} className={o.value === focused ? "on" : undefined}>{o.title}</small>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -149,7 +167,7 @@ export function Slider({ value, min, max, step, onChange, format, label }: {
   const id = useId();
   return (
     <div className="slider">
-      <input id={id} type="range" aria-label={label} min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      <input id={id} type="range" aria-label={label} aria-valuetext={format(value)} min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
       <output htmlFor={id}>{format(value)}</output>
     </div>
   );

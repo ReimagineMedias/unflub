@@ -14,9 +14,9 @@ unknown words we know of.
 | Metric | What it means |
 |---|---|
 | `startup_ms` | Time to build the dictionary index. unflub can't fix anything until it's done. |
-| `boundary_p50_us`, `boundary_p99_us`, `boundary_max_us` | Time to decide about a word when you type a space or punctuation. This runs inside the keyboard hook, which has 1 ms per key. |
+| `boundary_p50_us`, `boundary_p99_us`, `boundary_max2_us` | Time to decide about a word when you type a space or punctuation. This runs inside the keyboard hook, which has 1 ms per key. The gate uses the second-slowest sample, so one preempted sample on a shared runner can't fail it; `boundary_max_us` is still reported. |
 | `char_p99_us` | Time to handle a letter key. |
-| `hard_max_us` | The slowest decision on the hardest words: long, unknown, many near misses. |
+| `hard_max2_us` | The second-slowest decision on the hardest words: long, unknown, many near misses (`hard_max_us` is reported, not gated). |
 | `heap_bytes` | Memory the dictionary index holds. |
 | `peak_rss_bytes` | The most memory the bench process ever had resident (where the OS reports it). |
 

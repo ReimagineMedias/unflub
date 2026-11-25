@@ -156,6 +156,16 @@ export default function App() {
     return () => offs.forEach((off) => void off.then((f) => f()));
   }, []);
 
+  // A page change replaces the content under the focused nav button: move focus to the new page's title.
+  const shownPage = useRef(page);
+  useEffect(() => {
+    if (shownPage.current === page) return;
+    shownPage.current = page;
+    const h1 = document.querySelector<HTMLElement>("main h1");
+    h1?.setAttribute("tabindex", "-1");
+    h1?.focus();
+  }, [page]);
+
   const mode = useResolvedMode(settings?.appearance);
   useEffect(() => {
     const root = document.documentElement;
@@ -431,7 +441,7 @@ export default function App() {
                 </Row>
               )}
               {!pending && u.state !== "downloading" && u.state !== "installing" && (
-                <Row label={t("about.check")} hint={updateHint(u, s.autoUpdate, info)}>
+                <Row label={t("about.check")} hint={<span role="status">{updateHint(u, s.autoUpdate, info)}</span>}>
                   <button className="btn ghost" disabled={u.state === "checking" || info?.managed.disableUpdates}
                     onClick={() => void checkForUpdates().then(setUpdateState)}>
                     {t("about.check.button")}

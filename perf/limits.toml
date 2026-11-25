@@ -13,11 +13,12 @@
 startup_ms = 600              # measured 93-139 ms: building the dictionary index
 boundary_p50_us = 50          # measured 0.1 us
 boundary_p99_us = 1_000       # measured 87-90 us; 1 ms is the whole hook budget per key
-boundary_max_us = 10_000      # measured 196-951 us; a wall-clock max over 20k keys also
-                              # catches OS preemption on shared runners, hence the slack
+boundary_max2_us = 10_000     # second-slowest of 20k keys; measured 196-951 us for the max. The single
+                              # max is still reported but not gated: one preempted sample on a shared
+                              # runner reached 11.3 ms on macOS (2026-11-25) with p99 at 152 us
 char_p99_us = 20              # measured 0.1 us
-hard_max_us = 10_000          # measured 145-454 us locally, 2509 us once on a GitHub runner (one
-                              # preempted sample); same slack as boundary_max_us. p99 is the budget.
+hard_max2_us = 10_000         # second-slowest hard word; the max measured 145-454 us locally and
+                              # 2509 us once on a GitHub runner (one preempted sample). p99 is the budget.
 heap_bytes = 25_165_824       # 24 MiB; measured 15_581_387 (14.9 MiB), deterministic
 peak_rss_bytes = 83_886_080   # 80 MiB; measured 43.6-45.7 MiB (index build peak)
 

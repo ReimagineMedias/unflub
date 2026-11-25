@@ -44,6 +44,9 @@ struct Stats {
     n: usize,
     p50: Duration,
     p99: Duration,
+    /// The second-slowest sample: one preempted sample on a shared runner can't fail the gate,
+    /// while a slow path that shows up more than once still does.
+    max2: Duration,
     max: Duration,
 }
 
@@ -53,14 +56,15 @@ fn stats(mut times: Vec<Duration>) -> Stats {
         n: times.len(),
         p50: percentile(&times, 0.50),
         p99: percentile(&times, 0.99),
+        max2: times[times.len().saturating_sub(2)],
         max: times[times.len() - 1],
     }
 }
 
 fn line(name: &str, s: &Stats) -> String {
     format!(
-        "{name:>9}: n={:>6}  p50={:>8.2?}  p99={:>8.2?}  max={:>8.2?}",
-        s.n, s.p50, s.p99, s.max
+        "{name:>9}: n={:>6}  p50={:>8.2?}  p99={:>8.2?}  max2={:>8.2?}  max={:>8.2?}",
+        s.n, s.p50, s.p99, s.max2, s.max
     )
 }
 
@@ -181,8 +185,10 @@ fn main() {
         ("startup_ms", Some(startup.as_secs_f64() * 1e3)),
         ("boundary_p50_us", Some(us(boundary.p50))),
         ("boundary_p99_us", Some(us(boundary.p99))),
+        ("boundary_max2_us", Some(us(boundary.max2))),
         ("boundary_max_us", Some(us(boundary.max))),
         ("char_p99_us", Some(us(char.p99))),
+        ("hard_max2_us", Some(us(hard.max2))),
         ("hard_max_us", Some(us(hard.max))),
         ("heap_bytes", Some(dict.heap_bytes() as f64)),
         ("peak_rss_bytes", peak_rss.map(|b| b as f64)),

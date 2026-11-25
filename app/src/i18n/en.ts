@@ -191,6 +191,7 @@ export const en = {
   "stats.clear.hint": "Deletes every count and word on this page.",
   "stats.clear.button": "Clear",
   "stats.clear.confirm": "Click again to clear",
+  "stats.clear.status": "Press the button again to clear all history.",
   "stats.none": "n/a",
 
   // Privacy
