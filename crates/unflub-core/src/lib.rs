@@ -306,6 +306,15 @@ fn normalize(word: &str) -> String {
     word.trim().to_lowercase().replace('\u{2019}', "'")
 }
 
+/// One of the user's own words, or its possessive or plural (`folake's`, `folakes`).
+fn is_personal(personal: &HashSet<String>, lower: &str) -> bool {
+    personal.contains(lower)
+        || [lower.strip_suffix("'s"), lower.strip_suffix('s')]
+            .into_iter()
+            .flatten()
+            .any(|base| !base.is_empty() && personal.contains(base))
+}
+
 /// Lowercase ASCII letters with apostrophes only inside: the shape the bundled dictionary knows.
 fn is_dictionary_shape(w: &str) -> bool {
     let b = w.as_bytes();
@@ -613,7 +622,7 @@ impl Engine {
         }
         if word.chars().count() < self.config.min_word_len
             || case == Case::Mixed
-            || self.rules.personal.contains(&self.lower)
+            || is_personal(&self.rules.personal, &self.lower)
             || !is_dictionary_shape(&self.lower)
         {
             return None;
