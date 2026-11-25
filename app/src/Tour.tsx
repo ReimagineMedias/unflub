@@ -165,21 +165,23 @@ export function Tour({ settings: s, info, update, onClose }: {
         </>
       )}
 
-      <div className="tour-foot">
-        {step > 1 ? <button className="btn ghost" onClick={() => go(step - 1)}>{t("tour.back")}</button> : <span />}
-        <div className="actions">
-          {step < STEPS && <button className="btn ghost" onClick={() => go(STEPS)}>{t("tour.skip")}</button>}
-          {step < STEPS
-            ? <button className="btn" disabled={(step === 1 && !fixed) || (step === 2 && !undone)} onClick={() => go(step + 1)}>{t("tour.next")}</button>
-            : <button className="btn" onClick={done}>{t(s.onboarded ? "tour.done" : "tour.continue")}</button>}
+      <div className="tour-bottom">
+        <div className="tour-foot">
+          {step > 1 ? <button className="btn ghost" onClick={() => go(step - 1)}>{t("tour.back")}</button> : <span />}
+          <div className="actions">
+            {step < STEPS && <button className="btn ghost" onClick={() => go(STEPS)}>{t("tour.skip")}</button>}
+            {step < STEPS
+              ? <button className="btn" disabled={(step === 1 && !fixed) || (step === 2 && !undone)} onClick={() => go(step + 1)}>{t("tour.next")}</button>
+              : <button className="btn" onClick={done}>{t(s.onboarded ? "tour.done" : "tour.continue")}</button>}
+          </div>
         </div>
+        {step === STEPS && !s.onboarded && (
+          <p className="tour-terms">
+            {t("tour.terms.before")}<ExternalLink href={LINKS.terms}>{t("tour.terms.link")}</ExternalLink>{t("tour.terms.after")}
+            <ExternalLink className="link quiet" href={LINKS.privacy}>{t("tour.terms.collect")}</ExternalLink>
+          </p>
+        )}
       </div>
-      {step === STEPS && !s.onboarded && (
-        <p className="tour-terms">
-          {t("tour.terms.before")}<ExternalLink href={LINKS.terms}>{t("tour.terms.link")}</ExternalLink>{t("tour.terms.after")}
-          <ExternalLink className="link quiet" href={LINKS.privacy}>{t("tour.terms.collect")}</ExternalLink>
-        </p>
-      )}
     </div>
   );
 }

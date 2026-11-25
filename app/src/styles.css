@@ -257,7 +257,9 @@ button.link { border: 0; padding: 0; background: none; color: var(--accent); cur
 .disclosure p { margin: 0 0 6px; font-weight: 600; }
 .disclosure ul { margin: 0; padding-left: 18px; color: var(--muted); display: grid; gap: 3px; }
 .tour-later { display: block; margin-top: 10px; }
-.tour-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: auto; padding-top: 24px; }
+/* Pinned to the bottom of the scrolling window, so Back and Done never sit below the fold. */
+.tour-bottom { position: sticky; bottom: -40px; margin-top: auto; padding-bottom: 12px; background: var(--bg); }
+.tour-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 24px; }
 .tour-terms { margin: 12px 0 0; text-align: right; font-size: 12px; color: var(--muted); }
 .tour-terms .quiet { margin-left: 10px; color: var(--muted); text-decoration-color: color-mix(in srgb, var(--muted) 50%, transparent); }
 .note { margin: 10px 2px 0; color: var(--muted); font-size: 12.5px; max-width: 70ch; }
