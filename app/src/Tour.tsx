@@ -99,6 +99,13 @@ export function Tour({ settings: s, info, update, onClose }: {
     h1?.focus();
   }, [step]);
 
+  // The practice box starts empty on every step, so its success notes must too.
+  const go = (n: number) => {
+    setStep(n);
+    setFixed(false);
+    setUndone(null);
+  };
+
   const done = () => {
     if (!s.onboarded) update({ onboarded: true });
     onClose();
@@ -159,11 +166,11 @@ export function Tour({ settings: s, info, update, onClose }: {
       )}
 
       <div className="tour-foot">
-        {step > 1 ? <button className="btn ghost" onClick={() => setStep(step - 1)}>{t("tour.back")}</button> : <span />}
+        {step > 1 ? <button className="btn ghost" onClick={() => go(step - 1)}>{t("tour.back")}</button> : <span />}
         <div className="actions">
-          {step < STEPS && <button className="btn ghost" onClick={() => setStep(STEPS)}>{t("tour.skip")}</button>}
+          {step < STEPS && <button className="btn ghost" onClick={() => go(STEPS)}>{t("tour.skip")}</button>}
           {step < STEPS
-            ? <button className="btn" disabled={(step === 1 && !fixed) || (step === 2 && !undone)} onClick={() => setStep(step + 1)}>{t("tour.next")}</button>
+            ? <button className="btn" disabled={(step === 1 && !fixed) || (step === 2 && !undone)} onClick={() => go(step + 1)}>{t("tour.next")}</button>
             : <button className="btn" onClick={done}>{t(s.onboarded ? "tour.done" : "tour.continue")}</button>}
         </div>
       </div>
