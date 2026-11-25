@@ -17,6 +17,8 @@ export const SITE = {
   license: "https://github.com/ReimagineMedias/unflub/blob/main/LICENSE",
   trademarks: "https://github.com/ReimagineMedias/unflub/blob/main/TRADEMARKS.md",
   issues: "https://github.com/ReimagineMedias/unflub/issues",
+  security: "https://github.com/ReimagineMedias/unflub/blob/main/SECURITY.md",
+  securityReport: "https://github.com/ReimagineMedias/unflub/security/advisories/new",
   /** GitHub Sponsors for now; swap here if sponsorship moves. */
   sponsor: "https://github.com/sponsors/ReimagineMedias",
   /** Said wherever we ask for support. */
