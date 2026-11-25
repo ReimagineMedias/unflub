@@ -281,8 +281,6 @@ pub struct Features {
     pub settings_opens: u64,
     pub stats_page_views: u64,
     pub tour_replays: u64,
-    /// The user's shortcuts that expanded (the same fixes as `corrections_user_rule`).
-    pub shortcut_uses: u64,
     pub theme_changes: u64,
 }
 
@@ -547,9 +545,6 @@ impl Usage {
                 AppCategory::Email => &mut c.by_category_email,
                 AppCategory::Other => &mut c.by_category_other,
             } += 1;
-            if fix.source == FixSource::UserRule {
-                t.features.shortcut_uses += 1;
-            }
             t.decide.record_duration(fix.decide);
             t.inject.record_duration(fix.inject);
         });
@@ -847,7 +842,6 @@ fn build_payload(
             settings_opens: cap(f.settings_opens),
             stats_page_views: cap(f.stats_page_views),
             tour_replays: cap(f.tour_replays),
-            shortcut_uses: cap(f.shortcut_uses),
             theme_changes: cap(f.theme_changes),
         },
         updates: UpdateCounts {
@@ -1123,7 +1117,6 @@ mod tests {
         "features.settings_opens",
         "features.stats_page_views",
         "features.tour_replays",
-        "features.shortcut_uses",
         "features.theme_changes",
         "updates",
         "updates.offered",
@@ -1461,7 +1454,6 @@ mod tests {
             settings_opens: max,
             stats_page_views: max,
             tour_replays: max,
-            shortcut_uses: max,
             theme_changes: max,
         };
         t.updates = UpdateCounts {
@@ -1567,7 +1559,6 @@ mod tests {
         assert_eq!((c.trigger_space, c.trigger_enter_tab), (1, 1));
         assert_eq!((c.corrections_engine_core, c.corrections_user_rule), (1, 1));
         assert_eq!((c.by_category_browser, c.by_category_chat), (1, 1));
-        assert_eq!(t.features.shortcut_uses, 1);
         assert_eq!(t.decide.count(), 2);
 
         again.set_on(false);
