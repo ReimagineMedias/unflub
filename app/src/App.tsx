@@ -349,12 +349,12 @@ export default function App() {
                     <Slider label={t("appearance.opacity")} min={0.3} max={1} step={0.02} value={s.pillOpacity}
                       onChange={(v) => update({ pillOpacity: v })} format={(v) => `${Math.round(v * 100)}%`} />
                   </Row>
-                  <Row label={t("appearance.duration")}>
-                    <Slider label={t("appearance.duration")} min={400} max={3000} step={100} value={s.pillDurationMs}
-                      onChange={(v) => update({ pillDurationMs: v })} format={(v) => t("appearance.duration.value", { s: (v / 1000).toFixed(1) })} />
-                  </Row>
                 </>
               )}
+              <Row label={t("appearance.duration")} hint={t("appearance.duration.hint")}>
+                <Slider label={t("appearance.duration")} min={400} max={3000} step={100} value={s.pillDurationMs}
+                  onChange={(v) => update({ pillDurationMs: v })} format={(v) => t("appearance.duration.value", { s: (v / 1000).toFixed(1) })} />
+              </Row>
             </div>
           </>
         )}
