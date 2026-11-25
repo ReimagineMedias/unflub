@@ -636,6 +636,27 @@ fn backtick_spans_are_code() {
     assert_eq!(t.type_str("run `teh adn` teh "), "run `teh adn` the ");
     let mut t = Typist::bundled();
     assert_eq!(t.type_str("```\nteh\n```\nteh "), "```\nteh\n```\nthe ");
+    // A fence stays open across lines, also when indented or with a language tag.
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("  ```rust\nteh\n\nadn\n  ```\nteh "),
+        "  ```rust\nteh\n\nadn\n  ```\nthe "
+    );
+}
+
+/// #102: one stray backtick no longer turns correction off until the next click.
+#[test]
+fn a_stray_backtick_ends_at_the_line() {
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("press ` then teh\nteh end "),
+        "press ` then teh\nthe end "
+    );
+    // Backspacing the stray backtick closes the span too.
+    let mut t = Typist::bundled();
+    t.type_str("ok `");
+    t.key(Key::Backspace);
+    assert_eq!(t.type_str("teh "), "ok the ");
 }
 
 #[test]

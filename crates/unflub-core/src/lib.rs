@@ -538,7 +538,7 @@ impl Engine {
             counter.fetch_add(1, Ordering::Relaxed);
         }
         let skip_code = self.config.skip_code;
-        if skip_code && (self.session.backticks || cur.code_like) {
+        if skip_code && (self.session.in_backticks() || cur.code_like) {
             self.skipped(|s| &s.code_context);
             return None;
         }

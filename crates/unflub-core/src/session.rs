@@ -36,8 +36,11 @@ pub struct Session {
     buf: VecDeque<char>,
     /// The character just before `buf[0]` is known to be whitespace (or a word start).
     front_ws: bool,
-    /// Inside an open backtick span.
-    pub backticks: bool,
+    /// Inside an open inline backtick span. Closed by a newline: inline code can't span lines,
+    /// and a stray backtick must not turn correction off for good.
+    backticks: bool,
+    /// Inside a ```` ``` ```` fence (opened by three backticks at the start of a line).
+    fence: bool,
     /// Bumped by every reset: anything learned about the caret before it is stale.
     pub generation: u64,
 }
@@ -48,7 +51,36 @@ impl Session {
             buf: VecDeque::with_capacity(CAPACITY),
             front_ws: false,
             backticks: false,
+            fence: false,
             generation: 0,
+        }
+    }
+
+    /// Inside a backtick span or a code fence.
+    pub fn in_backticks(&self) -> bool {
+        self.backticks || self.fence
+    }
+
+    /// The buffer ends with ```` ``` ```` that starts its line (only spaces or tabs before it).
+    fn ends_with_fence_marker(&self) -> bool {
+        let n = self.buf.len();
+        if n < 3 || self.buf.range(n - 3..).any(|&c| c != '`') {
+            return false;
+        }
+        let mut i = n - 3;
+        while i > 0 && matches!(self.buf[i - 1], ' ' | '\t') {
+            i -= 1;
+        }
+        i == 0 || matches!(self.buf[i - 1], '\n' | '\r')
+    }
+
+    /// Account for the backtick just pushed (or about to be popped): the third of a fence marker
+    /// opens or closes the fence (the first two toggled the inline span on and off again).
+    fn toggle_backtick(&mut self) {
+        if self.ends_with_fence_marker() {
+            self.fence = !self.fence;
+        } else {
+            self.backticks = !self.backticks;
         }
     }
 
@@ -57,6 +89,7 @@ impl Session {
         self.buf.clear();
         self.front_ws = false;
         self.backticks = false;
+        self.fence = false;
         self.generation += 1;
     }
 
@@ -84,10 +117,12 @@ impl Session {
                 self.front_ws = dropped.is_whitespace();
             }
         }
-        if c == '`' {
-            self.backticks = !self.backticks;
-        }
         self.buf.push_back(c);
+        match c {
+            '`' => self.toggle_backtick(),
+            '\n' | '\r' => self.backticks = false,
+            _ => {}
+        }
     }
 
     pub fn push_str(&mut self, s: &str) {
@@ -98,11 +133,12 @@ impl Session {
 
     /// Backspace. Deleting past what we saw leaves us not knowing what precedes the caret.
     pub fn pop(&mut self) {
-        match self.buf.pop_back() {
-            Some('`') => self.backticks = !self.backticks,
+        match self.buf.back() {
+            Some('`') => self.toggle_backtick(),
             Some(_) => {}
-            None => self.reset(),
+            None => return self.reset(),
         }
+        self.buf.pop_back();
     }
 
     pub fn pop_n(&mut self, n: usize) {
@@ -236,6 +272,22 @@ mod tests {
         assert!(session("done\nteh").current().unwrap().sentence_start);
         assert!(!session("I teh").current().unwrap().sentence_start);
         assert!(!session("so, teh").current().unwrap().sentence_start);
+    }
+
+    #[test]
+    fn backtick_spans_and_fences() {
+        let mut s = session("a `b");
+        assert!(s.in_backticks());
+        s.push('\n');
+        assert!(!s.in_backticks(), "inline spans end at the line");
+        s.push_str("```");
+        assert!(s.in_backticks());
+        s.push_str("\nx\n");
+        assert!(s.in_backticks(), "fences span lines");
+        s.pop_n(3);
+        s.pop();
+        assert!(!s.in_backticks(), "backspacing the marker closes the fence");
+        assert!(!s.backticks && !s.fence);
     }
 
     #[test]
