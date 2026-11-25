@@ -315,6 +315,12 @@ fn is_personal(personal: &HashSet<String>, lower: &str) -> bool {
             .any(|base| !base.is_empty() && personal.contains(base))
 }
 
+/// `d'angelo`, `o'reilly`, `c'est`, `qu'il`: one or two letters elided before an apostrophe.
+/// A fix without an apostrophe deletes them (`angelo`, `reilly`, `cost`), so it is refused.
+fn drops_elision(typed: &str, fixed: &str) -> bool {
+    matches!(typed.find(['\'', '\u{2019}']), Some(1 | 2)) && !fixed.contains(['\'', '\u{2019}'])
+}
+
 /// Lowercase ASCII letters with apostrophes only inside: the shape the bundled dictionary knows.
 fn is_dictionary_shape(w: &str) -> bool {
     let b = w.as_bytes();
@@ -638,11 +644,17 @@ impl Engine {
             let cut = word.char_indices().rev().nth(1).map_or(0, |(i, _)| i);
             let suffix = word[cut..].to_string();
             let (source, fixed) = self.rank_possessive_base(&cur, base_len)?;
+            if drops_elision(&self.lower[..base_len], &fixed) {
+                return None;
+            }
             let mut fixed = self.cased(source, fixed, case);
             fixed.push_str(&suffix);
             return self.replacement(fixed, tail, boundary, source);
         }
         let (source, fixed) = self.detect_and_rank(&cur)?;
+        if drops_elision(&self.lower, &fixed) {
+            return None;
+        }
         let fixed = self.cased(source, fixed, case);
         self.replacement(fixed, tail, boundary, source)
     }
