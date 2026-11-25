@@ -240,6 +240,9 @@ pub struct Engine {
     skips: Option<Arc<SkipCounts>>,
     /// Word ends seen while the app is excluded.
     excluded_words: WordEnds,
+    /// A `.` ended the last key while skipping code: the word before it is decided on the next
+    /// key, if that ends the token.
+    dot_pending: bool,
 }
 
 /// A [`Config`] with its lookups (excluded apps, personal words, rules) already built, for
@@ -331,6 +334,7 @@ impl Engine {
             words_checked: None,
             skips: None,
             excluded_words: WordEnds::default(),
+            dot_pending: false,
         };
         engine.seed_undo_counts();
         engine
@@ -366,6 +370,7 @@ impl Engine {
             }
             _ => None,
         };
+        let dot = std::mem::take(&mut self.dot_pending);
         let excluded = ctx
             .app
             .is_some_and(|app| self.rules.excluded_apps.contains(app));
@@ -399,7 +404,23 @@ impl Engine {
             Key::Boundary(c) => {
                 let skip = self.config.skip_code && session::is_glue(c);
                 if !skip {
-                    if let Some(r) = self.decide(c) {
+                    if self.config.skip_code && c == '.' && !dot {
+                        // `folake.adeyemi@`, `uottawa.ca`, `postcss.config.js`: whether a word
+                        // ends at a `.` is only known at the next key. Decide then, and never if
+                        // a letter or digit carries the token on.
+                        self.dot_pending = true;
+                        self.session.push(c);
+                        return Action::Pass;
+                    }
+                    let fix = if dot {
+                        self.session.pop();
+                        let fix = self.decide(c, ".");
+                        self.session.push('.');
+                        fix
+                    } else {
+                        self.decide(c, "")
+                    };
+                    if let Some(r) = fix {
                         self.session.pop_n(r.delete);
                         self.session.push_str(&r.insert);
                         self.push_event(Event::Corrected(r.clone()));
@@ -502,10 +523,12 @@ impl Engine {
             self.session.pop();
             return Action::Pass;
         }
+        // What was typed after the word (the boundary, and a `.` before it) comes back as is.
+        let after = r.insert.chars().skip(r.corrected.chars().count());
         let mut insert = r.original.clone();
-        insert.push(boundary);
+        insert.extend(after);
         let undo = Replacement {
-            delete: r.corrected.chars().count() + 1,
+            delete: r.insert.chars().count(),
             insert,
             original: r.original,
             corrected: r.corrected,
@@ -532,7 +555,8 @@ impl Engine {
     }
 
     /// Decides whether the word before the caret should be replaced, given boundary `c`.
-    fn decide(&mut self, boundary: char) -> Option<Replacement> {
+    /// `tail` was typed after the word before the boundary (a `.` whose decision waited).
+    fn decide(&mut self, boundary: char, tail: &str) -> Option<Replacement> {
         let cur = self.session.current()?;
         if let Some(counter) = &self.words_checked {
             counter.fetch_add(1, Ordering::Relaxed);
@@ -585,7 +609,7 @@ impl Engine {
             } else {
                 case::apply(case, to)
             };
-            return self.replacement(to, boundary, Source::UserRule);
+            return self.replacement(to, tail, boundary, Source::UserRule);
         }
         if word.chars().count() < self.config.min_word_len
             || case == Case::Mixed
@@ -607,11 +631,11 @@ impl Engine {
             let (source, fixed) = self.rank_possessive_base(&cur, base_len)?;
             let mut fixed = self.cased(source, fixed, case);
             fixed.push_str(&suffix);
-            return self.replacement(fixed, boundary, source);
+            return self.replacement(fixed, tail, boundary, source);
         }
         let (source, fixed) = self.detect_and_rank(&cur)?;
         let fixed = self.cased(source, fixed, case);
-        self.replacement(fixed, boundary, source)
+        self.replacement(fixed, tail, boundary, source)
     }
 
     /// A ranked fix in the case the user typed (the OS returns its fixes already cased).
@@ -733,20 +757,23 @@ impl Engine {
         (choice.margin > required).then(|| (Source::Bundled, self.dict.word(choice.id).to_string()))
     }
 
+    /// The word is replaced by `corrected`; `tail` and the boundary are typed again after it.
     fn replacement(
         &self,
         corrected: String,
+        tail: &str,
         boundary: char,
         source: Source,
     ) -> Option<Replacement> {
         if corrected == self.word {
             return None;
         }
-        let mut insert = String::with_capacity(corrected.len() + boundary.len_utf8());
+        let mut insert = String::with_capacity(corrected.len() + tail.len() + boundary.len_utf8());
         insert.push_str(&corrected);
+        insert.push_str(tail);
         insert.push(boundary);
         Some(Replacement {
-            delete: self.word.chars().count(),
+            delete: self.word.chars().count() + tail.chars().count(),
             insert,
             original: self.word.clone(),
             corrected,

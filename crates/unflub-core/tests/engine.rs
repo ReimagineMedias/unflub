@@ -666,6 +666,59 @@ fn glue_characters_do_not_trigger() {
     assert_eq!(t.type_str(text), text);
 }
 
+/// #34: the part before a `.` is decided on the next key, so addresses, domains and file
+/// names are never rewritten at their first dot.
+#[test]
+fn emails_domains_and_file_names_are_left_alone() {
+    for text in [
+        "mail teh.boss@x.com now ",
+        "mail folake.adeyemi@gmail.com now ",
+        "see gogle.com and uottawa.ca ",
+        "see youtu.be/xyz ",
+        "open postcss.config.js ",
+        "see ville.gatineau.qc.ca ",
+        "teh.boss\n",
+    ] {
+        let mut t = Typist::bundled();
+        assert_eq!(t.type_str(text), text);
+    }
+    // A sentence end is still a word end, whatever follows the `.`.
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("ok teh.\nadn teh... \"taht.\" "),
+        "ok the.\nand the... \"that.\" "
+    );
+    // Without code skipping, the `.` decides at once, as before.
+    let mut t = Typist::new(Config {
+        skip_code: false,
+        ..config()
+    });
+    assert_eq!(t.type_str("teh.com "), "the.com ");
+}
+
+/// A fix decided after a `.` undoes back to the word, the `.` and the boundary as typed.
+#[test]
+fn a_fix_after_a_period_undoes() {
+    let mut t = mode(UndoMode::Twice, 2);
+    t.type_str("ok teh.");
+    let Action::Replace(r) = t.press(Key::Boundary(' ')) else {
+        panic!("no fix")
+    };
+    assert_eq!((r.delete, r.insert.as_str()), (4, "the. "));
+    assert_eq!(t.text, "ok the. ");
+    assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
+    let Action::Undo(u) = t.press(Key::Backspace) else {
+        panic!("no undo")
+    };
+    assert_eq!((u.delete, u.insert.as_str()), (5, "teh. "));
+    assert_eq!(t.text, "ok teh. ");
+    // Backspacing the `.` drops the wait; the word is decided on the next boundary.
+    let mut t = Typist::bundled();
+    t.type_str("ok teh.");
+    t.key(Key::Backspace);
+    assert_eq!(t.type_str(" "), "ok the ");
+}
+
 /// #57: `name(` is a function call, and so are the words inside it.
 #[test]
 fn function_calls_are_left_alone() {
