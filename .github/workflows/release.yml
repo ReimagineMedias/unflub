@@ -404,10 +404,11 @@ jobs:
         with:
           node-version: 24
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        # Each artifact in its own folder (bundles/bundle-<name>), so "Expected installers" can
+        # check every one against the build matrix before anything is signed.
         with:
           pattern: bundle-*
-          merge-multiple: true
-          path: release-files
+          path: bundles
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-notes
@@ -417,6 +418,43 @@ jobs:
           pattern: binaries-*
           merge-multiple: true
           path: binaries
+
+      - name: Expected installers
+        env:
+          MATRIX: ${{ needs.prepare.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          # Exactly one bundle-<name> artifact per enabled matrix row, nothing else.
+          want=$(jq -r '.include[].name | "bundle-" + .' <<<"$MATRIX" | sort)
+          have=$(find bundles -mindepth 1 -maxdepth 1 -printf '%P\n' | sort)
+          if [ "$want" != "$have" ]; then
+            echo "::error::Expected the artifacts [$(echo $want)], got [$(echo $have)]"
+            exit 1
+          fi
+          # Exactly the installers each row should make, worked out from the version here rather
+          # than from what was uploaded: the setup per arch, plus the MSI for a stable version.
+          mkdir -p release-files
+          while IFS=$'\t' read -r name target; do
+            case "$target" in
+              x86_64-pc-windows-msvc) arch=x64 ;;
+              aarch64-pc-windows-msvc) arch=arm64 ;;
+              *) echo "::error::No expected-file rule for $name ($target). Add one here before enabling it."; exit 1 ;;
+            esac
+            expected=("unflub_${VERSION}_${arch}-setup.exe")
+            if [[ "$VERSION" != *-* ]]; then expected+=("unflub_${VERSION}_${arch}_en-US.msi"); fi
+            want=$(printf '%s\n' "${expected[@]}" | sort)
+            have=$(find "bundles/bundle-$name" -mindepth 1 -printf '%P\n' | sort)
+            if [ "$want" != "$have" ]; then
+              echo "::error::bundle-$name should hold [$(echo $want)], it holds [$(echo $have)]"
+              exit 1
+            fi
+            for f in "${expected[@]}"; do
+              [ -f "bundles/bundle-$name/$f" ] || { echo "::error::$f is not a regular file"; exit 1; }
+              [ ! -e "release-files/$f" ] || { echo "::error::$f is in more than one artifact"; exit 1; }
+              cp "bundles/bundle-$name/$f" release-files/
+            done
+          done < <(jq -r '.include[] | [.name, .target] | @tsv' <<<"$MATRIX")
+          ls -l release-files
 
       # The Tauri CLI for `tauri signer sign`, at the version in the lockfile. --ignore-scripts:
       # no package's install script runs in the job that holds the signing key.

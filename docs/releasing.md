@@ -65,6 +65,10 @@ API contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
    refuses a tag that doesn't match the version in the files, and a tag that already exists.
 
 4. **What the run does after the builds**, in order, stopping at the first failure:
+   - The release job checks it got one `bundle-<name>` artifact per enabled matrix row and in
+     each exactly the installers that row should make (the setup per arch, plus the MSI for a
+     stable version), named from the version: anything missing, extra or duplicated fails the
+     run before signing.
    - The release job signs each installer for the updater (`tauri signer sign --app-version`,
      Tauri's CLI from `app/package-lock.json`, installed with `--ignore-scripts`) and writes its
      `.sig`. The build jobs never get the key: they run npm and Cargo build scripts, and any of
