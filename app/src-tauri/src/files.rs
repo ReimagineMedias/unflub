@@ -4,17 +4,23 @@ use std::{
     fs,
     io::{self, Write},
     path::Path,
+    sync::atomic::{AtomicU64, Ordering},
 };
+
+/// Makes every temp file name unique within this process.
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Replace `path` with `bytes` so that after a crash or a power loss it holds either the old
 /// content or the new, never a short or empty file: write a temp file beside it, flush it to
-/// disk, then rename it over `path`. The temp file is removed if anything fails.
+/// disk, then rename it over `path`. The temp file is removed if anything fails. Each call has
+/// its own temp file, so two writers never write into the same one.
 pub fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
     let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".tmp");
+    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    name.push(format!(".{}-{seq}.tmp", std::process::id()));
     let tmp = path.with_file_name(name);
     let written = (|| {
         let mut file = fs::File::create(&tmp)?;
