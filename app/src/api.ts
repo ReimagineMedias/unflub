@@ -194,6 +194,19 @@ const mockTour = (() => {
   };
 })();
 
+/** What the window reports for the anonymous usage stats (`usage_event` in lib.rs; a closed list). */
+export type UsageEvent = "stats_page_view" | "tour_replay" | "tour_completed" | "tour_skipped" | "update_dismissed";
+
+/** Counts one thing for the usage stats. Fire and forget: a failure never reaches the UI. */
+export function reportUsage(event: UsageEvent): void {
+  if (!inTauri) return;
+  try {
+    invoke("usage_event", { event }).catch(() => {});
+  } catch {
+    // Stats must never break the window.
+  }
+}
+
 /** A fresh practice box for the tour. */
 export async function tourReset(): Promise<void> {
   if (inTauri) await invoke("tour_reset");

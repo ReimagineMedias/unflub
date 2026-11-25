@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { clearStats, statsView } from "./api";
+import { clearStats, reportUsage, statsView } from "./api";
 import { Row, Sparkline, Switch } from "./components";
 import { t } from "./i18n";
 import type { Settings, StatsDay, StatsView } from "./types";
@@ -20,6 +20,7 @@ function Big({ label, day }: { label: string; day: StatsDay }) {
 
 /** Local only: counts and the most fixed words, read from stats.json through the app. */
 export function StatsPage({ settings, update }: { settings: Settings; update: (patch: Partial<Settings>) => void }) {
+  useEffect(() => reportUsage("stats_page_view"), []);
   const [view, setView] = useState<StatsView | null>(null);
   const [confirming, setConfirming] = useState(false);
 
