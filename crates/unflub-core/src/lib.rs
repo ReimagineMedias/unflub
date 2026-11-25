@@ -652,7 +652,10 @@ impl Engine {
         match source {
             Source::System => fixed,
             _ => {
-                let fixed = if fixed == "i" || fixed.starts_with("i'") {
+                let fixed = if fixed == "i"
+                    || fixed.starts_with("i'")
+                    || case::always_capitalised(&fixed)
+                {
                     case::apply(Case::Title, &fixed)
                 } else {
                     fixed
