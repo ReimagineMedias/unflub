@@ -293,6 +293,42 @@ struct FileState {
     /// Values from the file this version couldn't read, by key. Each is written back while
     /// that setting still has its default, so a newer unflub finds the user's choice again.
     unread: Map<String, Value>,
+    /// The file couldn't be read at startup, so the settings in memory are defaults: back the
+    /// file up before the first save replaces it.
+    unreadable: bool,
+}
+
+/// The file's bytes. A file another program holds open for a moment (antivirus, a sync client)
+/// gets a few more tries.
+fn read_retrying(path: &Path) -> io::Result<Vec<u8>> {
+    let mut tries = 0;
+    loop {
+        match fs::read(path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound && tries < 4 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            read => return read,
+        }
+    }
+}
+
+/// The file's text: UTF-8 with or without a BOM, or UTF-16 with a BOM (Notepad's "Unicode").
+fn decode(bytes: &[u8]) -> Option<String> {
+    let utf16 = |bytes: &[u8], from: fn([u8; 2]) -> u16| {
+        let pairs = bytes.chunks_exact(2);
+        if !pairs.remainder().is_empty() {
+            return None;
+        }
+        let units: Vec<u16> = pairs.map(|c| from([c[0], c[1]])).collect();
+        String::from_utf16(&units).ok()
+    };
+    match bytes {
+        [0xEF, 0xBB, 0xBF, rest @ ..] => String::from_utf8(rest.to_vec()).ok(),
+        [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),
+        [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),
+        _ => String::from_utf8(bytes.to_vec()).ok(),
+    }
 }
 
 impl FileState {
@@ -329,18 +365,24 @@ impl Store {
         self.path.exists()
     }
 
-    /// Missing or unreadable files fall back to defaults; a file that isn't a JSON object is
-    /// moved to a timestamped backup (the last [`BACKUPS_KEPT`] are kept). A field this version
-    /// can't read gets its default and the rest of the file is kept (see [`from_object`]). An
-    /// older file is migrated (`migrations.rs`) and written back.
+    /// A missing file gives the defaults. A file that can't be opened (another program holds
+    /// it) also runs on the defaults, but is left alone and backed up before the first save
+    /// replaces it. A file that isn't a JSON object is moved to a timestamped backup (the last
+    /// [`BACKUPS_KEPT`] are kept). A field this version can't read gets its default and the
+    /// rest of the file is kept (see [`from_object`]). An older file is migrated
+    /// (`migrations.rs`) and written back.
     pub fn load(&self) -> Settings {
-        let Ok(text) = fs::read_to_string(&self.path) else {
-            return Settings::default();
+        let bytes = match read_retrying(&self.path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Settings::default(),
+            Err(e) => {
+                eprintln!("settings: can't read the file ({e}); using defaults, and backing it up before saving over it");
+                self.lock().unreadable = true;
+                return Settings::default();
+            }
         };
-        // Notepad's "UTF-8 with BOM".
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-        let parsed = serde_json::from_str::<Value>(text)
-            .ok()
+        let parsed = decode(&bytes)
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
             .filter(Value::is_object)
             .map(crate::migrations::migrate)
             .and_then(|(value, migrated_from)| match value {
@@ -372,7 +414,10 @@ impl Store {
             None => {
                 match self.back_up(|from, to| fs::rename(from, to)) {
                     Ok(to) => eprintln!("settings: unreadable, moved to {}", to.display()),
-                    Err(e) => eprintln!("settings: unreadable, and can't move it aside: {e}"),
+                    Err(e) => {
+                        eprintln!("settings: unreadable, and can't move it aside yet: {e}");
+                        self.lock().unreadable = true;
+                    }
                 }
                 Settings::default()
             }
@@ -447,6 +492,22 @@ impl Store {
     }
 
     fn write(&self, file: &mut FileState, settings: &Settings) -> io::Result<()> {
+        if file.unreadable {
+            // Never replace a file we couldn't read without a copy of it.
+            match self.back_up(|from, to| fs::copy(from, to).map(drop)) {
+                Ok(to) => eprintln!("settings: the unreadable file is kept as {}", to.display()),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(io::Error::new(
+                        e.kind(),
+                        format!(
+                            "settings.json can't be read or backed up, so it isn't replaced ({e})"
+                        ),
+                    ))
+                }
+            }
+            file.unreadable = false;
+        }
         let mut value = serde_json::to_value(settings)?;
         if let Value::Object(obj) = &mut value {
             file.restore_unread(obj);
@@ -728,6 +789,79 @@ mod tests {
         store.update(&current, |s| s.theme = Theme::Paper).unwrap();
         store.update(&current, |s| s.theme = Theme::Unflub).unwrap();
         assert_eq!(on_disk()["theme"], "unflub");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Review #87: Notepad's "Unicode" (UTF-16 with a BOM) loads.
+    #[test]
+    fn utf16_files_load() {
+        let dir = temp_dir("settings-utf16");
+        let json = r#"{ "schemaVersion": 2, "onboarded": true, "personalWords": ["rmgn"], "theme": "ink" }"#;
+        let le: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain(json.encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        fs::write(dir.join("settings.json"), le).unwrap();
+        let s = Store::new(dir.clone()).load();
+        assert_eq!(
+            (s.personal_words.as_slice(), s.theme),
+            (&["rmgn".to_string()][..], Theme::Ink)
+        );
+        let be: Vec<u8> = [0xFE, 0xFF]
+            .into_iter()
+            .chain(json.encode_utf16().flat_map(u16::to_be_bytes))
+            .collect();
+        fs::write(dir.join("settings.json"), be).unwrap();
+        assert!(Store::new(dir.clone()).load().onboarded);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Review #87: a file that isn't text is moved aside, not overwritten.
+    #[test]
+    fn a_file_that_isnt_text_is_backed_up() {
+        let dir = temp_dir("settings-binary");
+        fs::write(dir.join("settings.json"), [0x7B, 0xC3, 0x28, 0x7D]).unwrap();
+        assert_eq!(Store::new(dir.clone()).load(), Settings::default());
+        let kept = backups(&dir);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            fs::read(dir.join(&kept[0])).unwrap(),
+            [0x7B, 0xC3, 0x28, 0x7D]
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Review #87: a file another program holds open at startup is never replaced without a
+    /// backup: saves fail while it can't be copied, and the first one after keeps a copy.
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_file_is_backed_up_before_it_is_replaced() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = temp_dir("settings-locked");
+        let original = r#"{ "schemaVersion": 2, "personalWords": ["rmgn"] }"#;
+        fs::write(dir.join("settings.json"), original).unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(dir.join("settings.json"))
+            .unwrap();
+        let store = Store::new(dir.clone());
+        let current = Mutex::new(store.load());
+        assert_eq!(*current.lock().unwrap(), Settings::default());
+        assert!(store.update(&current, |s| s.enabled = false).is_err());
+        assert!(current.lock().unwrap().enabled, "nothing changed");
+        drop(lock);
+        assert_eq!(
+            fs::read_to_string(dir.join("settings.json")).unwrap(),
+            original
+        );
+        store.update(&current, |s| s.enabled = false).unwrap();
+        let kept = backups(&dir);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(fs::read_to_string(dir.join(&kept[0])).unwrap(), original);
+        // Only the first save backs up.
+        store.update(&current, |s| s.enabled = true).unwrap();
+        assert_eq!(backups(&dir).len(), 1);
         fs::remove_dir_all(dir).unwrap();
     }
 
