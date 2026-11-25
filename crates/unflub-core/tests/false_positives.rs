@@ -122,3 +122,29 @@ fn known_words_stay() {
     let text = "the quick brown fox jumps over the lazy dog, its fine and we're well. ";
     assert_eq!(t.type_str(text), text);
 }
+
+/// #60: American spellings the frequency list lacked became British (favorite -> favourite),
+/// and the other way round. Neither spelling is a typo of the other, in any mode.
+#[test]
+fn regional_spellings_stay() {
+    let words = "favorite favorites colors analyze analyzing analyzed offense defense theater \
+traveled canceled jewelry catalog neighbor labor humor harbor skeptical pajamas plow somber \
+luster savor mom moms favourite colours analyse analysing offence theatre travelled cancelled \
+jewellery catalogue neighbour labour humour harbour sceptical pyjamas plough sombre lustre \
+savour behaviour organise recognise mum";
+    for mode in [EngineMode::BundledOnly, EngineMode::Aggressive] {
+        let mut changed = Vec::new();
+        for word in words.split_ascii_whitespace() {
+            let mut t = Typist::new(Config {
+                mode,
+                ..Config::default()
+            });
+            let text = format!("my {word} is ok ");
+            let got = t.type_str(&text).to_string();
+            if got != text {
+                changed.push(got);
+            }
+        }
+        assert!(changed.is_empty(), "{mode:?}: {}", changed.join(" | "));
+    }
+}
