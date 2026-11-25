@@ -1,0 +1,14 @@
+# Common misspellings the ranking gets wrong or leaves alone, and their fixes: `typo fix`, the fix
+# being the rest of the line. Checked before ranking, for a word that is flagged (by the OS
+# checker, or by the bundled dictionary without one). A typo listed here is never a known word,
+# even if the frequency list has it. Only unambiguous entries: one obvious intended word.
+
+# Contractions typed without the apostrophe whose bare form is in the frequency list (#63).
+thats that's
+whats what's
+heres here's
+wheres where's
+theres there's
+hes he's
+shes she's
+alot a lot

@@ -1,7 +1,7 @@
 //! Bundled word list: unigram and bigram frequencies plus a symmetric-delete (SymSpell) index
 //! for finding every word within edit distance 2 of a typo.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 const UNIGRAMS: &str = include_str!("../data/frequency_dictionary_en_82_765.txt");
@@ -10,6 +10,7 @@ const EXTRA_WORDS: &str = include_str!("../data/extra_words.txt");
 const CONTRACTIONS: &str = include_str!("../data/contractions.txt");
 const TECH_WORDS: &str = include_str!("../data/tech_words.txt");
 const SPELLING_VARIANTS: &str = include_str!("../data/spelling_variants.txt");
+const MISSPELLINGS: &str = include_str!("../data/misspellings.txt");
 
 /// Longest dictionary word kept, in bytes.
 const MAX_WORD: usize = 32;
@@ -35,6 +36,9 @@ pub struct Dictionary {
     /// Sorted `(first_id << 32) | second_id` keys with P(second | first).
     bigram_keys: Vec<u64>,
     bigram_p: Vec<f32>,
+    /// Common misspellings the ranking gets wrong, and their fixes (`collegue` to `colleague`,
+    /// `alot` to `a lot`). None of them is a known word.
+    misspellings: HashMap<Box<str>, Box<str>>,
 }
 
 fn hash(bytes: impl IntoIterator<Item = u8>) -> u32 {
@@ -99,6 +103,7 @@ impl Dictionary {
                     CONTRACTIONS,
                     TECH_WORDS,
                     SPELLING_VARIANTS,
+                    MISSPELLINGS,
                 ))
             })
             .clone()
@@ -111,6 +116,7 @@ impl Dictionary {
         contractions: &'a str,
         tech: &'a str,
         variants: &'a str,
+        misspellings: &'a str,
     ) -> Self {
         fn add<'a>(
             w: &'a str,
@@ -130,9 +136,22 @@ impl Dictionary {
                 }
             }
         }
+        // `typo fix`, the fix being the rest of the line (`alot a lot`).
+        let misspellings: HashMap<Box<str>, Box<str>> = misspellings
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .filter_map(|l| l.split_once(' '))
+            .map(|(typo, fix)| (typo.into(), fix.trim().into()))
+            .collect();
+        // The frequency list has some of them as words (`whats`, `heres`, `calender`).
+        let typos: HashSet<&str> = misspellings.keys().map(|t| &**t).collect();
         let mut counts: Vec<(&'a str, f64)> = Vec::with_capacity(90_000);
         let mut index: HashMap<&'a str, usize> = HashMap::with_capacity(90_000);
         for (w, c) in parse_counts(unigrams).chain(parse_counts(extra)) {
+            if typos.contains(w.trim()) {
+                continue;
+            }
             if let Ok(c) = c.trim().parse::<f64>() {
                 add(w, c, &mut counts, &mut index);
             }
@@ -140,7 +159,8 @@ impl Dictionary {
         let tech_words = tech
             .lines()
             .filter(|l| !l.trim_start().starts_with('#'))
-            .flat_map(str::split_ascii_whitespace);
+            .flat_map(str::split_ascii_whitespace)
+            .filter(|w| !typos.contains(w));
         for w in tech_words {
             add(w, TECH_COUNT, &mut counts, &mut index);
         }
@@ -249,6 +269,7 @@ impl Dictionary {
             del_ids,
             bigram_keys,
             bigram_p,
+            misspellings,
         }
     }
 
@@ -315,6 +336,11 @@ impl Dictionary {
         }
     }
 
+    /// The listed fix for a common misspelling (lowercase), if it is one.
+    pub(crate) fn misspelling(&self, w: &str) -> Option<&str> {
+        self.misspellings.get(w).map(|f| &**f)
+    }
+
     /// P(second | first) from the bigram list, if the pair is listed.
     pub(crate) fn bigram(&self, first: u32, second: u32) -> Option<f32> {
         let key = ((first as u64) << 32) | second as u64;
@@ -379,12 +405,16 @@ mod tests {
         let d = Dictionary::build(
             "the 100\nthen 10\nhello 5\n",
             "hello there 50\nthe then 7\n",
-            "ok 3\n",
+            "ok 3\nteh 2\n",
             "can't cannot\n",
             "# comment\nimpl usize the\n",
             "",
+            "# typo fix\nteh the\nalot a lot\n",
         );
-        assert_eq!(d.word_count(), 6);
+        assert_eq!(d.word_count(), 6, "a listed misspelling is not a word");
+        assert_eq!(d.misspelling("alot"), Some("a lot"));
+        assert_eq!(d.misspelling("teh"), Some("the"));
+        assert_eq!(d.misspelling("the"), None);
         assert!(d.id(b"usize").is_some());
         assert!(d.id(b"comment").is_none());
         assert!(d.id(b"then").is_some());
@@ -408,6 +438,7 @@ mod tests {
             "",
             "",
             "color colour\nbehavior behaviour\nfoo bar\n",
+            "",
         );
         let (us, gb) = (d.id(b"color").unwrap(), d.id(b"colour").unwrap());
         assert_eq!(d.log_p(us), d.log_p(gb));

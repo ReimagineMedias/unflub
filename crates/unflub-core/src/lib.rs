@@ -749,6 +749,9 @@ impl Engine {
         if !flagged {
             return None;
         }
+        if let Some(fix) = self.dict.misspelling(&self.lower) {
+            return Some((Source::Bundled, fix.to_string()));
+        }
         // The OS's auto-replace list is en-US and blind to jargon: it turns `behaviour` into
         // `behavior`, `systemd` into `system`, `boolean` into `Boolean`. Its fix is taken only
         // for a word the bundled dictionary doesn't know (regional spellings and tech words are
