@@ -156,8 +156,12 @@ Get-Content -Raw D:\Code\unflub\.local\updater\unflub-updater.password | gh secr
 
 The build jobs run outside the `release` environment, so they get none of its secrets. Keep the
 updater key, API, Access and VirusTotal secrets there: only the release job reads them, and only
-its "Updater signatures" step sees the updater key. Secrets the build jobs need (`SENTRY_*` and
-the code signing ones) have to be repository secrets.
+its "Updater signatures" step sees the updater key. The `SENTRY_*` secrets the build jobs read
+have to be repository secrets.
+
+Code signing secrets (`AZURE_*`, `WINDOWS_CERTIFICATE*`) must not go to the build jobs either.
+None are set today. Before adding them, see "Keep the signing keys out of the build" under
+[Windows code signing](#windows-code-signing).
 
 > [!WARNING]
 > Back up both updater files (a password manager is fine). If the private key is lost, every
@@ -269,6 +273,27 @@ The release workflow signs automatically as soon as one of these is configured. 
 says which ("Windows code signing: ..."), and a step checks every `.exe` and `.msi` with
 `Get-AuthenticodeSignature`.
 
+### Keep the signing keys out of the build
+
+None of the code signing secrets are set today. Don't add them as they are wired now: the build
+job reads them, and its "Build installers" step hands them to `tauri build` (through
+`signCommand`), the same process that runs npm and Cargo build scripts. Any of those scripts
+could read a client secret or a certificate password from the environment, which is what #122
+fixed for the updater key. Do it the way the updater key works instead:
+
+- Keep the secrets in an environment (the `release` one, or a separate signing environment with
+  required reviewers), never as repository secrets.
+- Sign in a separate step or job that runs no build scripts: the build uploads unsigned files,
+  then a signing job on a fresh runner downloads them, signs them and uploads the result. The
+  updater signatures must be made after that, from the signed files (the release job already
+  does this if it gets the signed files under the same artifact names).
+- The exe inside each installer needs signing before it is bundled, which a separate job can't
+  do in one pass. Either accept an unsigned inner exe at first, or split the build in two
+  (build the exe, sign it in its own job, then bundle without build scripts).
+
+Options 1 and 3 below describe the current `signCommand` wiring; change the workflow as above
+before turning either on.
+
 ### Option 1: Azure Artifact Signing (recommended)
 
 Formerly "Trusted Signing". Microsoft-run, the certificate names RMGN, a monthly subscription
@@ -283,7 +308,8 @@ signatures are all made in one build, in the right order.
 4. In Microsoft Entra ID, create an **app registration** and a client secret. On the signing
    account, give that app the **Certificate Profile Signer** role.
 5. Add the secrets `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` and the variables
-   `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`.
+   `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE` to the signing
+   environment, once the workflow signs outside the build (see above).
 6. Run the Release workflow as a dry run and check the summary and the signature check step.
 
 The workflow installs [`artifact-signing-cli`](https://github.com/Levminer/artifact-signing-cli)
