@@ -70,6 +70,16 @@ fn personal_words_are_never_corrected() {
     assert_eq!(t.type_str("rmgn teh Teh "), "rmgn teh Teh ");
 }
 
+/// #58: possessives and plurals of the user's words are theirs too.
+#[test]
+fn personal_word_possessives_and_plurals_stay() {
+    let mut t = bundled_with(&["folake", "Gaelle", "wechat", "teh"]);
+    let text = "so folake's sister, gaelle\u{2019}s and gaelles and wechat's app, tehs ";
+    assert_eq!(t.type_str(text), text);
+    // Other words still get fixed.
+    assert_eq!(t.type_str("adn "), format!("{text}and "));
+}
+
 #[test]
 fn unknown_word_without_a_close_match_stays() {
     // Not in the personal dictionary and no confident candidate.
