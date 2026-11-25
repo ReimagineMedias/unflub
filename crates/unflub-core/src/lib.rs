@@ -772,6 +772,11 @@ impl Engine {
         if !next.is_alphanumeric() && !next.is_whitespace() && corrected.ends_with(next) {
             corrected.pop();
         }
+        // Keep the typed apostrophe style (dictionary words use `'`); a user's rule is typed as
+        // they wrote it.
+        if source != Source::UserRule && self.word.contains('\u{2019}') {
+            corrected = corrected.replace('\'', "\u{2019}");
+        }
         if corrected == self.word {
             return None;
         }
