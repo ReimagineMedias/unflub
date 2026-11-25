@@ -938,6 +938,19 @@ fn possessives_keep_their_base() {
     );
 }
 
+/// #103: a fix keeps the curly apostrophe the user typed.
+#[test]
+fn curly_apostrophes_are_kept() {
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("so dosn\u{2019}t ok, woudn\u{2019}t "),
+        "so doesn\u{2019}t ok, wouldn\u{2019}t "
+    );
+    // Straight stays straight.
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("so dosn't ok "), "so doesn't ok ");
+}
+
 /// Quality lab: a capitalised word mid-sentence is a name; at a sentence start it is fixed.
 #[test]
 fn title_case_mid_sentence_is_a_name() {
