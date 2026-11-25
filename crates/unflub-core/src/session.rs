@@ -16,8 +16,9 @@ pub fn is_glue(c: char) -> bool {
     matches!(c, '/' | '\\' | '@' | ':')
 }
 
+/// Marks a token as code, a handle or a tag (`#rustlang`: tags are often run-together words).
 fn is_code_punct(c: char) -> bool {
-    matches!(c, '.' | '/' | '\\' | '@' | ':' | '_') || c.is_ascii_digit()
+    matches!(c, '.' | '/' | '\\' | '@' | ':' | '_' | '#') || c.is_ascii_digit()
 }
 
 /// The word just before the caret, located in the session buffer.
@@ -294,6 +295,7 @@ mod tests {
     fn code_tokens() {
         assert!(session("src/main").current().unwrap().code_like);
         assert!(session("x.com").current().unwrap().code_like);
+        assert!(session("#rustlang").current().unwrap().code_like);
         assert!(!session("(hello").current().unwrap().code_like);
     }
 }
