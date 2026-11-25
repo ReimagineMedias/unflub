@@ -111,7 +111,7 @@ Repo is private until v0.1, then flipped public.
   is dropped unless the cached verified manifest still offers that exact file (`still_offered`). Only `install-source` = installer
   self-updates (`install.rs`); winget, chocolatey, scoop, store show "Update with ..." instead. Release builds only.
 - Privacy/network map is in `docs/architecture.md#network-and-privacy`. Usage stats (`usage.rs`) and crash reports
-  (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON with a first-run choice; tests pin the
+  (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON (the tour asks only about crash reports; usage stats are switched off only in Settings > Privacy, and the tour's last step shows the Terms line, owner 2026-11-25); tests pin the
   payload keys to the contract allowlist. Manifest flags (`remote.rs`) may only switch things off (tested). Machine
   policy `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`). Typo-fix pair sharing was cut from v0.1.
 - Settings have `schemaVersion` (`migrations.rs`, step by step, keeps `settings.json.v<N>`), and unknown fields survive

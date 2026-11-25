@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { tourKey, tourReset } from "./api";
-import { AppIcon, Disclosure, Row, Switch, SuccessNote } from "./components";
+import { AppIcon, Disclosure, ExternalLink, Row, Switch, SuccessNote } from "./components";
 import { t } from "./i18n";
+import { LINKS } from "./links";
 import type { AppInfo, Settings, TourAction } from "./types";
 
 type Pill = { from: string; to: string; undone: boolean } | null;
@@ -131,10 +132,6 @@ export function Tour({ settings: s, info, update, onClose }: {
           <p className="lead">{t("tour.data.lead")}</p>
           <Disclosure />
           <div className="card">
-            <Row label={t("privacy.stats")} hint={managed?.disableUsageStats ? t("privacy.managed") : undefined}>
-              <Switch label={t("privacy.stats")} disabled={managed?.disableUsageStats}
-                checked={s.shareUsageStats && !managed?.disableUsageStats} onChange={(v) => update({ shareUsageStats: v })} />
-            </Row>
             <Row label={t("privacy.crashes")} hint={managed?.disableCrashReports ? t("privacy.managed") : undefined}>
               <Switch label={t("privacy.crashes")} disabled={managed?.disableCrashReports}
                 checked={s.sendCrashReports && !managed?.disableCrashReports} onChange={(v) => update({ sendCrashReports: v })} />
@@ -157,6 +154,12 @@ export function Tour({ settings: s, info, update, onClose }: {
             : <button className="btn" autoFocus onClick={done}>{t("tour.done")}</button>}
         </div>
       </div>
+      {step === STEPS && !s.onboarded && (
+        <p className="tour-terms">
+          {t("tour.terms.before")}<ExternalLink href={LINKS.terms}>{t("tour.terms.link")}</ExternalLink>{t("tour.terms.after")}
+          <ExternalLink className="link quiet" href={LINKS.privacy}>{t("tour.terms.collect")}</ExternalLink>
+        </p>
+      )}
     </div>
   );
 }
