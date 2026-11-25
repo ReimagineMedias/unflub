@@ -944,6 +944,26 @@ fn aggressive_mode_takes_low_margin_fixes() {
     assert_ne!(aggressive.type_str("Trevix "), "Trevix ");
 }
 
+/// #62: Aggressive takes weaker fixes, but only for words the OS checker flags.
+#[test]
+fn aggressive_keeps_words_the_os_accepts() {
+    let checker = || FakeChecker {
+        known: vec!["oh", "ah", "mom", "dear", "well", "said", "my", "the"],
+        fixes: vec![],
+    };
+    let mut t = with_backend(EngineMode::Aggressive, Some(checker()));
+    assert_eq!(
+        t.type_str("Oh dear\nAh well\nmy mom said teh "),
+        "Oh dear\nAh well\nmy mom said the "
+    );
+    // Mr is flagged by Windows (it checks the word without its period), but known.
+    let mut t = with_backend(EngineMode::Aggressive, Some(checker()));
+    assert_eq!(
+        t.type_str("Mr. Bennet\nMs. Lucas "),
+        "Mr. Bennet\nMs. Lucas "
+    );
+}
+
 /// Quality lab: possessives with a known or capitalised base are never "fixed" into plurals or
 /// bare names; a typo in a lowercase base is fixed on the base, keeping the apostrophe typed.
 #[test]

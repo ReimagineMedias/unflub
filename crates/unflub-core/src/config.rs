@@ -16,7 +16,8 @@ pub enum EngineMode {
     /// Either engine may flag the word (the OS checker, or a word the bundled dictionary doesn't
     /// know), but the fix still has to be a confident one, as in `Both`.
     Balanced,
-    /// Take the best candidate whenever any engine flags the word. Phone-like, more wrong fixes.
+    /// Take the best candidate for any word the OS checker flags (without one, any word the
+    /// bundled dictionary doesn't know). Phone-like, more wrong fixes.
     Aggressive,
 }
 

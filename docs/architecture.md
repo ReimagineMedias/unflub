@@ -295,8 +295,8 @@ Its top suggestion was right for 20 of 23 real typos, but it ranks without conte
 Engine modes (user setting): `Both` (default: OS flags it and the bundled ranking is confident),
 `SystemOnly`, `BundledOnly` (identical on every OS), `Balanced` (like `Both`, plus the OS
 checker's own auto-replace fixes; it never fixes a word the OS checker calls correct, and
-without an OS checker the bundled dictionary decides), `Aggressive` (phone-like: either may
-flag the word, low margin).
+without an OS checker the bundled dictionary decides), `Aggressive` (phone-like: flagged as in
+`Balanced`, low margin).
 
 `Config::language` (default `en-US`) tells the adapter which language to open the OS checker
 in. The bundled dictionary is English only, so for any other language its candidates are off
