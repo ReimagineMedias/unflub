@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Prepares a release pull request: bumps every version, adds the CHANGELOG.md section and commits
-// `chore(release): <version>` on a new branch `release/v<version>`. Squash-merging that PR (keep its
+// `chore(release): <version>` on a new branch `release/v<version>`. Rebase-merging that PR (keep its
 // title) makes .github/workflows/release-tag.yml tag the merge commit and start the Release workflow.
 //
 //   node scripts/prepare-release.mjs 0.2.0              stable channel
@@ -99,7 +99,7 @@ const prBody = [
   "- CHANGELOG.md section from the merged pull requests since the last release.",
   "",
   "> [!IMPORTANT]",
-  "> Squash-merge with this title. The merge commit is then tagged `v" + version + "` and the Release workflow",
+  "> Rebase-merge it. Its release commit on main is then tagged `v" + version + "` and the Release workflow",
   "> builds, drafts and registers it paused at 0%. Publishing and the rollout stay manual (docs/releasing.md).",
   "",
   "<details><summary>Changelog section</summary>",

@@ -4,7 +4,8 @@ System-wide, phone-style autocorrect. RMGN product, site at unflub.rmgn.net (Ver
 dl.rmgn.net. All app/CI domains are rmgn.net since 2026-11-17 (bundle id stays `ca.rmgn.unflub`).
 Keep `AGENTS.md` identical in substance.
 
-Git workflow: PRs. Branch `type/topic`, open a PR on ReimagineMedias/unflub, merge only when the owner says so (squash).
+Git workflow: PRs. Branch `type/topic`, open a PR on ReimagineMedias/unflub, merge only when the owner says so (rebase merge, so every
+conventional commit lands on main; squash and merge commits are turned off in the repo settings).
 Repo is private until v0.1, then flipped public.
 
 ## Findings
@@ -82,7 +83,7 @@ Repo is private until v0.1, then flipped public.
   under `$ErrorActionPreference = 'Stop'`. The perf scripts handle both.
 - Release conventions (2026-11-17): SemVer tags `vX.Y.Z`, betas `X.Y.Z-beta.N` (beta channel, GitHub pre-release,
   setup.exe only since WiX rejects pre-release versions). `node scripts/prepare-release.mjs <v> --pr` opens the
-  `chore(release): <v>` PR with CHANGELOG.md; squash-merging it makes `release-tag.yml` tag and dispatch Release.
+  `chore(release): <v>` PR with CHANGELOG.md; rebase-merging it makes `release-tag.yml` tag and dispatch Release.
   GitHub Actions minutes: the repo is public since 2026-11-17 (free); the private rmgn-api repo shares the org's
   2,000 free minutes, so keep macOS/Windows CI off private repos.
 - Releases: see `docs/releasing.md`. A `v*.*.*` tag runs `.github/workflows/release.yml`: build, sign, VirusTotal,

@@ -1,6 +1,6 @@
 name: Tag release
 
-# When a release PR (title "chore(release): x.y.z", from scripts/prepare-release.mjs) is squash-merged,
+# When a release PR (title "chore(release): x.y.z", from scripts/prepare-release.mjs) is rebase-merged,
 # tag the merge commit vx.y.z and start the Release workflow on that tag. A tag pushed with the
 # workflow's own token doesn't start other workflows, so this dispatches Release directly; a tag
 # pushed by a person still starts it through its own `push: tags` trigger.
@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           version=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
           node scripts/bump-version.mjs --check "$version"
-          # "chore(release): 0.2.0 (#42)" after a squash merge; the title must name the version in the files.
+          # "chore(release): 0.2.0" after a rebase merge ("... (#42)" after a squash); it must name the files' version.
           first_line=${SUBJECT%%$'\n'*}
           if [[ ! "$first_line" =~ ^chore\(release\):\ v?([0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?)( \(#[0-9]+\))?$ ]]; then
             echo "::error::'$first_line' is not 'chore(release): x.y.z'."
