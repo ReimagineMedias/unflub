@@ -122,7 +122,8 @@ export function PowerSwitch({ checked, onChange }: { checked: boolean; onChange:
 /**
  * `title` on an option is its tooltip: the technical detail behind a plain label. The focused
  * option's title is also shown under the group and set as its description, so keyboard, touch and
- * screen reader users get it too.
+ * screen reader users get it too. Every title shares one grid cell, so the group always reserves the
+ * tallest one's height and nothing below moves while tabbing.
  */
 export function Segmented<T extends string>({ value, options, onChange, label }: {
   value: T;
@@ -132,18 +133,24 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
 }) {
   const tipId = useId();
   const [focused, setFocused] = useState<T | null>(null);
-  const tip = options.find((o) => o.value === focused)?.title;
+  const tips = options.filter((o) => o.title);
   return (
     <div className="seg-group" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(null); }}>
       <div className="seg" role="group" aria-label={label}>
         {options.map((o) => (
-          <button key={o.value} title={o.title} aria-pressed={o.value === value} aria-describedby={o.title && o.value === focused ? tipId : undefined}
+          <button key={o.value} title={o.title} aria-pressed={o.value === value} aria-describedby={o.title && o.value === focused ? `${tipId}-${o.value}` : undefined}
             onFocus={() => setFocused(o.value)} onClick={() => onChange(o.value)}>
             {o.label}
           </button>
         ))}
       </div>
-      <small className="seg-tip" id={tipId}>{tip}</small>
+      {tips.length > 0 && (
+        <div className="seg-tips">
+          {tips.map((o) => (
+            <small key={o.value} id={`${tipId}-${o.value}`} className={o.value === focused ? "on" : undefined}>{o.title}</small>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
