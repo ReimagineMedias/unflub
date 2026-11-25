@@ -75,6 +75,8 @@ const body = notes
   .join("\n")
   .replace(/^## /gm, "### ")
   .trim();
+// What the app's About page will show for this release (the release workflow sends the same to the API).
+const appNotes = run("node", ["scripts/release-notes.mjs", "--version", version, "--app"]);
 const date = new Date().toISOString().slice(0, 10);
 const heading = `## [${version}](https://github.com/${REPO}/releases/tag/v${version}) - ${date}`;
 const intro =
@@ -105,6 +107,14 @@ const prBody = [
   "<details><summary>Changelog section</summary>",
   "",
   body,
+  "",
+  "</details>",
+  "",
+  "<details><summary>Notes shown in the app</summary>",
+  "",
+  "```text",
+  appNotes,
+  "```",
   "",
   "</details>",
 ].join("\n");

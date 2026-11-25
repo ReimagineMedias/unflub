@@ -31,7 +31,14 @@ API contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
   also receives stable releases, so a beta tester always ends up on the newest build.
 - **Commit and PR titles are Conventional Commits.** The changelog and the release notes are built
   from them: `feat` under New, `fix` under Fixes, `perf` under Faster, `!` or a `BREAKING CHANGE`
-  footer under Breaking changes; everything else is counted, not listed.
+  footer under Breaking changes; everything else is counted, not listed. So are changes to the
+  release tooling whatever their type: the scopes `release`, `ci`, `build`, `deps` and `packaging`
+  (`fix(release): ...` is not a fix users see).
+- **Two sets of notes.** The GitHub Release gets Markdown with commit links, the
+  internal-change count and install instructions (CHANGELOG.md the same, without install). The
+  app's About page gets plain text (`node scripts/release-notes.mjs --app`): only New, Fixes,
+  Faster and Breaking changes, without scopes, PR numbers, commit hashes or website (`site`)
+  changes. The release PR and the run summary show both.
 - **Releases are never rewritten.** A published version is fixed; a mistake gets the next version.
 
 ## Cut a release
@@ -70,7 +77,7 @@ API contract is `D:\Code\rmgn-api\docs\unflub-contract.md`.
      `SHA256SUMS.txt`.
    - `POST https://api.rmgn.net/unflub/v1/admin/releases` registers the release with the bearer
      `ADMIN_TOKEN` and the Cloudflare Access service token. The body comes from
-     `scripts/register-release.mjs`: version, channel, notes, and per platform the setup file, its
+     `scripts/register-release.mjs`: version, channel, the app's notes, and per platform the setup file, its
      signature, SHA-256 and size, and the installer the website serves. The API stores it
      **paused at 0%**. A re-run gets `409` and changes nothing. The API's publish step (in
      rmgn-api) writes the signed manifest, each release's `tauri-<target>-<arch>.json` and the
