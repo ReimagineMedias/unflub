@@ -1,8 +1,9 @@
 import { Clock, Typer, parseScript } from "./typer";
-import { motion, pinProgress, scrollDriven } from "./scroll";
+import { motion, pinProgress, scrollScenes } from "./scroll";
 
 /** "Everywhere you type": one app window types at a time. With scroll timelines the rail is pinned and the scroll
-    position picks the card; otherwise the card in the middle of the screen does. */
+    position picks the card; otherwise the card in the middle of the screen does. With reduced motion nothing types:
+    each card shows its finished, corrected frame. */
 const section = document.querySelector<HTMLElement>("#everywhere");
 
 if (section) {
@@ -46,7 +47,7 @@ if (section) {
 
   // Matches the `slide` keyframes: each card holds for 12% of the pin, each move takes 10%.
   const holds = [6, 28, 50, 72, 94];
-  if (scrollDriven) {
+  if (scrollScenes) {
     pinProgress(section, (p) => show(Math.max(0, Math.min(figures.length - 1, Math.floor((p * 100 + 5) / 22)))));
   } else {
     show(0);

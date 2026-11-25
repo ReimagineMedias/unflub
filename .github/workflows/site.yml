@@ -74,8 +74,12 @@ jobs:
   preview:
     name: Preview deployment
     needs: build
-    # Secrets are not available to forks; previews are for branches in this repository.
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    # Secrets are not available to forks; previews are for branches in this repository. Dependabot's
+    # pull requests don't get Actions secrets either, so `vercel pull` failed on every one of them.
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read

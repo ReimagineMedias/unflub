@@ -109,6 +109,8 @@ pub fn client(headers: Headers) -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .default_headers(headers.into_iter().collect::<HeaderMap>())
         .https_only(true)
+        // The manifest and stats endpoints answer directly; a redirect there is never expected.
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
         .build()
 }

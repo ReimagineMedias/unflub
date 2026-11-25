@@ -107,7 +107,8 @@ Repo is private until v0.1, then flipped public.
   GitHub Release assets or dl.rmgn.net (302 to them); redirects only to that GitHub path and GitHub's asset hosts
   (`links.rs`). Update requests carry only `User-Agent`; no install id. `X-First: week,month` goes only on the daily stats report (contract v2). `keys.rs` holds the production
   key `76df971d6ca36a1a` (2026-11-17; rotate by adding the new key first). `autoUpdate` downloads + verifies in the background to `%LOCALAPPDATA%\ca.rmgn.unflub\updates`
-  (SHA-256 re-checked before install); install only on Restart now or tray Quit. Only `install-source` = installer
+  (SHA-256 re-checked before install); install only on Restart now or tray Quit. A download kept across a restart
+  is dropped unless the cached verified manifest still offers that exact file (`still_offered`). Only `install-source` = installer
   self-updates (`install.rs`); winget, chocolatey, scoop, store show "Update with ..." instead. Release builds only.
 - Privacy/network map is in `docs/architecture.md#network-and-privacy`. Usage stats (`usage.rs`) and crash reports
   (`crash.rs`, Sentry, inert without `SENTRY_DSN` at build time) default ON with a first-run choice; tests pin the
@@ -148,10 +149,13 @@ Repo is private until v0.1, then flipped public.
   sinks to near-black for `.story` (Everywhere, Undo, Speed, Privacy) via a fixed `.dusk` layer on a `--story` view
   timeline, and the nav pill inverts with it. `.story` also paints its own night so text never sits on white. Size type
   and scenes by width and height (`min(vw, vh)` in clamps); check 1280x720 and 1280x800, not just 1440x900.
+  Reduced motion (owner, 2026-11-24) is the same site: pins, night fade, nav inversion and scene end states stay;
+  only movement (typing, translate, scale) is gated on `no-preference`, and transitions keep 0.15s fades.
+  `scroll.ts` `scrollScenes` ignores motion; a test fails if a pin or the night sits behind `no-preference`.
 - Launch plan and post drafts live in `docs/launch/` (2026-11-17). Before turning on Cloudflare Web Analytics, the
   CSP in `site/public/_headers` must allow `https://static.cloudflareinsights.com` and the CSP test in
-  `site/tests/site.test.mjs` must accept it. The download API only records `ref` values `site`, `github`, `readme`,
-  `other` (`D:\Code\rmgn-api\src\products\unflub.ts`); channel refs like `hn` count as `other` until added.
+  `site/tests/site.test.mjs` must accept it. The download API records `ref` values `site`, `github`, `readme`, `hn`,
+  `ph`, `reddit`, `x`, `linkedin`, `alternativeto`, `winget` (`D:\Code\rmgn-api\src\products\unflub.ts`); others count as `other`.
   Reddit: r/windows, r/productivity and r/dyslexia forbid promotion; r/Windows11 and r/rust allow weekly threads only.
   Launch captures go in git-ignored `site/.local/launch/`.
 - Downloads (site): `PUBLIC_TURNSTILE_SITE_KEY` (public; invisible widget for unflub.rmgn.net and localhost) turns on

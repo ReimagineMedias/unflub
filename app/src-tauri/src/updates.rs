@@ -18,7 +18,8 @@
 //!   not in memory. Off: the user is only told.
 //! - **Install.** "Restart now" (About page, tray) or quitting from the tray runs the installer.
 //!   Nothing restarts on its own and nothing interrupts typing. A downloaded update survives a
-//!   restart of unflub; if the manifest stops offering it (paused or blocked) it is deleted.
+//!   restart of unflub only while the last verified manifest still offers it; once it stops
+//!   (paused, blocked, or this copy moved past it) it is deleted.
 //!
 //! Nothing here shows a dialog: the settings UI reads [`UpdateStatus`] through `update_status`
 //! and the [`STATUS_EVENT`] event, and the tray menu follows the same status.
@@ -487,9 +488,40 @@ async fn download(updates: &Updates, found: &Found) -> Result<(PathBuf, [u8; 32]
     Ok((path, sha256(&bytes)))
 }
 
-/// Pick up an update downloaded before unflub last closed. Deletes it if it is no longer
-/// accepted or fails verification. The next check deletes it too if the manifest no longer
-/// offers it.
+/// A download kept from an earlier run may only be installed while the last verified manifest
+/// still offers this version exactly that file. Without this, a copy that moved past it another
+/// way (a newer setup run by hand) would install the older download when quit from the tray,
+/// and so would a release paused or blocked since, until the first check of the run.
+fn still_offered(
+    manifest: Option<&manifest::Manifest>,
+    current: &semver::Version,
+    bucket: u8,
+    pending: &PendingFile,
+    now: time::OffsetDateTime,
+) -> bool {
+    let Some(manifest) = manifest.filter(|m| !m.expired(now)) else {
+        return false;
+    };
+    let Some(offer) = manifest::eligible(manifest, current, bucket, &manifest::platform_key())
+    else {
+        return false;
+    };
+    let same_version = match (
+        semver::Version::parse(&offer.release.version),
+        semver::Version::parse(&pending.version),
+    ) {
+        (Ok(offered), Ok(downloaded)) => offered == downloaded,
+        _ => false,
+    };
+    same_version
+        && offer.platform.size == pending.size
+        && manifest::parse_hex32(&offer.platform.sha256)
+            .is_some_and(|hash| Some(hash) == manifest::parse_hex32(&pending.sha256))
+}
+
+/// Pick up an update downloaded before unflub last closed. Deletes it if the last verified
+/// manifest no longer offers it ([`still_offered`]), if it is no longer accepted, or if it fails
+/// verification. The next check deletes it too if the manifest stops offering it.
 fn restore_download(app: &AppHandle) {
     let updates = app.state::<Updates>();
     let Ok(text) = fs::read_to_string(updates.pending_path()) else {
@@ -502,6 +534,18 @@ fn restore_download(app: &AppHandle) {
     }
     let restore = || -> Option<(Found, (PathBuf, [u8; 32]))> {
         let pending: PendingFile = serde_json::from_str(&text).ok()?;
+        let current = app.package_info().version.clone();
+        let channel = crate::current_settings(app).channel.as_str();
+        let offered = still_offered(
+            app.state::<Remote>().manifest(channel).as_ref(),
+            &current,
+            app.state::<net::Rollout>().bucket(&current.to_string()),
+            &pending,
+            time::OffsetDateTime::now_utc(),
+        );
+        if !offered {
+            return None;
+        }
         let update = updater(app, &pending.version)
             .ok()?
             .restore_update(pending.raw_json)
@@ -731,6 +775,86 @@ mod tests {
             ..offer.clone()
         };
         assert_eq!(matches_offer(&url(github), "sig-0.3.0", &gh_offer), Ok(()));
+    }
+
+    /// A download kept from an earlier run is installed only while the manifest still offers
+    /// that exact file to this version.
+    #[test]
+    fn a_kept_download_must_still_be_offered() {
+        let v = |s: &str| semver::Version::parse(s).unwrap();
+        let hash = "ab".repeat(32);
+        let listing = |rollout: u32, blocked: &str, expires: &str| -> manifest::Manifest {
+            let releases = format!(
+                r#""releases":[{{"version":"0.2.0","rollout_percent":{rollout},"platforms":{{"{}":
+                    {{"url":"https://dl.rmgn.net/unflub/0.2.0/x.exe","signature":"s","sha256":"{hash}","size":3}}}}}}]"#,
+                manifest::platform_key()
+            );
+            let json = manifest::tests::manifest_json("2026-11-17T12:00:00Z", "")
+                .replace(r#""releases":[]"#, &releases)
+                .replace(r#""blocked":[]"#, &format!(r#""blocked":[{blocked}]"#))
+                .replace("2999-01-01T00:00:00Z", expires);
+            serde_json::from_str(&json).unwrap()
+        };
+        let live = listing(100, "", "2999-01-01T00:00:00Z");
+        let pending = |version: &str, sha256: &str| PendingFile {
+            version: version.into(),
+            file: format!("unflub-{version}.update"),
+            raw_json: serde_json::Value::Null,
+            sha256: sha256.into(),
+            size: 3,
+            critical: false,
+        };
+        let now = time::OffsetDateTime::now_utc();
+        let kept = pending("0.2.0", &hash);
+        assert!(still_offered(Some(&live), &v("0.1.0"), 50, &kept, now));
+        assert!(
+            !still_offered(Some(&live), &v("0.3.0"), 50, &kept, now),
+            "a newer copy was installed by hand: never go back to the download"
+        );
+        assert!(
+            !still_offered(
+                Some(&listing(0, "", "2999-01-01T00:00:00Z")),
+                &v("0.1.0"),
+                50,
+                &kept,
+                now
+            ),
+            "paused since the download"
+        );
+        assert!(
+            !still_offered(
+                Some(&live),
+                &v("0.1.0"),
+                50,
+                &pending("0.2.0", &"cd".repeat(32)),
+                now
+            ),
+            "another file than the one the manifest names"
+        );
+        assert!(
+            !still_offered(None, &v("0.1.0"), 50, &kept, now),
+            "no verified manifest"
+        );
+        assert!(
+            !still_offered(
+                Some(&listing(100, "", "2020-01-01T00:00:00Z")),
+                &v("0.1.0"),
+                50,
+                &kept,
+                now
+            ),
+            "an expired manifest offers nothing"
+        );
+        assert!(
+            still_offered(
+                Some(&listing(100, r#""0.3.0""#, "2999-01-01T00:00:00Z")),
+                &v("0.3.0"),
+                50,
+                &kept,
+                now
+            ),
+            "a rollback the manifest chose survives a restart"
+        );
     }
 
     #[test]
