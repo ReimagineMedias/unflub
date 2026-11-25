@@ -765,6 +765,13 @@ impl Engine {
         boundary: char,
         source: Source,
     ) -> Option<Replacement> {
+        // A fix that ends with the punctuation typed after the word (`approx` -> `approx.` from
+        // the OS list, then `.`) keeps only the one the user typed.
+        let mut corrected = corrected;
+        let next = tail.chars().next().unwrap_or(boundary);
+        if !next.is_alphanumeric() && !next.is_whitespace() && corrected.ends_with(next) {
+            corrected.pop();
+        }
         if corrected == self.word {
             return None;
         }

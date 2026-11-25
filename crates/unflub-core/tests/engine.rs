@@ -820,6 +820,34 @@ fn system_only_mode() {
     assert_eq!(t.type_str("teh "), "teh ");
 }
 
+/// #56: an OS fix that ends with the punctuation the user typed next doesn't double it.
+#[test]
+fn abbreviation_fixes_keep_one_period() {
+    for (mode, skip_code) in [
+        (EngineMode::Balanced, true),
+        (EngineMode::SystemOnly, true),
+        (EngineMode::Balanced, false),
+    ] {
+        let config = Config {
+            mode,
+            skip_code,
+            ..Config::default()
+        };
+        let checker = FakeChecker {
+            known: vec!["ok", "saskatoon"],
+            fixes: vec![("approx", "approx.")],
+        };
+        let mut t = Typist::with_engine(Engine::new(config, Some(Box::new(checker))));
+        assert_eq!(
+            t.type_str("ok approx. Saskatoon "),
+            "ok approx. Saskatoon ",
+            "{mode:?} skip_code {skip_code}"
+        );
+        // Ended by a space, the OS fix still adds its period.
+        assert_eq!(t.type_str("approx "), "ok approx. Saskatoon approx. ");
+    }
+}
+
 /// Review S5: Balanced never rewrites a word the system checker calls correct.
 #[test]
 fn balanced_trusts_the_system_checker() {
