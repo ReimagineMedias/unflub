@@ -101,7 +101,8 @@ export const en = {
   "correction.learn": "Stop fixing a word after it's undone",
   "correction.learn.hint": "Counted per typo. The word then goes to your dictionary.",
   "correction.learn.never": "Never",
-  "correction.learn.three": "3 times",
+  "correction.learn.one": "{n} time",
+  "correction.learn.many": "{n} times",
 
   // Appearance
   "appearance.title": "Appearance",
