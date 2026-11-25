@@ -47,9 +47,10 @@ updates and the rest without ever seeing a key. See
 
 - **What you type stays on your computer.** Words go to the engine and the correction pill,
   and to the Stats page on this computer, nowhere else.
-- **The daily update check is anonymous.** It sends the unflub and Windows versions and a
-  random number from 0 to 99 that changes with every version, so new releases can reach a few
-  people first. No ID, nothing that tells your computer apart from anyone else's.
+- **The daily update check sends only the unflub version.** unflub downloads the same signed
+  list of releases as everyone else (`User-Agent: unflub/<version>`, nothing more) and decides on
+  your computer whether an update applies. The random number from 0 to 99 that lets new releases
+  reach a few people first is drawn again for each version and never leaves your computer. No ID.
 - **Usage stats and crash reports are on by default, and you choose on first run.** Once a day:
   how many fixes and undos, which settings, how fast, how often it crashed. Crash reports say
   where in unflub's code it crashed and list the program files loaded at the time, with your
