@@ -10,10 +10,11 @@ pub fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '\'' | '\u{2019}' | '-' | '_')
 }
 
-/// Boundaries that glue code-like tokens together (`src/main`, `user@host`, `https:`).
-/// The engine never decides on these when skipping code.
+/// Boundaries that glue code-like tokens together (`src/main`, `user@host`, `https:`), or
+/// make the word before them a function name (`strlen(`). The engine never decides on these
+/// when skipping code.
 pub fn is_glue(c: char) -> bool {
-    matches!(c, '/' | '\\' | '@' | ':')
+    matches!(c, '/' | '\\' | '@' | ':' | '(')
 }
 
 /// Marks a token as code, a handle or a tag (`#rustlang`: tags are often run-together words).
@@ -173,10 +174,12 @@ impl Session {
         if token_start == 0 && !self.front_ws {
             return None;
         }
-        let code_like = self
-            .buf
-            .range(token_start..start)
-            .any(|&c| is_code_punct(c));
+        // `(` right after a letter or digit is a call (`strlen(lenght`); at the token start it
+        // opens an aside (`(hello`).
+        let code_like = (token_start..start).any(|i| {
+            let c = self.buf[i];
+            is_code_punct(c) || (c == '(' && i > token_start && self.buf[i - 1].is_alphanumeric())
+        });
         Some(Current {
             start,
             end,
@@ -297,5 +300,6 @@ mod tests {
         assert!(session("x.com").current().unwrap().code_like);
         assert!(session("#rustlang").current().unwrap().code_like);
         assert!(!session("(hello").current().unwrap().code_like);
+        assert!(session("strlen(lenght").current().unwrap().code_like);
     }
 }
