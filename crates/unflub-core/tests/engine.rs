@@ -666,6 +666,22 @@ fn glue_characters_do_not_trigger() {
     assert_eq!(t.type_str(text), text);
 }
 
+/// #57: `name(` is a function call, and so are the words inside it.
+#[test]
+fn function_calls_are_left_alone() {
+    let mut t = Typist::bundled();
+    let text = "call strlen(x) or printf(\"%d\") or sprintf(lenght) now ";
+    assert_eq!(t.type_str(text), text);
+    // A parenthesis after a space opens an aside: its words are still fixed.
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("ok (teh adn) "), "ok (the and) ");
+    let mut t = Typist::new(Config {
+        skip_code: false,
+        ..config()
+    });
+    assert_eq!(t.type_str("ok teh(x) "), "ok the(x) ");
+}
+
 /// #104: hashtags are tags, often run-together words, like @mentions.
 #[test]
 fn hashtags_are_left_alone() {
