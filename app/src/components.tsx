@@ -107,7 +107,7 @@ export function Switch({ checked, onChange, label, disabled }: {
 /** The sidebar's on/off switch for autocorrect: the unflub mark, a label and a knob. */
 export function PowerSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <button className="power" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}>
+    <button className="power" role="switch" aria-checked={checked} aria-label={t("general.autocorrect")} onClick={() => onChange(!checked)}>
       <span className="power-label">{checked ? t("status.on") : t("status.paused")}</span>
       <span className="power-knob">
         <svg viewBox="0 0 64 64" aria-hidden="true">
