@@ -42,7 +42,7 @@ pub struct RemoteFlags {
     /// Ask UI Automation for the caret in browser and XAML fields (the pill's only cost to
     /// other apps).
     pub uia_caret: bool,
-    /// Accept usage stats. Off pauses sending (counters stay local).
+    /// Accept usage stats. Off pauses sending: each finished day is dropped unsent.
     pub stats_enabled: bool,
     /// Fewest hours between two update checks, 1 to 168.
     pub min_check_interval_h: u32,

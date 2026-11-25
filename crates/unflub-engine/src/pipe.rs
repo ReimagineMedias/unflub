@@ -430,11 +430,11 @@ mod tests {
         frame::write(&mut &*server, &ToEngine::Shutdown).unwrap();
         let got: ToEngine = frame::decode(&frame::read(&mut &client).unwrap().unwrap()).unwrap();
         assert_eq!(got, ToEngine::Shutdown);
-        frame::write(&mut &client, &FromEngine::HookReinstalled).unwrap();
+        frame::write(&mut &client, &FromEngine::HookReinstalled { reason: None }).unwrap();
         let body = reader.join().unwrap().unwrap();
         assert_eq!(
             frame::decode::<FromEngine>(&body).unwrap(),
-            FromEngine::HookReinstalled
+            FromEngine::HookReinstalled { reason: None }
         );
     }
 

@@ -113,6 +113,7 @@ mod win {
         let options = HookOptions {
             excluded_apps: args.exclude.clone(),
             dry_run: args.dry_run,
+            usage: None,
         };
         if args.dry_run {
             println!("dry run: nothing will be injected and no key will be swallowed.");

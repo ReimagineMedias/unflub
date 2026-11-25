@@ -3,9 +3,111 @@
 //!
 //! Values under 128 ns are exact; above that each power of two is split into 16 buckets, so a
 //! reported percentile is at most ~6% below the true value. The maximum is tracked exactly.
+//!
+//! [`UsageCounters`] collects what the app's anonymous usage stats need from the hook thread.
 
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
+
+/// Timing samples kept between two [`UsageCounters::take`] calls (the engine takes them every
+/// few seconds). More are dropped rather than grow the buffer on the hook thread.
+pub const SAMPLE_CAP: usize = 4096;
+
+/// Counts and timings the hook thread (and the spell checker on it) adds to, for the app's
+/// anonymous usage stats. Recording never allocates and never waits: counts are relaxed atomic
+/// adds, and a timing sample is dropped if the buffer is full or another thread is taking it
+/// at that moment (a swap of two pointers).
+#[derive(Debug)]
+pub struct UsageCounters {
+    /// Distinct minutes with at least one key typed (`GetTickCount` minutes).
+    pub active_minutes: AtomicU64,
+    /// Words that ended in a password field, or one not yet known to be safe.
+    pub skipped_secure: AtomicU64,
+    decide_all_us: Mutex<Vec<u32>>,
+    spellcheck_us: Mutex<Vec<u32>>,
+}
+
+/// What [`UsageCounters::take`] hands over.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct UsageTaken {
+    pub active_minutes: u64,
+    pub skipped_secure: u64,
+    /// Microseconds of every corrector call on a word-ending key, fixed or not.
+    pub decide_all_us: Vec<u32>,
+    /// Microseconds of each `ISpellChecker::Check` call.
+    pub spellcheck_us: Vec<u32>,
+}
+
+impl Default for UsageCounters {
+    fn default() -> Self {
+        Self {
+            active_minutes: AtomicU64::new(0),
+            skipped_secure: AtomicU64::new(0),
+            decide_all_us: Mutex::new(Vec::with_capacity(SAMPLE_CAP)),
+            spellcheck_us: Mutex::new(Vec::with_capacity(SAMPLE_CAP)),
+        }
+    }
+}
+
+fn micros(d: Duration) -> u32 {
+    u32::try_from(d.as_micros()).unwrap_or(u32::MAX)
+}
+
+fn push(samples: &Mutex<Vec<u32>>, d: Duration) {
+    if let Ok(mut v) = samples.try_lock() {
+        // Never past the capacity reserved off the hook thread, so this never allocates.
+        if v.len() < v.capacity().min(SAMPLE_CAP) {
+            v.push(micros(d));
+        }
+    }
+}
+
+fn take_samples(samples: &Mutex<Vec<u32>>) -> Vec<u32> {
+    let fresh = Vec::with_capacity(SAMPLE_CAP);
+    let mut v = samples.lock().unwrap_or_else(|e| e.into_inner());
+    std::mem::replace(&mut *v, fresh)
+}
+
+impl UsageCounters {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_decide(&self, d: Duration) {
+        push(&self.decide_all_us, d);
+    }
+
+    pub fn record_spellcheck(&self, d: Duration) {
+        push(&self.spellcheck_us, d);
+    }
+
+    /// Take everything recorded since the last call. Allocates the next buffers here, off the
+    /// hook thread.
+    pub fn take(&self) -> UsageTaken {
+        UsageTaken {
+            active_minutes: self.active_minutes.swap(0, Ordering::Relaxed),
+            skipped_secure: self.skipped_secure.swap(0, Ordering::Relaxed),
+            decide_all_us: take_samples(&self.decide_all_us),
+            spellcheck_us: take_samples(&self.spellcheck_us),
+        }
+    }
+}
+
+/// Counts distinct minutes of typing from a millisecond tick: true the first time a key arrives
+/// in a new minute.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MinuteMarks {
+    last: Option<u32>,
+}
+
+impl MinuteMarks {
+    pub fn new_minute(&mut self, tick_ms: u32) -> bool {
+        let minute = tick_ms / 60_000;
+        self.last.replace(minute) != Some(minute)
+    }
+}
 
 const LINEAR: usize = 128;
 const SUB_BITS: u32 = 4;
@@ -151,6 +253,33 @@ mod tests {
         let s = h.to_string();
         assert!(s.starts_with("n=100 p50="), "{s}");
         assert!(s.ends_with("max=3000.0us"), "{s}");
+    }
+
+    #[test]
+    fn usage_samples_are_taken_once_and_capped() {
+        let c = UsageCounters::new();
+        c.record_decide(Duration::from_micros(90));
+        c.record_spellcheck(Duration::from_micros(40));
+        c.active_minutes.fetch_add(2, Ordering::Relaxed);
+        let t = c.take();
+        assert_eq!(t.decide_all_us, [90]);
+        assert_eq!(t.spellcheck_us, [40]);
+        assert_eq!(t.active_minutes, 2);
+        assert_eq!(c.take(), UsageTaken::default());
+        for _ in 0..SAMPLE_CAP + 10 {
+            c.record_decide(Duration::from_micros(1));
+        }
+        assert_eq!(c.take().decide_all_us.len(), SAMPLE_CAP);
+    }
+
+    #[test]
+    fn minutes_count_once_each() {
+        let mut m = MinuteMarks::default();
+        assert!(m.new_minute(1_000));
+        assert!(!m.new_minute(59_999));
+        assert!(m.new_minute(60_000));
+        assert!(!m.new_minute(119_000));
+        assert!(m.new_minute(300_000));
     }
 
     #[test]

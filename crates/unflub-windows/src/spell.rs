@@ -20,6 +20,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use unflub_core::SpellBackend;
+
+use crate::stats::UsageCounters;
 use windows::core::{Result, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{RPC_E_CHANGED_MODE, S_OK};
 use windows::Win32::Globalization::{
@@ -53,6 +55,8 @@ pub struct WindowsSpellBackend {
     language: String,
     cache: Arc<Mutex<Cache>>,
     jobs: Sender<Job>,
+    /// Where each `Check` call's time goes, for the usage stats.
+    timing: Option<Arc<UsageCounters>>,
 }
 
 // SAFETY: the checker is a free-threaded COM object created in the MTA (see module docs).
@@ -172,7 +176,13 @@ impl WindowsSpellBackend {
             language,
             cache,
             jobs: tx,
+            timing: None,
         })
+    }
+
+    /// Record how long each `Check` call takes (the call alone) into `counters`.
+    pub fn time_checks_into(&mut self, counters: Arc<UsageCounters>) {
+        self.timing = Some(counters);
     }
 
     /// The BCP-47 tag in use.
@@ -213,7 +223,12 @@ impl SpellBackend for WindowsSpellBackend {
         with_pcwstr(word, |text| {
             // SAFETY: valid interface used from an MTA thread; `text` outlives the call.
             unsafe {
-                let Ok(errors) = self.checker.Check(text) else {
+                let start = std::time::Instant::now();
+                let checked = self.checker.Check(text);
+                if let Some(timing) = &self.timing {
+                    timing.record_spellcheck(start.elapsed());
+                }
+                let Ok(errors) = checked else {
                     return true;
                 };
                 let mut err = None;

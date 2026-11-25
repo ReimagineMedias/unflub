@@ -12,9 +12,11 @@
 //! - [`protocol`]: the engine says [`Hello`](protocol::FromEngine::Hello) with its protocol
 //!   version; the app answers [`Welcome`](protocol::ToEngine::Welcome) or ends the process.
 //!
-//! [`pill`] maps the pill settings and the current OS look ([`look`]) to the overlay's colours.
+//! [`category`] turns the focused app's name into a coarse kind for the usage stats, here, so
+//! the name never leaves this process. [`pill`] maps the pill settings and the current OS look ([`look`]) to the overlay's colours.
 //! It lives here because the engine reads the OS look again before each pill.
 
+pub mod category;
 pub mod frame;
 pub mod look;
 pub mod pill;
