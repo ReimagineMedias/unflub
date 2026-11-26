@@ -292,16 +292,51 @@ pub fn answer(app: &AppHandle, answer: Answer) {
     }
 }
 
+fn read_report(path: &Path) -> Option<Event<'static>> {
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
+/// The pending event or a sample, prepared by the same Sentry client as the sender.
+pub fn preview(crashes: &Crashes) -> Result<(Event<'static>, bool), &'static str> {
+    let pending = crashes.pending.lock().unwrap();
+    let event = if *pending {
+        read_report(&crashes.pending_path).ok_or("pending crash report unavailable")?
+    } else {
+        Event {
+            level: sentry::Level::Fatal,
+            release: Some(crashes.release.clone().into()),
+            exception: vec![sentry::protocol::Exception {
+                ty: "panic".into(),
+                value: Some(WITHHELD.into()),
+                stacktrace: Some(sentry::protocol::Stacktrace {
+                    frames: vec![sentry::protocol::Frame {
+                        filename: Some("src/example.rs".into()),
+                        lineno: Some(42),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        }
+    };
+    let is_pending = *pending;
+    drop(pending);
+    crash_client(&event, None)
+        .prepare_event(event, None)
+        .map(|event| (event, is_pending))
+        .ok_or("crash report unavailable")
+}
+
 fn send_in_background(app: AppHandle) {
     set_pending(&app, false);
     let spawned = std::thread::Builder::new()
         .name("unflub-crash".into())
         .spawn(move || {
             let path = app.state::<Crashes>().pending_path.clone();
-            let event = fs::read(&path)
-                .ok()
-                .and_then(|b| serde_json::from_slice::<Event<'static>>(&b).ok());
-            if let Some(event) = event {
+            if let Some(event) = read_report(&path) {
                 send(event);
             }
             let _ = fs::remove_file(&path);
@@ -315,10 +350,15 @@ fn send(event: Event<'static>) {
     let Some(dsn) = DSN.and_then(|d| d.parse().ok()) else {
         return;
     };
+    let client = crash_client(&event, Some(dsn));
+    client.capture_event(event, None);
+    client.flush(Some(Duration::from_secs(10)));
+}
+
+fn crash_client(event: &Event<'static>, dsn: Option<sentry::types::Dsn>) -> sentry::Client {
     let home = home_dir();
     // The struct is non-exhaustive, so set fields on a default one.
     let mut options = sentry::ClientOptions::new();
-    options.dsn = Some(dsn);
     options.release = event.release.clone();
     options.send_default_pii = false;
     options.max_breadcrumbs = 0;
@@ -329,9 +369,10 @@ fn send(event: Event<'static>) {
         sentry::integrations::contexts::ContextIntegration::new().add_device(false),
     )];
     options.before_send = Some(Arc::new(move |event| Some(scrub(event, home.as_deref()))));
-    let guard = sentry::init(options);
-    sentry::capture_event(event);
-    guard.flush(Some(Duration::from_secs(10)));
+    let mut options = sentry::apply_defaults(options);
+    // apply_defaults can read a runtime DSN. Only send() may enable the transport.
+    options.dsn = dsn;
+    sentry::Client::from(options)
 }
 
 #[cfg(test)]
@@ -459,6 +500,18 @@ mod tests {
         let text = serde_json::to_string(&event).unwrap();
         assert!(!text.contains("hunter2"), "{text}");
         assert!(event_from_engine(b"not json", "unflub@1", None).is_none());
+    }
+
+    #[test]
+    fn preview_prepares_the_same_event_without_enabling_transport() {
+        let event = event_from_engine(ENGINE_MARKER_JSON.as_bytes(), "unflub@1", None).unwrap();
+        let offline = crash_client(&event, None);
+        assert!(!offline.is_enabled());
+        let prepared = offline.prepare_event(event, None).unwrap();
+        assert!(prepared.sdk.is_some());
+        assert!(prepared.contexts.contains_key("rust"));
+        assert!(prepared.server_name.is_none());
+        assert_eq!(prepared.tags["process"], "unflub-engine");
     }
 
     #[test]

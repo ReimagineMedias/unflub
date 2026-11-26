@@ -1,3 +1,5 @@
+import { usageReportPreview } from "./api";
+import { CrashReportPreview, ReportPreview } from "./ReportPreview";
 import { ExternalLink, Row, Segmented, Switch } from "./components";
 import { t, type StringKey } from "./i18n";
 import { LINKS } from "./links";
@@ -49,6 +51,17 @@ export function PrivacyPage({ settings: s, info, update }: {
             <li key={label}><strong>{t(label)}:</strong> {t(text)}</li>
           ))}
         </ul>
+      </div>
+      <div className="report-actions">
+        <ReportPreview label={t("privacy.preview.today")} load={async () => {
+          const { stats } = await usageReportPreview();
+          return { json: stats, hint: t(stats ? "privacy.preview.today.hint" : "privacy.preview.off") };
+        }} />
+        <ReportPreview label={t("privacy.preview.last")} load={async () => {
+          const { stats, lastStats } = await usageReportPreview();
+          return { json: lastStats, hint: t(lastStats ? "privacy.preview.last.hint" : stats ? "privacy.preview.last.empty" : "privacy.preview.off") };
+        }} />
+        <CrashReportPreview label={t("privacy.preview.crash")} />
       </div>
       <p className="note"><ExternalLink href={LINKS.privacy}>{t("privacy.details")}</ExternalLink></p>
 

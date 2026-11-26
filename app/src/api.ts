@@ -159,6 +159,28 @@ export async function crashReportPending(): Promise<boolean> {
   return inTauri ? invoke<boolean>("crash_report_pending") : query().has("crash");
 }
 
+export async function usageReportPreview(): Promise<{ stats: string | null; lastStats: string | null }> {
+  if (inTauri) return invoke("send_preview");
+  return {
+    stats: mock.shareUsageStats && !query().has("managed")
+      ? JSON.stringify({ schema: 3, counters: { corrections: 23 }, health: { crashes: 0 } }, null, 2)
+      : null,
+    lastStats: null,
+  };
+}
+
+export async function crashReportPreview(): Promise<{ json: string; pending: boolean }> {
+  if (inTauri) return invoke("crash_preview");
+  return {
+    json: JSON.stringify({
+      platform: "native",
+      level: "fatal",
+      exception: { values: [{ type: "panic", value: "panic message withheld: unflub handles typed text" }] },
+    }, null, 2),
+    pending: query().has("crash"),
+  };
+}
+
 export async function answerCrashReport(answer: CrashAnswer): Promise<void> {
   if (inTauri) await invoke("answer_crash_report", { answer });
 }

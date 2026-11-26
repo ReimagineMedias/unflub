@@ -12,6 +12,7 @@ import { t, type StringKey } from "./i18n";
 import { LINKS, isExternalUrl } from "./links";
 import { PillPreview } from "./PillPreview";
 import { PrivacyPage } from "./PrivacyPage";
+import { CrashReportPreview } from "./ReportPreview";
 import { StatsPage } from "./StatsPage";
 import { Tour } from "./Tour";
 import { LIMITS, type AppInfo, type EngineMode, type PauseControls, type RemoteMessage, type Settings, type SystemLook, type Theme, type UndoMode, type UpdateStatus } from "./types";
@@ -96,6 +97,7 @@ function Banners({ crash, onCrash, interference, update, autoUpdate, onInstall, 
         <div className="banner" role="status">
           <span>{t("banner.crash")}</span>
           <div className="actions">
+            <CrashReportPreview label={t("banner.crash.details")} />
             <button className="btn" onClick={() => onCrash("send")}>{t("banner.crash.send")}</button>
             <button className="btn ghost" onClick={() => onCrash("dont-send")}>{t("banner.crash.dontSend")}</button>
             <button className="btn ghost" onClick={() => onCrash("always-send")}>{t("banner.crash.always")}</button>
