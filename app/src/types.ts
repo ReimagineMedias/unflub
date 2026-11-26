@@ -14,6 +14,8 @@ export type UndoMode = "twice" | "once" | "off";
  */
 export interface Settings {
   enabled: boolean;
+  /** Windows shortcut. Empty means off. */
+  pauseShortcut: string;
   startAtLogin: boolean;
   /** Download updates in the background. Installing waits for a restart or quit. */
   autoUpdate: boolean;
@@ -47,6 +49,11 @@ export interface Settings {
   language: string;
   /** English dictionary fixes even when `language` isn't English. */
   englishForOtherLanguages: boolean;
+}
+
+export interface PauseControls {
+  paused: boolean;
+  shortcutUnavailable: boolean;
 }
 
 /** Mirrors `UpdateStatus` in src-tauri/src/updates.rs. */
@@ -117,6 +124,7 @@ export const LIMITS = { word: 64, replacement: 256, app: 260 } as const;
 
 export const defaultSettings: Settings = {
   enabled: true,
+  pauseShortcut: "",
   startAtLogin: true,
   autoUpdate: true,
   channel: "stable",

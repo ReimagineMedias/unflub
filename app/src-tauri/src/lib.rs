@@ -1,3 +1,4 @@
+mod controls;
 mod crash;
 mod diagnostics;
 mod engine;
@@ -30,7 +31,9 @@ use stats::{Stats, StatsView};
 use std::sync::{Arc, Mutex};
 use tauri::{
     image::Image,
-    menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
+    menu::{
+        CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder, SubmenuBuilder,
+    },
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
 };
@@ -55,6 +58,7 @@ struct AppState {
     store: Store,
     settings: Mutex<Settings>,
     toggle: Mutex<Option<CheckMenuItem<tauri::Wry>>>,
+    controls: controls::Controls,
     /// Hook, engine and pill. Taken out on quit.
     engine: Mutex<Option<EngineHost>>,
     /// Words learned by undo since the settings window last saved. The window may still hold
@@ -153,6 +157,7 @@ fn set_settings(
         merge_learned(&mut settings.personal_words, &pending);
         // The window doesn't set the file's schema version.
         settings.schema_version = current.schema_version;
+        settings.pause_shortcut.clone_from(&current.pause_shortcut);
         *current = settings;
     })
     .map_err(|e| e.to_string())?;
@@ -184,6 +189,30 @@ fn reset_settings(app: AppHandle) -> Result<serde_json::Value, String> {
     })
     .map(|s| for_window(&s))
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn pause_controls(app: AppHandle) -> controls::Status {
+    controls::status(&app)
+}
+
+#[tauri::command]
+fn resume_autocorrect(app: AppHandle) {
+    controls::set_pause(&app, controls::Pause::Running);
+}
+
+#[tauri::command]
+fn set_pause_shortcut(app: AppHandle, binding: String) -> Result<(), &'static str> {
+    let normalised = controls::normalise_shortcut(&binding).ok_or("invalid")?;
+    let retry = current_settings(&app).pause_shortcut == normalised;
+    update_settings(&app, |s| s.pause_shortcut = normalised).map_err(|_| "save")?;
+    #[cfg(windows)]
+    if retry {
+        queue_ui_refresh(&app, controls::sync_shortcut);
+    }
+    #[cfg(not(windows))]
+    let _ = retry;
+    Ok(())
 }
 
 /// How many of `next` the user added in the window: not in `prev`, and not one of the words
@@ -472,16 +501,9 @@ fn update_settings(
     if prev.start_at_login != next.start_at_login {
         sync_autostart(app, next.start_at_login);
     }
-    if prev.enabled != next.enabled {
-        app.state::<Usage>().set_paused(!next.enabled);
-        if !next.enabled {
-            // Pausing ends the engine, and with it the interference.
-            set_interference(app, false);
-        }
-        refresh_tray(app);
-        queue_ui_refresh(app, |app| {
-            refresh_window_icon(app, current_settings(app).enabled)
-        });
+    #[cfg(windows)]
+    if prev.pause_shortcut != next.pause_shortcut {
+        queue_ui_refresh(app, controls::sync_shortcut);
     }
     if prev.share_usage_stats != next.share_usage_stats {
         let managed = app.state::<AppInfo>().managed;
@@ -502,13 +524,46 @@ fn update_settings(
         // Learning off: the counts have no use left (the engine forgets its own below).
         counts.clear();
     }
-    // Another change may have landed since ours: the engine and the windows get the latest.
-    let latest = current_settings(app);
-    if let Some(engine) = state.engine.lock().unwrap().as_ref() {
-        engine.apply(&latest);
+    if prev.enabled != next.enabled {
+        controls::set_pause(app, controls::Pause::Running);
+    } else {
+        apply_correction(app);
     }
-    emit_settings(app, &latest);
+    emit_settings(app, &current_settings(app));
     Ok(next)
+}
+
+fn correction_enabled(app: &AppHandle) -> bool {
+    current_settings(app).enabled && !controls::paused(app)
+}
+
+/// Take the engine lock before reading the latest settings so two callers cannot send those
+/// settings out of order. The temporary pause changes the engine's copy only.
+fn apply_correction(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if let Some(engine) = state.engine.lock().unwrap().as_ref() {
+        let mut settings = current_settings(app);
+        settings.enabled &= !controls::paused(app);
+        engine.apply(&settings);
+    };
+}
+
+fn refresh_correction_ui(app: &AppHandle) {
+    let enabled = correction_enabled(app);
+    app.state::<Usage>().set_paused(!enabled);
+    if !enabled {
+        set_interference(app, false);
+    }
+    queue_ui_refresh(app, |app| {
+        refresh_tray_on_main_thread(app);
+        refresh_window_icon(app, correction_enabled(app));
+        controls::emit(app);
+    });
+}
+
+fn sync_correction(app: &AppHandle) {
+    apply_correction(app);
+    refresh_correction_ui(app);
 }
 
 /// The manifest's flags or message changed: pass the flags on and show the message.
@@ -755,7 +810,7 @@ fn refresh_tray(app: &AppHandle) {
 }
 
 fn refresh_tray_on_main_thread(app: &AppHandle) {
-    let enabled = current_settings(app).enabled;
+    let enabled = correction_enabled(app);
     let state = app.state::<AppState>();
     let interference = state.interference.lock().unwrap().active;
     let hook_unavailable = state
@@ -768,9 +823,12 @@ fn refresh_tray_on_main_thread(app: &AppHandle) {
         )));
         let _ = tray.set_tooltip(Some(tooltip(enabled, interference, hook_unavailable)));
     }
-    if let Some(item) = app.state::<AppState>().toggle.lock().unwrap().as_ref() {
+    if let Some(item) = state.toggle.lock().unwrap().as_ref() {
         let _ = item.set_checked(enabled);
     }
+    if let Some(menu) = state.controls.pause_menu.lock().unwrap().as_ref() {
+        let _ = menu.set_enabled(current_settings(app).enabled);
+    };
 }
 
 /// The settings window's taskbar icon: the app icon, in greys while paused.
@@ -820,7 +878,7 @@ fn open_settings(app: &AppHandle, page: Option<&str>) {
         });
     match builder.build() {
         Ok(win) => {
-            if !current_settings(app).enabled {
+            if !correction_enabled(app) {
                 let _ = win.set_icon(window_icon(false));
             }
         }
@@ -839,11 +897,28 @@ fn open_url(app: &AppHandle, url: &str) {
 
 /// The tray menu for the current state: an update or crash report waiting adds one item.
 fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    let enabled = current_settings(app).enabled;
+    let enabled = correction_enabled(app);
     let toggle = CheckMenuItemBuilder::with_id("toggle", strings::MENU_AUTOCORRECT)
         .checked(enabled)
         .build(app)?;
-    let mut menu = MenuBuilder::new(app).item(&toggle).separator();
+    let pause = SubmenuBuilder::with_id(app, "pause", strings::MENU_PAUSE)
+        .enabled(current_settings(app).enabled)
+        .text("pause-15", strings::MENU_PAUSE_15)
+        .text("pause-60", strings::MENU_PAUSE_60)
+        .text("pause-restart", strings::MENU_PAUSE_RESTART)
+        .build()?;
+    let exclude = MenuItem::with_id(
+        app,
+        "exclude-app",
+        strings::MENU_EXCLUDE_APP,
+        false,
+        None::<&str>,
+    )?;
+    let mut menu = MenuBuilder::new(app)
+        .item(&toggle)
+        .item(&pause)
+        .item(&exclude)
+        .separator();
     let update = app.state::<Updates>().status();
     match &update {
         UpdateStatus::Ready { version, .. } => {
@@ -885,7 +960,10 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         _ => menu.text("quit", strings::MENU_QUIT),
     }
     .build()?;
-    *app.state::<AppState>().toggle.lock().unwrap() = Some(toggle);
+    let state = app.state::<AppState>();
+    *state.toggle.lock().unwrap() = Some(toggle);
+    *state.controls.pause_menu.lock().unwrap() = Some(pause);
+    *state.controls.exclude_item.lock().unwrap() = Some(exclude);
     Ok(menu)
 }
 
@@ -944,9 +1022,13 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "toggle" => {
-                let _ = update_settings(app, |s| s.enabled = !s.enabled);
+            "toggle" => controls::toggle_tray(app),
+            "pause-15" => controls::pause_for(app, 15),
+            "pause-60" => controls::pause_for(app, 60),
+            "pause-restart" if current_settings(app).enabled => {
+                controls::set_pause(app, controls::Pause::UntilRestart);
             }
+            "exclude-app" => controls::exclude_foreground(app),
             "settings" => open_settings(app, None),
             "update" => match app.state::<Updates>().status() {
                 UpdateStatus::Ready { .. } => tray_install(app, true),
@@ -960,15 +1042,19 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
             "quit" => quit(app),
             _ => {}
         })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
-            } = event
-            {
-                open_settings(tray.app_handle(), None);
-            }
+            } => open_settings(tray.app_handle(), None),
+            TrayIconEvent::Enter { .. }
+            | TrayIconEvent::Click {
+                button: MouseButton::Right,
+                button_state: MouseButtonState::Down,
+                ..
+            } => controls::capture_foreground(tray.app_handle()),
+            _ => {}
         })
         .build(app)?;
     Ok(())
@@ -980,6 +1066,10 @@ pub fn run() {
     unflub_engine::disable_windows_crash_reporting();
     let perf_idle = perf_idle_dir(std::env::args());
     let mut builder = tauri::Builder::default();
+    #[cfg(windows)]
+    {
+        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    }
     if perf_idle.is_none() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             open_settings(app, None)
@@ -1074,6 +1164,7 @@ pub fn run() {
                 store,
                 settings: Mutex::new(settings.clone()),
                 toggle: Mutex::new(None),
+                controls: controls::Controls::default(),
                 engine: Mutex::new(None),
                 pending_learned: Mutex::new(Vec::new()),
                 interference: Mutex::default(),
@@ -1099,6 +1190,13 @@ pub fn run() {
             );
             *app.state::<AppState>().engine.lock().unwrap() = Some(engine);
             build_tray(handle, enabled)?;
+            #[cfg(windows)]
+            {
+                controls::sync_shortcut(handle);
+                if perf_idle.is_none() {
+                    system::track_foreground();
+                }
+            }
             if first_run {
                 let _ = app.state::<AppState>().store.save(&settings);
                 sync_autostart(handle, start_at_login);
@@ -1135,6 +1233,9 @@ pub fn run() {
             get_settings,
             set_settings,
             reset_settings,
+            pause_controls,
+            resume_autocorrect,
+            set_pause_shortcut,
             system_look,
             update_status,
             check_for_updates,

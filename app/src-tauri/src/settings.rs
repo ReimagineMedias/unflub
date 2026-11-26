@@ -116,6 +116,8 @@ pub struct Settings {
     /// See [`SCHEMA_VERSION`]. Files without it are version 0.
     pub schema_version: u32,
     pub enabled: bool,
+    /// Windows pause shortcut. Empty means off.
+    pub pause_shortcut: String,
     pub start_at_login: bool,
     /// Download updates in the background once the daily check finds one. Off: the check only
     /// tells the user. Installing always waits for a restart or quit.
@@ -165,6 +167,7 @@ impl Default for Settings {
         Self {
             schema_version: SCHEMA_VERSION,
             enabled: core.enabled,
+            pause_shortcut: String::new(),
             start_at_login: true,
             auto_update: true,
             channel: Channel::Stable,
@@ -219,6 +222,8 @@ impl Settings {
     /// Clamp values a hand-edited file could break. The lists are capped so the settings always
     /// fit in one message to the engine (`unflub_engine::frame::MAX_FRAME`), whatever was pasted.
     pub fn sanitised(mut self) -> Self {
+        self.pause_shortcut =
+            crate::controls::normalise_shortcut(&self.pause_shortcut).unwrap_or_default();
         self.confidence = self.confidence.clamp(0.0, 1.0);
         self.pill_opacity = self.pill_opacity.clamp(0.3, 1.0);
         self.pill_duration_ms = self.pill_duration_ms.clamp(300, 5000);

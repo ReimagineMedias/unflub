@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ExternalUrl } from "./links";
 import {
-  defaultSettings, type AppInfo, type CrashAnswer, type RemoteMessage, type Settings, type StatsView,
+  defaultSettings, type AppInfo, type CrashAnswer, type PauseControls, type RemoteMessage, type Settings, type StatsView,
   type SystemLook, type TourAction, type UpdateStatus,
 } from "./types";
 
@@ -29,6 +29,29 @@ export async function getSettings(): Promise<Settings> {
 export async function setSettings(settings: Settings, removed: string[] = []): Promise<Settings> {
   if (inTauri) return invoke<Settings>("set_settings", { settings, removed });
   mock = structuredClone(settings);
+  return structuredClone(mock);
+}
+
+export async function pauseControls(): Promise<PauseControls> {
+  return inTauri ? invoke<PauseControls>("pause_controls") : { paused: false, shortcutUnavailable: false };
+}
+
+export async function onPauseControls(cb: (controls: PauseControls) => void): Promise<() => void> {
+  if (!inTauri) return () => {};
+  return listen<PauseControls>("pause-controls", (e) => cb(e.payload));
+}
+
+export async function resumeAutocorrect(): Promise<void> {
+  if (inTauri) await invoke("resume_autocorrect");
+}
+
+export async function setPauseShortcut(binding: string): Promise<Settings | undefined> {
+  if (inTauri) {
+    await invoke("set_pause_shortcut", { binding });
+    return;
+  }
+  // The plain browser preview has no global shortcuts.
+  mock = { ...mock, pauseShortcut: binding.trim() };
   return structuredClone(mock);
 }
 
