@@ -137,7 +137,10 @@ pub fn send_held_backspace_now() -> bool {
     let Some(held) = decode_held(HELD_FOR_CRASH.swap(0, Ordering::AcqRel)) else {
         return false;
     };
-    let _ = inject::send(&inject::pass_inputs(&[held, RawEvent { up: true, ..held }]));
+    let keys = [held, RawEvent { up: true, ..held }];
+    let _ = inject::send(&inject::pass_inputs(&keys), |sent| {
+        inject::pass_inputs(&inject::unwind_keys(&keys, sent))
+    });
     true
 }
 
@@ -368,6 +371,33 @@ struct Job {
     batch: u16,
     inputs: Vec<windows::Win32::UI::Input::KeyboardAndMouse::INPUT>,
     handed_over: Instant,
+    /// How to put keys back if `SendInput` takes only part of `inputs`.
+    unwind: Unwind,
+}
+
+/// What a job's events were, for putting keys back after a partial send.
+enum Unwind {
+    /// A correction or undo, sent while the user held these Shift keys.
+    Injection {
+        events: Vec<inject::KeyEvent>,
+        held: inject::ShiftKeys,
+    },
+    /// The user's own keys, sent again.
+    Keys(Vec<RawEvent>),
+    /// A probe: one key-up, nothing to put back.
+    Nothing,
+}
+
+impl Unwind {
+    fn inputs(&self, sent: usize) -> Vec<windows::Win32::UI::Input::KeyboardAndMouse::INPUT> {
+        match self {
+            Unwind::Injection { events, held } => {
+                inject::unwind_inputs(&inject::unwind_injection(events, sent, *held))
+            }
+            Unwind::Keys(events) => inject::pass_inputs(&inject::unwind_keys(events, sent)),
+            Unwind::Nothing => Vec::new(),
+        }
+    }
 }
 
 // SAFETY: INPUT is plain data (no pointers); the vector is moved to the injector thread.
@@ -387,7 +417,7 @@ struct JobDone {
 fn injector(jobs: Receiver<Job>, done: Sender<JobDone>, hook_thread: u32) {
     while let Ok(job) = jobs.recv() {
         let total = job.inputs.len();
-        let (sent, released) = match inject::send(&job.inputs) {
+        let (sent, released) = match inject::send(&job.inputs, |sent| job.unwind.inputs(sent)) {
             SendOutcome::Complete => (total, false),
             SendOutcome::Partial { sent, released, .. } => (sent, released),
         };
@@ -642,7 +672,9 @@ fn run(
         // is dropped, a modifier's key-up included.
         if let Some(owed) = with_state(State::drain_for_stop) {
             if !owed.is_empty() {
-                let _ = inject::send(&inject::pass_inputs(&owed));
+                let _ = inject::send(&inject::pass_inputs(&owed), |sent| {
+                    inject::pass_inputs(&inject::unwind_keys(&owed, sent))
+                });
             }
         }
     }
@@ -1410,7 +1442,8 @@ impl State {
         // SAFETY: trivial query. Toggle state (low bit) of Caps Lock.
         let caps_lock = unsafe { GetKeyState(i32::from(VK_CAPITAL.0)) } & 1 != 0;
         let keys = inject::TargetLayout::new(foreground_layout(), caps_lock);
-        let events = inject::key_events(&inject::with_keys(strokes, &keys), held_shift());
+        let shift = held_shift();
+        let events = inject::key_events(&inject::with_keys(strokes, &keys), shift);
         let batch = self.pipeline.begin_undo(ev, held, events.len());
         let handed_over = Instant::now();
         let job = Job {
@@ -1418,6 +1451,10 @@ impl State {
             batch,
             inputs: inject::to_inputs(&events, batch),
             handed_over,
+            unwind: Unwind::Injection {
+                events,
+                held: shift,
+            },
         };
         self.batches.push(Batch {
             batch,
@@ -1655,6 +1692,7 @@ impl State {
             batch: self.next_probe,
             inputs: inject::probe_inputs(self.next_probe),
             handed_over: Instant::now(),
+            unwind: Unwind::Nothing,
         };
         let _ = self.jobs.send(job);
     }
@@ -1707,6 +1745,7 @@ impl State {
                 batch: r.batch,
                 inputs: inject::replay_inputs(&r.events, r.batch),
                 handed_over: Instant::now(),
+                unwind: Unwind::Keys(r.events),
             };
             if self.jobs.send(job).is_err() {
                 self.pipeline.on_replay_sent(r.batch, 0, total);
