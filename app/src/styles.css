@@ -306,3 +306,14 @@ button.link { border: 0; padding: 0; background: none; color: var(--link, var(--
 }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+.report-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.report-dialog { width: min(580px, calc(100% - 32px)); max-height: calc(100% - 32px); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 0; color: var(--ink); background: var(--raised); }
+.report-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.report-preview { padding: 18px; }
+.report-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.report-head h2 { margin: 0; font-size: 18px; }
+.report-preview p { color: var(--muted); font-weight: 400; }
+.report-preview pre { max-height: 50vh; overflow: auto; margin: 0; padding: 12px; border-radius: 9px; background: var(--raised);
+  font: 12px/1.55 var(--mono); user-select: text; }

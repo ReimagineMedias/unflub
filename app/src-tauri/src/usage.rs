@@ -427,6 +427,8 @@ struct Tally {
     since: u64,
     /// When the last report was accepted, for `X-First` (Unix seconds).
     last_report: Option<u64>,
+    /// The exact body the server last accepted, for the local Privacy preview.
+    last_payload: Option<serde_json::Value>,
     /// A finished period's report that hasn't been accepted yet.
     pending: Option<serde_json::Value>,
 }
@@ -445,6 +447,7 @@ impl Tally {
         Self {
             since: now,
             last_report: self.last_report,
+            last_payload: self.last_payload.clone(),
             pending: self.pending.clone(),
             paused_since: self.paused_since.map(|_| now),
             ..Self::default()
@@ -677,6 +680,10 @@ impl Usage {
         )
     }
 
+    pub fn last_payload(&self) -> Option<serde_json::Value> {
+        self.tally.lock().unwrap().last_payload.clone()
+    }
+
     /// Write the counts if they changed.
     pub fn flush(&self) {
         if !self.is_on() {
@@ -758,10 +765,13 @@ impl Usage {
     }
 
     /// The waiting report was accepted.
-    fn sent(&self) {
+    fn sent(&self, report: &serde_json::Value) {
         {
             let mut tally = self.tally.lock().unwrap();
-            tally.pending = None;
+            if !self.is_on() || tally.pending.as_ref() != Some(report) {
+                return;
+            }
+            tally.last_payload = tally.pending.take();
             tally.last_report = Some(now_secs());
         }
         self.dirty.store(true, Ordering::Relaxed);
@@ -1002,7 +1012,7 @@ pub fn spawn(app: tauri::AppHandle) {
                 match tauri::async_runtime::block_on(send(&client, &report)) {
                     Outcome::Accepted => {
                         backoff.reset();
-                        usage.sent();
+                        usage.sent(&report);
                     }
                     Outcome::Rejected => {
                         backoff.reset();
@@ -1761,7 +1771,9 @@ mod tests {
         usage.flush();
         let again = Usage::new(dir.clone(), true);
         assert_eq!(again.pending(), Some(report));
-        again.sent();
+        let sent = again.pending().unwrap();
+        again.sent(&sent);
+        assert_eq!(again.last_payload(), Some(sent));
         assert_eq!(again.pending(), None);
         assert!(again.tally.lock().unwrap().last_report > Some(1_600_000_000));
         assert_eq!(again.tally.lock().unwrap().counters.corrections, 2);

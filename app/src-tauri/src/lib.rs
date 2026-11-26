@@ -111,16 +111,18 @@ struct SystemLook {
     platform: &'static str,
 }
 
-/// The Privacy page's "Exactly what's sent". Pretty JSON, in the order it is sent.
+/// The report bodies shown in Privacy.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SendPreview {
-    /// The daily usage stats, or `None` while that switch is off.
     stats: Option<String>,
-    /// The headers on update requests (manifest and release files), as they would go out now.
-    headers: Vec<(String, String)>,
-    /// Crash reports can be sent from this build.
-    crash_reports_available: bool,
+    last_stats: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct CrashPreview {
+    json: String,
+    pending: bool,
 }
 
 /// Settings as the window sees them.
@@ -295,26 +297,25 @@ fn system_look() -> SystemLook {
 fn send_preview(app: AppHandle) -> SendPreview {
     let settings = effective_settings(&app);
     let version = app.package_info().version.to_string();
-    let stats = settings.share_usage_stats.then(|| {
-        pretty(
-            &app.state::<Usage>()
-                .payload(&settings, &version, &env_facts(&app)),
-        )
-    });
-    let headers = updates::request_headers(&app)
-        .into_iter()
-        .map(|(k, v)| {
-            (
-                canonical_header(k.as_str()),
-                v.to_str().unwrap_or_default().to_string(),
-            )
-        })
-        .collect();
+    let usage = app.state::<Usage>();
     SendPreview {
-        stats,
-        headers,
-        crash_reports_available: crash::enabled(),
+        stats: settings
+            .share_usage_stats
+            .then(|| pretty(&usage.payload(&settings, &version, &env_facts(&app)))),
+        last_stats: settings
+            .share_usage_stats
+            .then(|| usage.last_payload().as_ref().map(pretty))
+            .flatten(),
     }
+}
+
+#[tauri::command]
+fn crash_preview(app: AppHandle) -> Result<CrashPreview, &'static str> {
+    let (event, pending) = crash::preview(&app.state::<Crashes>())?;
+    Ok(CrashPreview {
+        json: pretty(&event),
+        pending,
+    })
 }
 
 /// What the settings window reports for the usage stats. A closed list: anything else is
@@ -392,14 +393,6 @@ fn sample_idle_memory(app: &AppHandle) -> Option<u64> {
         }
     }
     None
-}
-
-/// `user-agent` as `User-Agent`, for reading.
-fn canonical_header(name: &str) -> String {
-    match name {
-        "user-agent" => "User-Agent".into(),
-        other => other.into(),
-    }
 }
 
 #[tauri::command]
@@ -1378,6 +1371,7 @@ pub fn run() {
             check_for_updates,
             install_update,
             send_preview,
+            crash_preview,
             app_info,
             tour_reset,
             tour_key,
