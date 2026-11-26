@@ -126,7 +126,9 @@ Repo is private until v0.1, then flipped public.
   policy `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`). Typo-fix pair sharing was cut from v0.1.
 - Settings have `schemaVersion` (`migrations.rs`, step by step, keeps `settings.json.v<N>`), and unknown fields survive
   in `Settings::extra`. The usage-stats and crash-report switches are also kept in `privacy-switches.json`; an off in
-  either file wins, so a corrupt or downgraded settings.json never turns telemetry back on (#134). All window strings are in `app/src/i18n/en.ts` (`t()`), tray strings in `strings.rs`. External
+  either file wins, so a corrupt or downgraded settings.json never turns telemetry back on (#134). Only settings,
+  privacy switches and crash files are in `%APPDATA%` (roaming); stats, undo counts, usage, install facts, rollout bucket, update stamp
+  and manifest cache are in `%LOCALAPPDATA%\ca.rmgn.unflub` (`files::MACHINE_STATE`, moved once at startup, #120). All window strings are in `app/src/i18n/en.ts` (`t()`), tray strings in `strings.rs`. External
   links only via `<ExternalLink>` / tauri-plugin-opener (scoped to github.com and unflub.rmgn.net); a cargo test fails
   on raw `<a>` in `app/src`.
 - The hook ignores unflub's own exe (HookOptions.excluded_apps), so Settings is never autocorrected; the first-run

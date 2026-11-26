@@ -1,4 +1,4 @@
-//! Replacing the app's small data files safely.
+//! Replacing the app's small data files safely, and moving them where they belong.
 
 use std::{
     fs,
@@ -36,9 +36,160 @@ pub fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     written
 }
 
+/// Files and folders that describe this machine, not the user's choices: the local Stats page
+/// (typed words), undo counts (typed words), the usage tally, the install facts (install day,
+/// tour outcome), the rollout bucket, the last update check and the cached manifest. They live in the local app data folder, so a roaming profile
+/// never copies typed words to a server and one PC's update check never postpones another's.
+pub const MACHINE_STATE: &[&str] = &[
+    "stats.json",
+    "undo-counts.json",
+    "usage.json",
+    "install-facts.json",
+    "rollout-bucket",
+    "last-update-check",
+    "manifest",
+];
+
+/// The entries of [`MACHINE_STATE`] that hold typed words.
+const TYPED_WORDS: &[&str] = &["stats.json", "undo-counts.json"];
+
+/// Move each of `names` from `from` (the roaming folder, where versions before 0.2 kept them) to
+/// `to`, once. An entry already in `to` wins: the old one is left where it is, unless it holds
+/// typed words ([`TYPED_WORDS`], written by an older version after a downgrade), which never stay
+/// in the roaming folder and are deleted. When a rename
+/// can't cross volumes (a redirected AppData), it is copied and then removed; a copy that fails is
+/// undone and the old entry kept.
+pub fn move_machine_state(from: &Path, to: &Path, names: &[&str]) {
+    if from == to {
+        return;
+    }
+    for name in names {
+        let (src, dst) = (from.join(name), to.join(name));
+        if !src.exists() {
+            continue;
+        }
+        if dst.exists() {
+            if TYPED_WORDS.contains(name) {
+                if let Err(e) = fs::remove_file(&src) {
+                    eprintln!("data: can't remove the old {name}: {e}");
+                }
+                continue;
+            }
+            eprintln!(
+                "data: {} is already in {}; the old copy stays in {}",
+                name,
+                to.display(),
+                from.display()
+            );
+            continue;
+        }
+        let moved = fs::create_dir_all(to).and_then(|()| {
+            fs::rename(&src, &dst).or_else(|_| {
+                copy_all(&src, &dst)
+                    .inspect_err(|_| {
+                        let _ = fs::remove_dir_all(&dst);
+                        let _ = fs::remove_file(&dst);
+                    })
+                    .and_then(|()| {
+                        if src.is_dir() {
+                            fs::remove_dir_all(&src)
+                        } else {
+                            fs::remove_file(&src)
+                        }
+                    })
+            })
+        });
+        if let Err(e) = moved {
+            eprintln!("data: can't move {name} to {}: {e}", to.display());
+        }
+    }
+}
+
+/// Copy a file, or a folder and everything in it.
+fn copy_all(from: &Path, to: &Path) -> io::Result<()> {
+    if from.is_dir() {
+        fs::create_dir_all(to)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            copy_all(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        fs::copy(from, to).map(drop)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review #120: typed words and per-machine update state move out of the roaming profile,
+    /// keeping their content; an entry already in the local folder isn't replaced.
+    #[test]
+    fn machine_state_moves_to_the_local_folder_once() {
+        let base = std::env::temp_dir().join(format!("unflub-move-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let (roaming, local) = (base.join("Roaming"), base.join("Local"));
+        fs::create_dir_all(roaming.join("manifest")).unwrap();
+        fs::write(roaming.join("stats.json"), "typed words").unwrap();
+        fs::write(roaming.join("manifest").join("state.json"), "etag").unwrap();
+        fs::write(roaming.join("usage.json"), "old").unwrap();
+        fs::write(roaming.join("settings.json"), "roams").unwrap();
+        fs::create_dir_all(&local).unwrap();
+        fs::write(local.join("usage.json"), "new").unwrap();
+        fs::write(roaming.join("undo-counts.json"), "old words").unwrap();
+        fs::write(local.join("undo-counts.json"), "words").unwrap();
+
+        move_machine_state(&roaming, &local, MACHINE_STATE);
+        assert_eq!(
+            fs::read_to_string(local.join("stats.json")).unwrap(),
+            "typed words"
+        );
+        assert!(!roaming.join("stats.json").exists());
+        assert_eq!(
+            fs::read_to_string(local.join("manifest").join("state.json")).unwrap(),
+            "etag"
+        );
+        assert!(!roaming.join("manifest").exists());
+        assert_eq!(fs::read_to_string(local.join("usage.json")).unwrap(), "new");
+        assert_eq!(
+            fs::read_to_string(roaming.join("usage.json")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            fs::read_to_string(local.join("undo-counts.json")).unwrap(),
+            "words"
+        );
+        assert!(
+            !roaming.join("undo-counts.json").exists(),
+            "typed words never stay in the roaming folder"
+        );
+        assert!(roaming.join("settings.json").exists(), "settings roam");
+        assert!(!local.join("settings.json").exists());
+
+        // Running again changes nothing, and the same folder is left alone.
+        move_machine_state(&roaming, &local, MACHINE_STATE);
+        move_machine_state(&local, &local, MACHINE_STATE);
+        assert_eq!(
+            fs::read_to_string(local.join("stats.json")).unwrap(),
+            "typed words"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn copies_folders() {
+        let base = std::env::temp_dir().join(format!("unflub-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("a").join("b")).unwrap();
+        fs::write(base.join("a").join("b").join("c"), "x").unwrap();
+        copy_all(&base.join("a"), &base.join("z")).unwrap();
+        assert_eq!(
+            fs::read_to_string(base.join("z").join("b").join("c")).unwrap(),
+            "x"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn replaces_and_leaves_no_temp_file() {
