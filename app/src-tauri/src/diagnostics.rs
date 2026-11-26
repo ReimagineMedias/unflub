@@ -40,6 +40,9 @@ pub enum Event {
     PipeWriteFailed(io::ErrorKind),
     #[cfg(windows)]
     InvalidEngineMessage,
+    /// Clients that took the engine's pipe before the engine and were dropped.
+    #[cfg(windows)]
+    PipeImpostors(u32),
     HookReinstalled(Option<ReinstallReason>),
     CorrectorPanicked,
     InputInterference(bool),
@@ -78,6 +81,8 @@ impl Event {
             Self::PipeWriteFailed(kind) => format!("pipe_write_failed kind={kind:?}"),
             #[cfg(windows)]
             Self::InvalidEngineMessage => "invalid_engine_message".into(),
+            #[cfg(windows)]
+            Self::PipeImpostors(count) => format!("pipe_impostors count={count}"),
             Self::HookReinstalled(reason) => format!("hook_reinstalled reason={reason:?}"),
             Self::CorrectorPanicked => "corrector_panicked".into(),
             Self::InputInterference(active) => format!("input_interference active={active}"),

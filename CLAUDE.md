@@ -53,7 +53,7 @@ Repo is private until v0.1, then flipped public.
 - Two processes since 2026-11-17: `unflub-engine.exe` (`crates/unflub-engine`: hook, engine, spell checker, pill; no
   network code) and `unflub.exe` (tray, settings, tour, updater, remote config, stats, crash reports). The app spawns
   the engine beside itself (`app/src-tauri/src/engine.rs`, kill-on-close Job Object, restart backoff 1 s doubling to
-  5 min), over a per-user named pipe (DACL = user SID, `PIPE_REJECT_REMOTE_CLIENTS`, first instance, client pid
+  5 min), over a per-user named pipe (DACL = user SID, mandatory label at the app's integrity level, `PIPE_REJECT_REMOTE_CLIENTS`, first instance, client pid
   checked) with 4-byte-length JSON frames and a `Hello`/`Welcome` protocol version. Pause ends the engine process.
   `npm run tauri dev` still installs a real keyboard hook (through the engine): never in automation. Test IPC with
   `unflub-engine --test-ipc` (never hooks; `crates/unflub-engine/tests/ipc.rs`) or the in-process pipe pair tests.

@@ -140,13 +140,49 @@ fn an_engine_not_spawned_by_the_app_gets_nothing() {
         .arg("--test-ipc")
         .spawn()
         .unwrap();
-    // The app expected some other pid.
-    let err = session::serve(listener, child.id() + 4, "unflub.exe", T)
-        .err()
-        .unwrap();
+    // The app expected some other pid: it drops the engine and waits for one that never comes.
+    let err = session::serve(
+        listener,
+        child.id() + 4,
+        "unflub.exe",
+        Duration::from_secs(2),
+    )
+    .err()
+    .unwrap();
     assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
     // No welcome: the engine gives up with the handshake exit code.
     assert_eq!(wait(&mut child).code(), Some(3));
+}
+
+/// #123: another process took the pipe before the engine. The app drops it, the engine (which
+/// waits for the busy pipe) gets in, and the session works.
+#[test]
+fn the_engine_gets_in_after_an_impostor_is_dropped() {
+    let name = unique_name();
+    let listener = Listener::create(&name).unwrap();
+    // This test process is the impostor: it isn't the engine the app spawns.
+    let impostor = Pipe::connect(&name).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_unflub-engine"))
+        .args([
+            "--pipe",
+            &name,
+            "--app-pid",
+            &std::process::id().to_string(),
+            "--test-ipc",
+        ])
+        .spawn()
+        .unwrap();
+    let (pipe, _) = session::serve(listener, child.id(), "unflub.exe", T).unwrap();
+    assert_eq!(pipe.client_pid().unwrap(), child.id());
+    let mut buf = [0u8; 4];
+    assert!(
+        !matches!(impostor.read_timeout(&mut buf, Duration::from_millis(200)), Ok(n) if n > 0),
+        "the impostor's end is cut off"
+    );
+    configure(&pipe);
+    assert_eq!(next(&pipe), FromEngine::Ready { hooked: false });
+    frame::write(&mut &pipe, &ToEngine::Shutdown).unwrap();
+    assert!(wait(&mut child).success());
 }
 
 #[test]

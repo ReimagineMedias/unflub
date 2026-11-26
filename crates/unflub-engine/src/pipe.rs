@@ -2,11 +2,19 @@
 //!
 //! - The app creates it with [`Listener::create`]: a random name, one instance only
 //!   (`FILE_FLAG_FIRST_PIPE_INSTANCE`, so nobody can have created it first), a protected DACL
-//!   that grants access to the current user's SID and nobody else, and
-//!   `PIPE_REJECT_REMOTE_CLIENTS`.
+//!   that grants access to the current user's SID and nobody else, a mandatory integrity label
+//!   at the app's own level that denies reading, writing and executing to any process below it,
+//!   and `PIPE_REJECT_REMOTE_CLIENTS`.
 //! - It spawns the engine with the name and waits in [`Listener::accept`]. The connected
 //!   client's process id ([`Pipe::client_pid`]) must be the pid it spawned, or the connection
 //!   is dropped. The engine likewise checks [`Pipe::server_pid`] against the pid it was given.
+//!
+//! Any process can list the names under `\\.\pipe\`, so the random name keeps no secret:
+//! the DACL, the label and the pid checks keep other processes out. Without the label Windows
+//! gives the pipe the default Medium label with no-write-up only, and a Low integrity process
+//! of the same user (a sandboxed browser renderer, say) could open it for reading and take the
+//! one instance before the engine (#123). A same-user process at the app's level that takes it
+//! anyway is dropped and the engine let in ([`crate::session`]).
 //!
 //! I/O is overlapped, so one thread can block reading while another writes (synchronous I/O
 //! on one handle is serialised by Windows, which would deadlock a reader and a writer).
@@ -24,15 +32,15 @@ use std::time::{Duration, Instant};
 
 use windows::core::{HSTRING, PWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, LocalFree, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, HANDLE,
-    HLOCAL, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, LocalFree, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_PIPE_BUSY,
+    ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows::Win32::Security::{
-    GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
-    TOKEN_USER,
+    GetTokenInformation, TokenIntegrityLevel, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+    SID_AND_ATTRIBUTES, TOKEN_INFORMATION_CLASS, TOKEN_QUERY,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_FIRST_PIPE_INSTANCE,
@@ -40,8 +48,9 @@ use windows::Win32::Storage::FileSystem::{
     PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
 };
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId,
-    PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
+    GetNamedPipeServerProcessId, WaitNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+    PIPE_TYPE_BYTE, PIPE_WAIT,
 };
 use windows::Win32::System::Threading::{
     CreateEventW, GetCurrentProcess, OpenProcessToken, WaitForSingleObject, INFINITE,
@@ -113,10 +122,25 @@ pub struct Listener {
     pipe: Pipe,
 }
 
+/// How many fresh names [`Listener::create_unique`] tries.
+const NAME_ATTEMPTS: usize = 3;
+
+/// The pipe's security descriptor: the current user's SID alone in a protected DACL, and a
+/// mandatory label at this process's integrity level that denies reading, writing and executing
+/// to anything below it (`NWNRNX`). Without either SID there is no pipe: it fails closed.
+fn pipe_sddl() -> io::Result<String> {
+    Ok(format!(
+        "D:P(A;;GA;;;{})S:(ML;;NWNRNX;;;{})",
+        current_user_sid()?,
+        own_integrity_sid()?
+    ))
+}
+
 impl Listener {
-    /// Create the only instance of `name`, for the current user only, local clients only.
+    /// Create the only instance of `name`, for the current user at our integrity level or
+    /// above, local clients only.
     pub fn create(name: &str) -> io::Result<Self> {
-        let sddl = format!("D:P(A;;GA;;;{})", current_user_sid()?);
+        let sddl = pipe_sddl()?;
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
         // SAFETY: valid string in, descriptor out (freed below with LocalFree).
         unsafe {
@@ -157,6 +181,19 @@ impl Listener {
         })
     }
 
+    /// [`Listener::create`] under a fresh [`unique_name`], with a new name if one is taken.
+    pub fn create_unique() -> io::Result<(String, Self)> {
+        let mut last = None;
+        for _ in 0..NAME_ATTEMPTS {
+            let name = unique_name();
+            match Self::create(&name) {
+                Ok(listener) => return Ok((name, listener)),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.unwrap_or_else(|| io::ErrorKind::AlreadyExists.into()))
+    }
+
     /// Wait up to `timeout` for the client.
     pub fn accept(self, timeout: Duration) -> io::Result<Pipe> {
         self.accept_with_cancel(timeout, None)
@@ -182,6 +219,29 @@ impl Listener {
 }
 
 impl Pipe {
+    /// Connect to the app's pipe, waiting up to `timeout` while another client holds its one
+    /// instance: the app drops a client that isn't the engine it spawned and listens again.
+    pub fn connect_within(name: &str, timeout: Duration) -> io::Result<Self> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match Self::connect(name) {
+                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY.0 as i32) => {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return Err(e);
+                    }
+                    let ms = left.as_millis().clamp(1, u128::from(INFINITE - 1)) as u32;
+                    // SAFETY: a valid name. It returns once the instance is free, or fails
+                    // (timeout, or the pipe went away); either way the next connect decides.
+                    if !unsafe { WaitNamedPipeW(&HSTRING::from(name), ms) }.as_bool() {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                other => return other,
+            }
+        }
+    }
+
     /// Connect to the app's pipe.
     pub fn connect(name: &str) -> io::Result<Self> {
         // SAFETY: valid name; the returned handle is owned by the Pipe. SECURITY_IDENTIFICATION
@@ -222,6 +282,13 @@ impl Pipe {
     pub fn cancel_io(&self) {
         // SAFETY: cancels our own operations on our own handle; each waits for its completion.
         let _ = unsafe { CancelIoEx(self.handle, None) };
+    }
+
+    /// Drop the connected client (its end stops working) and listen for the next one.
+    pub fn disconnect(self) -> io::Result<Listener> {
+        // SAFETY: our own server handle; Windows closes the client's side of the instance.
+        unsafe { DisconnectNamedPipe(self.handle) }.map_err(win)?;
+        Ok(Listener { pipe: self })
     }
 
     /// Process id of the connected client.
@@ -408,31 +475,42 @@ impl Write for &Pipe {
 
 /// The current user's SID as `S-1-5-21-...`.
 fn current_user_sid() -> io::Result<String> {
+    token_sid(TokenUser)
+}
+
+/// This process's integrity level as a SID: `S-1-16-8192` at Medium, `S-1-16-12288` at High.
+fn own_integrity_sid() -> io::Result<String> {
+    token_sid(TokenIntegrityLevel)
+}
+
+/// The SID of our token's `TokenUser` or `TokenIntegrityLevel`, as a string. Both answers start
+/// with a `SID_AND_ATTRIBUTES` (`TOKEN_USER`, `TOKEN_MANDATORY_LABEL`).
+fn token_sid(class: TOKEN_INFORMATION_CLASS) -> io::Result<String> {
     let mut token = HANDLE::default();
     // SAFETY: the pseudo handle needs no closing; token is closed below.
     unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.map_err(win)?;
     let result = (|| {
         let mut len = 0;
         // SAFETY: size query; it fails with "insufficient buffer" and sets len.
-        let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut len) };
-        // u64s keep the buffer aligned for TOKEN_USER.
+        let _ = unsafe { GetTokenInformation(token, class, None, 0, &mut len) };
+        // u64s keep the buffer aligned for the structure's pointer.
         let mut buf = vec![0u64; (len as usize).div_ceil(8)];
         // SAFETY: buf holds at least len bytes.
         unsafe {
             GetTokenInformation(
                 token,
-                TokenUser,
+                class,
                 Some(buf.as_mut_ptr() as *mut c_void),
                 len,
                 &mut len,
             )
         }
         .map_err(win)?;
-        // SAFETY: GetTokenInformation(TokenUser) wrote a TOKEN_USER at the start of buf.
-        let user = unsafe { &*(buf.as_ptr() as *const TOKEN_USER) };
+        // SAFETY: both classes write a structure that starts with a SID_AND_ATTRIBUTES.
+        let entry = unsafe { &*(buf.as_ptr() as *const SID_AND_ATTRIBUTES) };
         let mut text = PWSTR::null();
         // SAFETY: the SID points into buf, alive here; text is freed with LocalFree.
-        unsafe { ConvertSidToStringSidW(user.User.Sid, &mut text) }.map_err(win)?;
+        unsafe { ConvertSidToStringSidW(entry.Sid, &mut text) }.map_err(win)?;
         // SAFETY: a null-terminated string from ConvertSidToStringSidW.
         let sid = unsafe { text.to_string() }.map_err(io::Error::other);
         // SAFETY: allocated by ConvertSidToStringSidW.
@@ -585,5 +663,192 @@ mod tests {
     fn the_dacl_names_the_current_user() {
         let sid = current_user_sid().unwrap();
         assert!(sid.starts_with("S-1-"), "{sid}");
+        let level = own_integrity_sid().unwrap();
+        assert!(level.starts_with("S-1-16-"), "{level}");
+    }
+
+    /// #123: the pipe carries a mandatory label at our own level that denies reading, writing
+    /// and executing to lower levels.
+    #[test]
+    fn the_pipe_has_a_mandatory_label_at_our_level() {
+        use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
+        use windows::Win32::Security::{GetAce, ACL, LABEL_SECURITY_INFORMATION, PSID};
+        const SYSTEM_MANDATORY_LABEL_ACE_TYPE: u8 = 0x11;
+        const NO_WRITE_UP_NO_READ_UP_NO_EXECUTE_UP: u32 = 0x7;
+
+        let listener = Listener::create(&unique_name()).unwrap();
+        let mut sacl: *mut ACL = std::ptr::null_mut();
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        // SAFETY: our own handle; the descriptor is freed below and the SACL points into it.
+        let status = unsafe {
+            GetSecurityInfo(
+                listener.pipe.handle,
+                SE_KERNEL_OBJECT,
+                LABEL_SECURITY_INFORMATION,
+                None,
+                None,
+                None,
+                Some(&mut sacl),
+                Some(&mut descriptor),
+            )
+        };
+        assert!(status.is_ok(), "{status:?}");
+        assert!(!sacl.is_null(), "no label at all");
+        // SAFETY: a valid SACL from GetSecurityInfo; ACE 0 is the label, laid out as
+        // SYSTEM_MANDATORY_LABEL_ACE (header, mask, then the SID).
+        let (kind, mask, sid) = unsafe {
+            let mut ace: *mut c_void = std::ptr::null_mut();
+            GetAce(sacl, 0, &mut ace).unwrap();
+            let ace = ace as *const windows::Win32::Security::SYSTEM_MANDATORY_LABEL_ACE;
+            let mut text = PWSTR::null();
+            ConvertSidToStringSidW(PSID(std::ptr::addr_of!((*ace).SidStart) as _), &mut text)
+                .unwrap();
+            let sid = text.to_string().unwrap();
+            LocalFree(HLOCAL(text.0 as *mut c_void));
+            LocalFree(HLOCAL(descriptor.0));
+            ((*ace).Header.AceType, (*ace).Mask, sid)
+        };
+        assert_eq!(kind, SYSTEM_MANDATORY_LABEL_ACE_TYPE);
+        assert_eq!(mask, NO_WRITE_UP_NO_READ_UP_NO_EXECUTE_UP);
+        assert_eq!(sid, own_integrity_sid().unwrap());
+    }
+
+    /// #123: a Low integrity process of the same user can't open the pipe, not even for reading
+    /// (which the default label allowed), so it can't take the one instance. The open runs on
+    /// a thread impersonating a Low integrity copy of our own token.
+    #[test]
+    fn a_low_integrity_client_cannot_open_the_pipe() {
+        let name = unique_name();
+        let _listener = Listener::create(&name).unwrap();
+        let low = thread::spawn({
+            let name = name.clone();
+            move || with_low_integrity(|| open_for_read(&name))
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            low.err().and_then(|e| e.raw_os_error()),
+            Some(5),
+            "access denied for a Low integrity reader"
+        );
+        // Our own level still gets in, so the denial above is the label's doing.
+        assert!(open_for_read(&name).is_ok());
+    }
+
+    fn open_for_read(name: &str) -> io::Result<()> {
+        // SAFETY: valid name; the handle is closed at once.
+        let handle = unsafe {
+            CreateFileW(
+                &HSTRING::from(name),
+                FILE_GENERIC_READ.0,
+                FILE_SHARE_NONE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAGS_AND_ATTRIBUTES(0),
+                None,
+            )
+        }
+        .map_err(win)?;
+        // SAFETY: opened above.
+        let _ = unsafe { CloseHandle(handle) };
+        Ok(())
+    }
+
+    /// Run `f` on this thread as a Low integrity copy of our token, then revert.
+    fn with_low_integrity<T>(f: impl FnOnce() -> T) -> T {
+        use windows::Win32::Security::Authorization::ConvertStringSidToSidW;
+        use windows::Win32::Security::{
+            DuplicateTokenEx, RevertToSelf, SecurityImpersonation, SetTokenInformation,
+            TokenImpersonation, PSID, TOKEN_ADJUST_DEFAULT, TOKEN_DUPLICATE, TOKEN_IMPERSONATE,
+            TOKEN_MANDATORY_LABEL,
+        };
+        use windows::Win32::System::Threading::SetThreadToken;
+        const SE_GROUP_INTEGRITY: u32 = 0x20;
+
+        // SAFETY: every handle and SID is released below; impersonation is reverted before
+        // returning.
+        unsafe {
+            let mut own = HANDLE::default();
+            OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE, &mut own).unwrap();
+            let mut token = HANDLE::default();
+            DuplicateTokenEx(
+                own,
+                TOKEN_IMPERSONATE | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT,
+                None,
+                SecurityImpersonation,
+                TokenImpersonation,
+                &mut token,
+            )
+            .unwrap();
+            let _ = CloseHandle(own);
+            let mut low = PSID::default();
+            ConvertStringSidToSidW(&HSTRING::from("S-1-16-4096"), &mut low).unwrap();
+            let label = TOKEN_MANDATORY_LABEL {
+                Label: SID_AND_ATTRIBUTES {
+                    Sid: low,
+                    Attributes: SE_GROUP_INTEGRITY,
+                },
+            };
+            SetTokenInformation(
+                token,
+                TokenIntegrityLevel,
+                std::ptr::addr_of!(label).cast(),
+                std::mem::size_of::<TOKEN_MANDATORY_LABEL>() as u32
+                    + windows::Win32::Security::GetLengthSid(low),
+            )
+            .unwrap();
+            SetThreadToken(None, token).unwrap();
+            let result = f();
+            RevertToSelf().unwrap();
+            let _ = CloseHandle(token);
+            LocalFree(HLOCAL(low.0));
+            result
+        }
+    }
+
+    /// The app drops a client that isn't its engine; a client waiting for the busy instance
+    /// gets in right after.
+    #[test]
+    fn a_dropped_client_makes_room_for_a_waiting_one() {
+        let name = unique_name();
+        let listener = Listener::create(&name).unwrap();
+        let first = Pipe::connect(&name).unwrap();
+        let server = listener.accept(Duration::from_secs(5)).unwrap();
+        let second = thread::spawn({
+            let name = name.clone();
+            move || Pipe::connect_within(&name, Duration::from_secs(5))
+        });
+        thread::sleep(Duration::from_millis(100));
+        let listener = server.disconnect().unwrap();
+        let server = listener.accept(Duration::from_secs(5)).unwrap();
+        let second = second.join().unwrap().unwrap();
+        frame::write(&mut &server, &ToEngine::Shutdown).unwrap();
+        let got: ToEngine = frame::decode(&frame::read(&mut &second).unwrap().unwrap()).unwrap();
+        assert_eq!(got, ToEngine::Shutdown);
+        assert!(
+            frame::read(&mut &first).is_err() || frame::read(&mut &first).unwrap().is_none(),
+            "the dropped client's end no longer works"
+        );
+    }
+
+    #[test]
+    fn connecting_to_a_busy_pipe_gives_up_at_the_deadline() {
+        let name = unique_name();
+        let listener = Listener::create(&name).unwrap();
+        let _first = Pipe::connect(&name).unwrap();
+        let _server = listener.accept(Duration::from_secs(5)).unwrap();
+        let started = std::time::Instant::now();
+        let err = Pipe::connect_within(&name, Duration::from_millis(200))
+            .err()
+            .unwrap();
+        assert_eq!(err.raw_os_error(), Some(ERROR_PIPE_BUSY.0 as i32));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn a_fresh_name_is_found() {
+        let (name, _listener) = Listener::create_unique().unwrap();
+        assert!(name.starts_with(r"\\.\pipe\unflub-engine-"));
+        assert!(Pipe::connect(&name).is_ok());
     }
 }
