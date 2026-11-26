@@ -90,8 +90,8 @@ pub enum Observed {
     InputInterference {
         active: bool,
     },
-    /// The engine couldn't install the keyboard hook (or never got ready) and is retried with
-    /// backoff; `!active`: a later start hooked the keyboard.
+    /// Autocorrect is enabled and the engine has no working session yet.
+    /// Cleared after readiness or an intentional pause.
     HookUnavailable {
         active: bool,
     },
@@ -294,11 +294,16 @@ mod host {
                 failures: 0,
                 next_start: None,
             };
+            let startup_observer = supervisor.observer.clone();
+            let enabled = supervisor.settings.enabled;
             let thread = std::thread::Builder::new()
                 .name("unflub-supervisor".into())
                 .spawn(move || supervisor.run(rx))
                 .map_err(|e| eprintln!("autocorrect: can't start the supervisor: {e}"))
                 .ok();
+            if enabled && thread.is_none() {
+                startup_observer(Observed::HookUnavailable { active: true });
+            }
             Self { tx, thread }
         }
 
@@ -347,7 +352,7 @@ mod host {
         launch: Option<Launch>,
         /// A started engine must hook the keyboard (false for `--test-ipc` test engines).
         expects_hook: bool,
-        /// The last start couldn't hook the keyboard; told to the observer on every change.
+        /// The engine has no working session; told to the observer on every change.
         hook_unavailable: bool,
         undo_counts: Arc<UndoCounts>,
         settings: Settings,
@@ -432,6 +437,7 @@ mod host {
             if self.running.is_some() || self.next_start.is_some() {
                 return;
             }
+            self.set_hook_unavailable(true);
             match self.spawn() {
                 Ok(running) => self.running = Some(running),
                 Err(e) => {
@@ -467,6 +473,7 @@ mod host {
             let Some(mut running) = self.running.take() else {
                 return;
             };
+            self.set_hook_unavailable(true);
             running.pipe.cancel_io();
             let _ = running.child.kill();
             let _ = running.child.wait();
@@ -599,7 +606,12 @@ mod host {
             let Some(mut running) = self.running.take() else {
                 return;
             };
+            self.set_hook_unavailable(true);
             let status = wait_for(&mut running.child, STOP_TIMEOUT);
+            if status.is_none() {
+                let _ = running.child.kill();
+                let _ = running.child.wait();
+            }
             if let Some(reader) = running.reader.take() {
                 let _ = reader.join();
             }
@@ -959,11 +971,22 @@ mod tests {
             |_| {},
         );
         let wait = Duration::from_secs(30);
+        let expect_availability = |active| {
+            assert_eq!(
+                rx.recv_timeout(wait),
+                Ok(Observed::HookUnavailable { active })
+            );
+        };
+        expect_availability(true); // Startup, before Ready.
+        expect_availability(false); // Ready in hook-free test mode.
+        expect_availability(true); // Pipe closed. The tray must show the failure.
         assert_eq!(rx.recv_timeout(wait), Ok(Observed::EngineCrashed));
         assert!(marker.exists(), "the panic left its marker");
         std::fs::remove_file(&marker).unwrap();
 
         let since = Instant::now();
+        expect_availability(false); // The restarted engine reported Ready.
+        expect_availability(true); // It crashed again.
         assert_eq!(rx.recv_timeout(wait), Ok(Observed::EngineCrashed));
         assert!(
             since.elapsed() >= Duration::from_millis(900),
@@ -971,11 +994,12 @@ mod tests {
             since.elapsed()
         );
 
-        // Pause: the pending restart (2 s backoff now) is dropped.
+        // Pause drops the pending restart and clears the warning.
         host.apply(&Settings {
             enabled: false,
             ..Settings::default()
         });
+        expect_availability(false);
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(4)),
             Err(mpsc::RecvTimeoutError::Timeout)
