@@ -260,6 +260,10 @@ pub enum HookEvent {
     /// pass straight through and nothing is corrected. `!active`: a probe came back; back to
     /// normal. See [`inject::Pipeline`].
     InputInterference { active: bool },
+    /// Input went to an elevated (administrator) window, which our hooks can't see or fix
+    /// (#132). Reported at most once per hook, by the watchdog, which notices the input it
+    /// missed.
+    ElevatedWindow,
 }
 
 /// [`HookEvent::HooksReinstalled`] reasons.
@@ -653,6 +657,7 @@ fn run(
     };
     let mut watchdog = Watchdog::new(tick_now());
     let mut resumes = ResumeGate::default();
+    let mut told_elevated = false;
 
     // SAFETY: standard message loop; hook callbacks are delivered inside GetMessageW. Thread
     // messages (no window) are ours: injector results, the stale-batch and watchdog timers,
@@ -679,11 +684,23 @@ fn run(
                         let input = last_input();
                         let mut missed =
                             hooks_missed_input(input, newest(Some(last_callback()), excused()));
-                        if missed && input_hidden_from_hooks() {
+                        let hidden = if missed {
+                            input_hidden_from_hooks()
+                        } else {
+                            Hidden::No
+                        };
+                        if hidden != Hidden::No {
                             // Typed into an elevated window or on the secure desktop: our
                             // hooks were never going to see it (#135).
                             excuse(input);
                             missed = false;
+                        }
+                        if hidden == Hidden::Elevated && !told_elevated {
+                            // Once per hook, so the app can say why nothing is fixed there.
+                            told_elevated = true;
+                            with_state(|s| {
+                                let _ = s.events.send(HookEvent::ElevatedWindow);
+                            });
                         }
                         if watchdog.should_reinstall(now, missed, callback_seen()) {
                             hooks.reinstall(REINSTALL_WATCHDOG);
@@ -799,12 +816,26 @@ fn newest(a: Option<u32>, b: Option<u32>) -> u32 {
 /// app, UIPI), nor on the secure desktop (UAC prompt, lock screen, Ctrl+Alt+Del), where there
 /// is no foreground window for us to read. `GetLastInputInfo` counts that input all the same,
 /// which made the watchdog reinstall the hooks over and over (#135).
-fn input_hidden_from_hooks() -> bool {
+fn input_hidden_from_hooks() -> Hidden {
     let (hwnd, pid) = focus::foreground();
     if hwnd.is_invalid() || pid == 0 {
-        return true;
+        return Hidden::SecureDesktop;
     }
-    hidden_by_integrity(integrity::of_process(pid), integrity::own())
+    if hidden_by_integrity(integrity::of_process(pid), integrity::own()) {
+        Hidden::Elevated
+    } else {
+        Hidden::No
+    }
+}
+
+/// Where input goes that our hooks can't see ([`input_hidden_from_hooks`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hidden {
+    No,
+    /// No foreground window of ours to read: UAC prompt, lock screen, Ctrl+Alt+Del.
+    SecureDesktop,
+    /// A window of a higher integrity level (an administrator app), or one we can't query.
+    Elevated,
 }
 
 /// Input to a process of integrity level `foreground` is invisible to hooks of level `own`. A

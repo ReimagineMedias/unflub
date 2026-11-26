@@ -96,6 +96,8 @@ pub enum Observed {
     HookUnavailable {
         active: bool,
     },
+    /// The user typed into an administrator window, where the engine can't see or fix keys.
+    ElevatedWindow,
 }
 
 /// How long a started engine may take to report `Ready` before it counts as a failed start.
@@ -937,6 +939,7 @@ mod host {
                 FromEngine::InputInterference { active } => {
                     observer(Observed::InputInterference { active })
                 }
+                FromEngine::ElevatedWindow => observer(Observed::ElevatedWindow),
                 FromEngine::Ready { hooked } => control(Control::Ready(hooked)),
                 FromEngine::Pong { nonce } => control(Control::Pong(nonce)),
                 FromEngine::Hello { .. } => {}

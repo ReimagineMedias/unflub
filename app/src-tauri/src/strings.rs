@@ -9,6 +9,9 @@ pub const TOOLTIP_INTERFERENCE: &str =
 /// Autocorrect has no working engine session; the supervisor keeps trying.
 pub const TOOLTIP_HOOK_UNAVAILABLE: &str =
     "unflub can't watch the keyboard right now and keeps trying";
+/// The user typed into an administrator window this session (#132): Windows keeps its keys
+/// from unflub.
+pub const TOOLTIP_ELEVATED: &str = "unflub (can't fix typing in administrator windows)";
 
 pub const MENU_AUTOCORRECT: &str = "Autocorrect";
 pub const MENU_PAUSE: &str = "Pause autocorrect";

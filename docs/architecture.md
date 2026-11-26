@@ -153,7 +153,10 @@ COM multithreaded apartment:
   never go to the Windows dictionary (no `ISpellChecker::Add`, a test enforces it): they are
   unflub's own personal words in its settings (see "Undo teaches" below).
 - **Elevated windows.** A normal process can't see keys typed into administrator windows or
-  inject into them, so unflub does nothing there.
+  inject into them, so unflub does nothing there. The hook watchdog notices input its hooks
+  missed while an elevated window had the foreground and reports it once per hook
+  (`ElevatedWindow`); the tray tooltip then reads "unflub (can't fix typing in administrator
+  windows)" for the rest of the session. Nothing pops up.
 - **Hook watchdog.** Windows can drop a low-level hook without a word (a callback that took too
   long, or sometimes across sleep or a locked session). Every 5 s the hook thread compares
   `GetLastInputInfo` with the time of its last keyboard or mouse callback; input more than 2 s

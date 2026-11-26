@@ -289,6 +289,9 @@ mod win {
             HookEvent::InputInterference { active: false } => {
                 eprintln!("our injected input comes back again: corrections resumed")
             }
+            HookEvent::ElevatedWindow => {
+                eprintln!("typing in an administrator window: unflub can't see or fix it there")
+            }
         }
     }
 }

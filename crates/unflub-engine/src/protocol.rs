@@ -141,6 +141,9 @@ pub enum FromEngine {
     InputInterference {
         active: bool,
     },
+    /// The user typed into an administrator (elevated) window, which the hook can't see or fix.
+    /// At most once per hook; the app shows a quiet hint. An older app skips it.
+    ElevatedWindow,
 }
 
 /// Fixed warning types the app may keep in its local log.
@@ -359,6 +362,7 @@ mod tests {
             },
             FromEngine::CorrectorPanicked,
             FromEngine::InputInterference { active: true },
+            FromEngine::ElevatedWindow,
         ] {
             round_trip(m);
         }
