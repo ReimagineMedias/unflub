@@ -238,6 +238,8 @@ mod host {
     const STOP_TIMEOUT: Duration = Duration::from_secs(3);
     /// How long the `Shutdown` message may wait for an engine that stopped reading.
     const SHUTDOWN_WRITE: Duration = Duration::from_millis(500);
+    const PING_EVERY: Duration = Duration::from_secs(15);
+    const MISSED_PINGS: u8 = 2;
 
     type Learned = Arc<Mutex<Box<dyn FnMut(String) + Send>>>;
 
@@ -250,6 +252,10 @@ mod host {
         Ready {
             generation: u64,
             hooked: bool,
+        },
+        Pong {
+            generation: u64,
+            nonce: u64,
         },
         Shutdown,
     }
@@ -352,6 +358,45 @@ mod host {
         }
     }
 
+    struct Heartbeat {
+        next: Instant,
+        nonce: u64,
+        waiting: bool,
+        missed: u8,
+    }
+
+    impl Heartbeat {
+        fn new(now: Instant) -> Self {
+            Self {
+                next: now + PING_EVERY,
+                nonce: 0,
+                waiting: false,
+                missed: 0,
+            }
+        }
+
+        /// Send the next probe, or end the session after consecutive missed replies.
+        fn probe(&mut self, now: Instant) -> Option<u64> {
+            self.next = now + PING_EVERY;
+            if self.waiting {
+                self.missed += 1;
+            }
+            if self.missed >= MISSED_PINGS {
+                return None;
+            }
+            self.nonce = self.nonce.wrapping_add(1);
+            self.waiting = true;
+            Some(self.nonce)
+        }
+
+        fn acknowledge(&mut self, nonce: u64) {
+            if self.waiting && nonce == self.nonce {
+                self.waiting = false;
+                self.missed = 0;
+            }
+        }
+    }
+
     struct Running {
         child: Child,
         pipe: Arc<Pipe>,
@@ -362,6 +407,7 @@ mod host {
         reader: Option<JoinHandle<()>>,
         /// It reported `Ready`.
         ready: bool,
+        heartbeat: Heartbeat,
     }
 
     struct Supervisor {
@@ -392,6 +438,7 @@ mod host {
         fn run(mut self, rx: Receiver<Cmd>) {
             loop {
                 self.converge();
+                self.probe_engine();
                 // Wake for a pending restart, or for a started engine that hasn't said it's
                 // ready.
                 let ready_by = self
@@ -399,7 +446,12 @@ mod host {
                     .as_ref()
                     .filter(|r| !r.ready)
                     .map(|r| r.started + READY_TIMEOUT);
-                let wake = super::next_wake(self.next_start, ready_by);
+                let ping_at = self
+                    .running
+                    .as_ref()
+                    .filter(|r| r.ready)
+                    .map(|r| r.heartbeat.next);
+                let wake = super::next_wake(super::next_wake(self.next_start, ready_by), ping_at);
                 let cmd = match wake {
                     Some(at) => {
                         match rx.recv_timeout(at.saturating_duration_since(Instant::now())) {
@@ -441,6 +493,13 @@ mod host {
                     }
                     Cmd::Exited(generation) => self.on_exit(generation),
                     Cmd::Ready { generation, hooked } => self.on_ready(generation, hooked),
+                    Cmd::Pong { generation, nonce } => {
+                        if let Some(r) =
+                            self.running.as_mut().filter(|r| r.generation == generation)
+                        {
+                            r.heartbeat.acknowledge(nonce);
+                        }
+                    }
                     Cmd::Shutdown => break,
                 }
             }
@@ -511,6 +570,24 @@ mod host {
             self.next_start = Some(Instant::now() + super::backoff(self.failures));
         }
 
+        fn probe_engine(&mut self) {
+            let now = Instant::now();
+            let Some(r) = self
+                .running
+                .as_mut()
+                .filter(|r| r.ready && now >= r.heartbeat.next)
+            else {
+                return;
+            };
+            let answered = r.heartbeat.probe(now).is_some_and(|nonce| {
+                frame::write(&mut &*r.pipe, &ToEngine::Ping { nonce }).is_ok()
+            });
+            if !answered {
+                eprintln!("autocorrect: engine heartbeat failed; restarting");
+                self.end_session();
+            }
+        }
+
         fn startup_cancellation(&self) -> Cancellation<'_> {
             Cancellation::new(&self.startup_epoch, self.applied_epoch)
         }
@@ -579,8 +656,12 @@ mod host {
                 std::thread::Builder::new()
                     .name("unflub-engine-io".into())
                     .spawn(move || {
-                        read_engine(&pipe, &observer, &learned, &words, &|hooked| {
-                            let _ = tx.send(Cmd::Ready { generation, hooked });
+                        read_engine(&pipe, &observer, &learned, &words, &|control| {
+                            let cmd = match control {
+                                Control::Ready(hooked) => Cmd::Ready { generation, hooked },
+                                Control::Pong(nonce) => Cmd::Pong { generation, nonce },
+                            };
+                            let _ = tx.send(cmd);
                         });
                         let _ = tx.send(Cmd::Exited(generation));
                     })?
@@ -593,6 +674,7 @@ mod host {
                 started: Instant::now(),
                 reader: Some(reader),
                 ready: false,
+                heartbeat: Heartbeat::new(Instant::now()),
             })
         }
 
@@ -602,6 +684,7 @@ mod host {
                 return;
             };
             running.ready = true;
+            running.heartbeat = Heartbeat::new(Instant::now());
             if !super::hook_start_failed(self.expects_hook, hooked) {
                 self.set_hook_unavailable(false);
                 return;
@@ -687,6 +770,26 @@ mod host {
         }
     }
 
+    #[cfg(test)]
+    #[test]
+    fn heartbeat_restarts_after_two_misses_and_ignores_stale_pongs() {
+        let now = Instant::now();
+        let mut heartbeat = Heartbeat::new(now);
+        assert_eq!(heartbeat.next, now + PING_EVERY);
+        let first = heartbeat.probe(heartbeat.next).unwrap();
+        heartbeat.probe(heartbeat.next).unwrap();
+        heartbeat.acknowledge(first);
+        assert_eq!(heartbeat.probe(heartbeat.next), None);
+
+        let mut heartbeat = Heartbeat::new(now);
+        heartbeat.probe(heartbeat.next).unwrap();
+        let second = heartbeat.probe(heartbeat.next).unwrap();
+        heartbeat.acknowledge(second);
+        let third = heartbeat.probe(heartbeat.next).unwrap();
+        assert_ne!(second, third);
+        assert!(heartbeat.probe(heartbeat.next).is_some());
+    }
+
     /// Wait up to `timeout` for the child. `None` if it is still running.
     fn wait_for(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
         let deadline = Instant::now() + timeout;
@@ -701,16 +804,22 @@ mod host {
         }
     }
 
+    enum Control {
+        Ready(bool),
+        Pong(u64),
+    }
+
     /// Hand the engine's messages to the app until its pipe closes.
     fn read_engine(
         pipe: &Pipe,
         observer: &Observer,
         learned: &Learned,
         words: &AtomicU64,
-        ready: &dyn Fn(bool),
+        control: &dyn Fn(Control),
     ) {
         loop {
-            let body = match frame::read(&mut &*pipe) {
+            let body = match session::read_frame(pipe, unflub_engine::protocol::FRAME_READ_TIMEOUT)
+            {
                 Ok(Some(body)) => body,
                 Ok(None) | Err(_) => return,
             };
@@ -785,7 +894,8 @@ mod host {
                 FromEngine::InputInterference { active } => {
                     observer(Observed::InputInterference { active })
                 }
-                FromEngine::Ready { hooked } => ready(hooked),
+                FromEngine::Ready { hooked } => control(Control::Ready(hooked)),
+                FromEngine::Pong { nonce } => control(Control::Pong(nonce)),
                 FromEngine::Hello { .. } => {}
             }
         }
