@@ -1158,11 +1158,15 @@ unsafe extern "system" fn win_event_proc(
     });
 }
 
-/// Keyboard layout of the foreground window's thread.
+/// Keyboard layout of the thread that owns the focused window, which is the one that turns
+/// keys into text. It isn't always the foreground window's thread: a child window can belong
+/// to another thread (a plug-in, an embedded editor) with its own layout. Falls back to the
+/// foreground window when nothing has focus.
 fn foreground_layout() -> HKL {
     let (hwnd, _) = focus::foreground();
+    let focused = focus::focus_window(hwnd);
     // SAFETY: trivial queries.
-    unsafe { GetKeyboardLayout(GetWindowThreadProcessId(hwnd, None)) }
+    unsafe { GetKeyboardLayout(GetWindowThreadProcessId(focused, None)) }
 }
 
 /// Ctrl, Alt, Shift or Win held: a Backspace with one of these isn't a plain second Backspace.
