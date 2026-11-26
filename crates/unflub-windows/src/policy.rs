@@ -70,9 +70,17 @@ impl Gate {
 ///
 /// Letters that may belong to a password are overwritten before they are let go (the buffer
 /// never grows past [`PendingWord::MAX`], so no copy is left behind by a reallocation either).
-#[derive(Debug)]
 pub struct PendingWord {
     letters: Vec<char>,
+}
+
+/// Shows how many letters are held, never which: they may be a password.
+impl std::fmt::Debug for PendingWord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingWord")
+            .field("held", &self.letters.len())
+            .finish()
+    }
 }
 
 impl Default for PendingWord {
@@ -502,8 +510,13 @@ mod tests {
             .collect();
         assert_eq!(old, vec!['\0'; n]);
 
-        let w = PendingWord::default();
+        let mut w = PendingWord::default();
         assert_eq!(w.letters.capacity(), PendingWord::MAX, "never reallocates");
+        // Debug output never shows the letters.
+        w.on_key(Key::Char('q'), FieldCheck::Pending);
+        w.on_key(Key::Char('z'), FieldCheck::Pending);
+        let shown = format!("{w:?}");
+        assert_eq!(shown, "PendingWord { held: 2 }");
     }
 
     #[test]
