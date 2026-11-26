@@ -3,7 +3,8 @@
 //! Threads: the main thread reads the pipe; `unflub-engine` owns the stack below (it joins the
 //! COM MTA for the spell checker) and writes to the pipe; `unflub-events` forwards hook events
 //! to it. Plus the adapter's own threads (`unflub-hook`, `unflub-inject`, `unflub-uia`,
-//! `unflub-spell`, `unflub-overlay`, `unflub-caret`).
+//! `unflub-spell`, `unflub-overlay`, `unflub-caret`, and `unflub-announce` while a screen
+//! reader runs).
 //!
 //! - Engine settings reach the hook thread through `LiveEngine` at the next key. Excluded apps
 //!   are in the core `Config`; the hook's own exclude list holds only the app's exe, so keys
@@ -28,6 +29,7 @@ use unflub_engine::protocol::{
     EngineSettings, FixSource, FromEngine, ReinstallReason, ToEngine, Trigger,
 };
 use unflub_engine::{frame, session};
+use unflub_windows::announce::{self, Announcer, AnnouncerHandle};
 use unflub_windows::stats::UsageCounters;
 use unflub_windows::{
     Correction, Hook, HookEvent, HookOptions, LiveConfig, LiveEngine, Overlay, OverlayHandle,
@@ -96,6 +98,8 @@ pub fn run(args: &Args) -> i32 {
         out,
         running: None,
         pill: None,
+        announcer: None,
+        last_fix_private: true,
         test_engine: None,
         words_checked: Arc::default(),
         usage: Arc::default(),
@@ -165,6 +169,10 @@ struct State {
     out: Outbox,
     running: Option<Running>,
     pill: Option<(OverlayHandle, PillConfig)>,
+    /// Screen reader announcements, started at the first one that may go out.
+    announcer: Option<AnnouncerHandle>,
+    /// The last fix was in a terminal or an unknown app, so its "Undo?" prompt stays quiet too.
+    last_fix_private: bool,
     /// `--test-ipc` builds the engine (so the index and settings are exercised) without a hook.
     test_engine: Option<Engine>,
     words_checked: Arc<AtomicU64>,
@@ -276,6 +284,9 @@ impl State {
             self.stop();
         }
         let s = self.settings.as_ref().expect("checked above");
+        if !s.announce {
+            self.announcer = None;
+        }
         if let Some(r) = &self.running {
             r.config.set(s.core.clone());
         } else if s.core.enabled {
@@ -337,6 +348,7 @@ impl State {
 
     fn on_hook_event(&mut self, event: HookEvent) {
         if let Some(correction) = Correction::from_hook_event(&event) {
+            self.announce(&event, &correction);
             // The OS may have switched dark mode or accent since the last pill.
             self.sync_pill();
             let pill = self.pill.is_some();
@@ -421,6 +433,34 @@ impl State {
         }
     }
 
+    /// Tell a running screen reader about a fix, an "Undo?" prompt or an undo. This is the engine
+    /// thread; the announcer thread raises it, so neither the hook nor this thread waits on it.
+    fn announce(&mut self, event: &HookEvent, correction: &Correction) {
+        let Some(s) = &self.settings else {
+            return;
+        };
+        let private = match event {
+            HookEvent::Corrected { app, .. } | HookEvent::Undone { app, .. } => {
+                !unflub_windows::policy::keep_words(app.as_deref())
+            }
+            // It asks about the last fix.
+            _ => self.last_fix_private,
+        };
+        if matches!(event, HookEvent::Corrected { .. }) {
+            self.last_fix_private = private;
+        }
+        if !announce::should_announce(s.announce, announce::screen_reader_running(), private) {
+            return;
+        }
+        let text = announce::message(correction, s.core.undo_mode);
+        if self.announcer.is_none() {
+            self.announcer = Announcer::spawn().ok();
+        }
+        if let Some(announcer) = &self.announcer {
+            announcer.say(text);
+        }
+    }
+
     /// Unhook and close the pill.
     fn stop(&mut self) {
         if let Some(running) = self.running.take() {
@@ -429,6 +469,7 @@ impl State {
         if let Some((overlay, _)) = self.pill.take() {
             overlay.shutdown();
         }
+        self.announcer = None;
     }
 }
 

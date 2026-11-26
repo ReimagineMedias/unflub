@@ -503,6 +503,9 @@ export default function App() {
                 <Slider label={t("appearance.duration")} min={300} max={5000} step={100} value={s.pillDurationMs}
                   onChange={(v) => update({ pillDurationMs: v }, true)} onCommit={flush} format={(v) => t("appearance.duration.value", { s: (v / 1000).toFixed(1) })} />
               </Row>
+              <Row label={t("appearance.announce")} hint={t("appearance.announce.hint")}>
+                <Switch label={t("appearance.announce")} checked={s.announceFixes} onChange={(v) => update({ announceFixes: v })} />
+              </Row>
             </div>
           </>
         )}
