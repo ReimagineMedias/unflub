@@ -1,0 +1,16 @@
+class	checker_flags	known_fix	input
+names	theo,noor,ansari		we met theo and noor near the station
+names	nguyen,gaelle		please send this to Gaelle Nguyen today
+names	matias,sebastien		so matias and sebastien are here
+email	teh,adn		please write to teh.adn@example.com today
+email	recieve,teh	recieve>receive	cc recieve+teh@example.org on the reply
+url	teh,adn		see https://example.com/teh/adn now
+url	recieve,teh		open https://example.org/recieve?tag=teh here
+chat	tho,wth,smth		say smth tho wth
+chat	lmk,omw,idk		lmk when you know idk if they are omw
+chat	lowkey,yeet,sus		ok that is lowkey sus but yeet it
+french	bonjour,merci,café	merci>mercy	elle dit bonjour et merci au café
+french	d'accord,c'est		on est d'accord et c'est fini
+spanish	hola,mañana,adiós		hola mañana y adiós
+spanish	qué,canción		qué buena canción
+brands	lyft,wechat,interac		so lyft and wechat use interac
