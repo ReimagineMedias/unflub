@@ -6,7 +6,7 @@
 
 use crate::settings::{EngineMode, Settings};
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use unflub_core::{Action, Context, Engine, Key};
 
 #[derive(Default)]
@@ -74,16 +74,26 @@ fn key_of(key: &str) -> Option<Key> {
 }
 
 impl Tour {
+    fn lock_engine(&self) -> MutexGuard<'_, Option<Engine>> {
+        self.0.lock().unwrap_or_else(|poisoned| {
+            let mut engine = poisoned.into_inner();
+            // Discard any partially applied key and clear the poison so later keys can proceed.
+            *engine = None;
+            self.0.clear_poison();
+            engine
+        })
+    }
+
     /// A fresh practice box.
     pub fn reset(&self, settings: &Settings) {
-        *self.0.lock().unwrap() = Some(engine_for(settings));
+        *self.lock_engine() = Some(engine_for(settings));
     }
 
     pub fn key(&self, settings: &Settings, key: &str) -> TourAction {
         let Some(key) = key_of(key) else {
             return TourAction::Pass;
         };
-        let mut guard = self.0.lock().unwrap();
+        let mut guard = self.lock_engine();
         let engine = guard.get_or_insert_with(|| engine_for(settings));
         let action = engine.on_key(key, &Context::default());
         // Learned words stay in this engine; the real dictionary never hears about them.
@@ -194,6 +204,24 @@ mod tests {
         let mut again = String::new();
         type_into(&tour, &s, "teh ", &mut again);
         assert_eq!(again, "the ", "a fresh box forgets");
+    }
+
+    #[test]
+    fn a_poisoned_practice_engine_is_rebuilt() {
+        let tour = Tour::default();
+        let settings = Settings::default();
+        tour.key(&settings, "x");
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = tour.0.lock().unwrap();
+            panic!("simulated practice failure");
+        }));
+        assert!(failed.is_err());
+        assert!(tour.0.is_poisoned());
+
+        let mut text = String::new();
+        type_into(&tour, &settings, "teh ", &mut text);
+        assert_eq!(text, "the ");
+        assert!(!tour.0.is_poisoned());
     }
 
     #[test]
