@@ -11,15 +11,32 @@ use crate::protocol::{FromEngine, ToEngine, PROTOCOL};
 /// How long either side waits for the other during the handshake.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How many clients that aren't the engine the app drops in one handshake before it gives up.
+pub const MAX_IMPOSTORS: u32 = 3;
+
+/// A finished handshake on the app's side.
+pub struct Served {
+    pub pipe: Pipe,
+    /// The engine's version.
+    pub version: String,
+    /// Clients that took the pipe first and were dropped because they weren't the engine.
+    pub impostors: u32,
+}
+
 /// The app's side: accept the engine `engine_pid`, check who it is and what it speaks, and
 /// welcome it. Returns the pipe and the engine's version.
+///
+/// A client with another process id is dropped and the pipe listens again, so another process
+/// that grabs the one instance first can't keep the engine out (#123); the engine waits for
+/// the busy pipe ([`Pipe::connect_within`]). After [`MAX_IMPOSTORS`] such clients, or one
+/// followed by no engine before the deadline, the start fails with `PermissionDenied`.
 pub fn serve(
     listener: Listener,
     engine_pid: u32,
     app_exe: &str,
     timeout: Duration,
 ) -> io::Result<(Pipe, String)> {
-    serve_inner(listener, engine_pid, app_exe, timeout, None)
+    serve_inner(listener, engine_pid, app_exe, timeout, None).map(|s| (s.pipe, s.version))
 }
 
 /// Like [serve], but interrupt a pending connection or Hello when the app stops startup.
@@ -29,7 +46,7 @@ pub fn serve_cancellable(
     app_exe: &str,
     timeout: Duration,
     cancellation: Cancellation<'_>,
-) -> io::Result<(Pipe, String)> {
+) -> io::Result<Served> {
     serve_inner(listener, engine_pid, app_exe, timeout, Some(cancellation))
 }
 
@@ -39,16 +56,29 @@ fn serve_inner(
     app_exe: &str,
     timeout: Duration,
     cancellation: Option<Cancellation<'_>>,
-) -> io::Result<(Pipe, String)> {
+) -> io::Result<Served> {
     let deadline = Instant::now() + timeout;
-    let pipe = listener.accept_with_cancel(timeout, cancellation)?;
-    let client = pipe.client_pid()?;
-    if client != engine_pid {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("pipe client is process {client}, not the engine {engine_pid}"),
-        ));
-    }
+    let mut listener = listener;
+    let mut impostors = 0;
+    let pipe = loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let pipe =
+            match listener.accept_with_cancel(left.max(Duration::from_millis(1)), cancellation) {
+                Ok(pipe) => pipe,
+                Err(e) if impostors > 0 && e.kind() == io::ErrorKind::TimedOut => {
+                    return Err(impostor_error(impostors, engine_pid))
+                }
+                Err(e) => return Err(e),
+            };
+        if pipe.client_pid()? == engine_pid {
+            break pipe;
+        }
+        impostors += 1;
+        if impostors >= MAX_IMPOSTORS {
+            return Err(impostor_error(impostors, engine_pid));
+        }
+        listener = pipe.disconnect()?;
+    };
     let version = match read_until(&pipe, deadline, cancellation)? {
         FromEngine::Hello { protocol, version } if protocol == PROTOCOL => version,
         FromEngine::Hello { protocol, version } => {
@@ -67,14 +97,25 @@ fn serve_inner(
         Some(cancellation) => frame::write(&mut pipe.cancellable_writer(cancellation), &welcome)?,
         None => frame::write(&mut &pipe, &welcome)?,
     }
-    Ok((pipe, version))
+    Ok(Served {
+        pipe,
+        version,
+        impostors,
+    })
+}
+
+fn impostor_error(impostors: u32, engine_pid: u32) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!("{impostors} pipe clients were not the engine {engine_pid}"),
+    )
 }
 
 /// The engine's side: connect, check the server is the app (`app_pid`), say hello and wait
 /// for the welcome. Returns the pipe and the app's executable name.
 pub fn join(name: &str, app_pid: u32, timeout: Duration) -> io::Result<(Pipe, String)> {
     let deadline = Instant::now() + timeout;
-    let pipe = Pipe::connect(name)?;
+    let pipe = Pipe::connect_within(name, timeout)?;
     let server = pipe.server_pid()?;
     if server != app_pid {
         return Err(io::Error::new(
@@ -180,13 +221,46 @@ mod tests {
         let name = unique_name();
         let listener = Listener::create(&name).unwrap();
         let engine = thread::spawn(move || join(&name, std::process::id(), T));
-        // We are the client, but we claim to have spawned process 1.
-        let err = serve(listener, 1, "unflub.exe", T).err().unwrap();
+        // We are the client, but we claim to have spawned process 1. The impostor is dropped
+        // and no engine follows before the deadline.
+        let err = serve(listener, 1, "unflub.exe", Duration::from_millis(500))
+            .err()
+            .unwrap();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         assert!(
             engine.join().unwrap().is_err(),
             "no welcome for an impostor"
         );
+    }
+
+    /// #123: a process that keeps grabbing the pipe is dropped each time, and the start fails
+    /// after a few of them rather than waiting out the deadline.
+    #[test]
+    fn repeated_impostors_end_the_attempt() {
+        let name = unique_name();
+        let listener = Listener::create(&name).unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let squatter = thread::spawn({
+            let stop = stop.clone();
+            move || {
+                let mut held = Vec::new();
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(pipe) = Pipe::connect_within(&name, Duration::from_millis(200)) {
+                        held.push(pipe);
+                    }
+                }
+                held.len()
+            }
+        });
+        let started = Instant::now();
+        let err = serve(listener, 1, "unflub.exe", T).err().unwrap();
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "didn't wait for the deadline"
+        );
+        assert_eq!(squatter.join().unwrap() as u32, MAX_IMPOSTORS);
     }
 
     #[test]

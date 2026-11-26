@@ -222,7 +222,7 @@ mod host {
     use std::time::{Duration, Instant};
 
     use unflub_engine::job::KillOnClose;
-    use unflub_engine::pipe::{self, Cancellation, Listener, Pipe};
+    use unflub_engine::pipe::{Cancellation, Listener, Pipe};
     use unflub_engine::protocol::{FromEngine, ToEngine};
     use unflub_engine::{frame, session};
 
@@ -627,8 +627,7 @@ mod host {
                 .launch
                 .as_ref()
                 .ok_or_else(|| std::io::Error::other("no engine executable"))?;
-            let name = pipe::unique_name();
-            let listener = Listener::create(&name)?;
+            let (name, listener) = Listener::create_unique()?;
             let mut command = Command::new(&launch.exe);
             command
                 .arg("--pipe")
@@ -653,8 +652,16 @@ mod host {
                 session::HANDSHAKE_TIMEOUT,
                 self.startup_cancellation(),
             ) {
-                Ok((pipe, _version)) => Arc::new(pipe),
+                Ok(served) => {
+                    if served.impostors > 0 {
+                        // Another process took the pipe first and was dropped (#123).
+                        diagnostics::record(Event::PipeImpostors(served.impostors));
+                    }
+                    Arc::new(served.pipe)
+                }
                 Err(e) => {
+                    // Too many impostors, or one and then no engine, arrive as
+                    // `EngineStartupFailed(PermissionDenied)` and the usual backoff.
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(e);

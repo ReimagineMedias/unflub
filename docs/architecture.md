@@ -205,11 +205,14 @@ runs it on every OS as its own step, "No network code in the engine".
 
 **The pipe.** The app creates `\\.\pipe\unflub-engine-<pid>-<64 random bits>` as the only
 instance of that name (`FILE_FLAG_FIRST_PIPE_INSTANCE`), with a protected DACL that grants
-access to the current user's SID alone, and `PIPE_REJECT_REMOTE_CLIENTS`. It starts the engine
-with that name and its own pid, then accepts one client and drops it unless
-`GetNamedPipeClientProcessId` is the pid it spawned; the engine checks
-`GetNamedPipeServerProcessId` the same way. I/O is overlapped, so a pending read never blocks a
-write on the same handle.
+access to the current user's SID alone, a mandatory label at the app's own integrity level
+(`S:(ML;;NWNRNX;;;<level>)`, so no lower-integrity process can even open it for reading), and
+`PIPE_REJECT_REMOTE_CLIENTS`. Any process can list pipe names, so the random part keeps no
+secret. It starts the engine with that name and its own pid, then accepts a client and drops it
+unless `GetNamedPipeClientProcessId` is the pid it spawned, listening again for the engine
+(which waits while the one instance is busy); after three such clients the start fails and the
+usual backoff applies. The engine checks `GetNamedPipeServerProcessId` the same way. I/O is
+overlapped, so a pending read never blocks a write on the same handle.
 
 **Messages** (`crates/unflub-engine/src/protocol.rs`) are a 4-byte little-endian length and a
 JSON body, at most 4 MB. JSON rather than bincode: messages are rare, so speed doesn't matter,
