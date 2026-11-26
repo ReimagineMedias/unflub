@@ -110,6 +110,10 @@ export interface RemoteMessage {
 
 export type CrashAnswer = "send" | "dont-send" | "always-send";
 
+/** The longest entries the window accepts. Keep in step with MAX_*_CHARS in src-tauri/src/settings.rs
+ * (a test there reads this line). */
+export const LIMITS = { word: 64, replacement: 256, app: 260 } as const;
+
 export const defaultSettings: Settings = {
   enabled: true,
   startAtLogin: true,

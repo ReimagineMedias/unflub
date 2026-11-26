@@ -2,6 +2,7 @@ import { useId, useState, type ReactNode } from "react";
 import { openExternal } from "./api";
 import { t } from "./i18n";
 import type { ExternalUrl } from "./links";
+import { LIMITS } from "./types";
 
 export function Logo({ className }: { className?: string }) {
   return (
@@ -179,11 +180,12 @@ const X = () => (
   </svg>
 );
 
-export function ChipList({ items, onChange, placeholder, empty, normalise = (s) => s.trim(), single, validate }: {
+export function ChipList({ items, onChange, placeholder, empty, maxLength, normalise = (s) => s.trim(), single, validate }: {
   items: string[];
   onChange: (items: string[]) => void;
   placeholder: string;
   empty: string;
+  maxLength: number;
   normalise?: (s: string) => string;
   /** Entries are one word: a space blocks adding, with this hint. */
   single?: string;
@@ -216,7 +218,7 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
         <div className="empty">{empty}</div>
       )}
       <form className="add" onSubmit={(e) => { e.preventDefault(); add(); }}>
-        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} spellCheck={false}
+        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} maxLength={maxLength} spellCheck={false}
           aria-invalid={warning ? true : undefined} aria-describedby={warning ? hintId : undefined} />
         <button className="btn" type="submit" disabled={!value || Boolean(warning)}>{t("common.add")}</button>
       </form>
@@ -230,7 +232,7 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
 function RuleTrigger({ value, onRename }: { value: string; onRename: (typed: string) => void }) {
   const [draft, setDraft] = useState<{ from: string; typed: string } | null>(null);
   return (
-    <input value={draft?.from === value ? draft.typed : value} aria-label={t("dictionary.shortcuts.typed")} spellCheck={false}
+    <input value={draft?.from === value ? draft.typed : value} aria-label={t("dictionary.shortcuts.typed")} maxLength={LIMITS.word} spellCheck={false}
       onChange={(e) => setDraft({ from: value, typed: e.currentTarget.value })}
       onKeyDown={(e) => {
         if (e.key === "Enter" && !e.nativeEvent.isComposing) e.currentTarget.blur();
@@ -263,16 +265,16 @@ export function RuleList({ rules, onChange }: { rules: [string, string][]; onCha
             onChange(rules.map((r, j) => (j === i ? [typed, r[1]] : r)));
           }} />
           <span className="arrow">→</span>
-          <input value={to} aria-label={t("dictionary.shortcuts.becomes")} spellCheck={false} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
+          <input value={to} aria-label={t("dictionary.shortcuts.becomes")} maxLength={LIMITS.replacement} spellCheck={false} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
           <button className="icon-btn" aria-label={t("common.remove", { item: f })} onClick={() => onChange(rules.filter((_, j) => j !== i))}>
             <X />
           </button>
         </div>
       ))}
       <form className="rule" onSubmit={(e) => { e.preventDefault(); add(); }}>
-        <input value={from} onChange={(e) => setFrom(e.target.value)} placeholder={t("dictionary.shortcuts.fromPlaceholder")} aria-label={t("dictionary.shortcuts.newTyped")} spellCheck={false} />
+        <input value={from} onChange={(e) => setFrom(e.target.value)} placeholder={t("dictionary.shortcuts.fromPlaceholder")} aria-label={t("dictionary.shortcuts.newTyped")} maxLength={LIMITS.word} spellCheck={false} />
         <span className="arrow">→</span>
-        <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder={t("dictionary.shortcuts.toPlaceholder")} aria-label={t("dictionary.shortcuts.newBecomes")} spellCheck={false} />
+        <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder={t("dictionary.shortcuts.toPlaceholder")} aria-label={t("dictionary.shortcuts.newBecomes")} maxLength={LIMITS.replacement} spellCheck={false} />
         <button className="icon-btn" type="submit" aria-label={t("dictionary.shortcuts.add")}>+</button>
       </form>
     </div>
