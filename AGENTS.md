@@ -48,7 +48,8 @@ Repo is private until v0.1, then flipped public.
   and leaving it as the user holds it (`key_events`). Only characters without such a key go as `KEYEVENTF_UNICODE`
   packets: the Windows 11 Notepad (11.26xx) turns those into spaces (#33; what is left is #190). While the user holds
   Shift, unshifted characters stay packets so a batch never touches Shift (lone Shift taps open JetBrains' Search
-  Everywhere). A partial SendInput is unwound by what is down (`unwind_injection`, `unwind_keys`), never by pairs.
+  Everywhere); in apps that drop packets (`inject::PACKETS_BECOME_SPACES`: notepad.exe) such a fix is skipped instead.
+  A partial SendInput is unwound by what is down (`unwind_injection`, `unwind_keys`), never by pairs.
 - Two processes since 2026-11-17: `unflub-engine.exe` (`crates/unflub-engine`: hook, engine, spell checker, pill; no
   network code) and `unflub.exe` (tray, settings, tour, updater, remote config, stats, crash reports). The app spawns
   the engine beside itself (`app/src-tauri/src/engine.rs`, kill-on-close Job Object, restart backoff 1 s doubling to
