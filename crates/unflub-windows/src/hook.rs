@@ -692,6 +692,11 @@ fn run(
                         let input = last_input();
                         let mut missed =
                             hooks_missed_input(input, newest(Some(last_callback()), excused()));
+                        if missed {
+                            // A held Backspace set aside by a focus change is then never sent
+                            // on its return, even for input an elevated window took (#66).
+                            with_state(|s| s.held_focus.missed_input());
+                        }
                         let hidden = if missed {
                             input_hidden_from_hooks()
                         } else {
@@ -1816,7 +1821,11 @@ impl State {
     fn on_focus_event(&mut self, element: Option<FocusId>) {
         self.last_focus = element;
         if self.held.is_some() {
-            match self.held_focus.on_focus(element) {
+            if MISSED.with(Cell::get) {
+                // The hook was too busy for some event: a return of focus can't be trusted.
+                self.held_focus.missed_input();
+            }
+            match self.held_focus.on_focus(element, Instant::now()) {
                 HeldVerdict::Release => {
                     self.release_held();
                     // Not inside a keyboard callback: hand the replay over now.

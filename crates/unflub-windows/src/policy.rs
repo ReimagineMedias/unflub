@@ -1,6 +1,8 @@
 //! Hook-side rules that decide what reaches the corrector and when an action may be injected.
 //! Pure logic, tested on every OS.
 
+use std::time::{Duration, Instant};
+
 use unflub_core::Key;
 
 use crate::focus::FieldCheck;
@@ -317,43 +319,76 @@ pub enum HeldVerdict {
 ///
 /// Any focus or foreground event used to drop it, losing the key to a toast that flashed by,
 /// an autocomplete list or a focus event fired again for the same field. Now an event naming
-/// the element it was typed in sends it on there, and an event naming anything else only puts
-/// it aside: focus coming back to that element sends it then, and the next key or click
-/// while focus is elsewhere drops it, as before. A click always drops it, since it may have
+/// the element it was typed in, while focus never left, sends it on there. An event naming
+/// anything else puts it aside, and the next key or click drops it, as before. Focus coming
+/// back sends it only when the return can be trusted: the element has its own child id, it came
+/// back within [`HeldFocus::RETURN_WITHIN`], and no input went missing meanwhile. Swing, Qt,
+/// Flutter and games name every control by its window alone, and an elevated window can keep
+/// focus for minutes, so any other return drops it. A click always drops it, since it may have
 /// moved the caret. Nothing ever sends it to an element it wasn't typed in.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HeldFocus {
     /// The focused element when it was held, if a focus event named one.
     at: Option<FocusId>,
-    away: bool,
+    /// When focus left it.
+    away_since: Option<Instant>,
+    /// Input our hooks never saw arrived while it was held.
+    missed: bool,
 }
 
 impl HeldFocus {
+    /// How soon focus must come back for a set-aside Backspace to be sent after all.
+    pub const RETURN_WITHIN: Duration = Duration::from_secs(1);
+
     /// A Backspace is held while `at` has focus (`None`: not known).
     pub fn new(at: Option<FocusId>) -> Self {
-        Self { at, away: false }
+        Self {
+            at,
+            away_since: None,
+            missed: false,
+        }
     }
 
     /// Focus left the element it was typed in: it is kept aside, not sent.
     pub fn away(&self) -> bool {
-        self.away
+        self.away_since.is_some()
     }
 
-    /// A focus event naming `now` (`None`: a foreground switch, which names no element).
-    pub fn on_focus(&mut self, now: Option<FocusId>) -> HeldVerdict {
-        if self.at.is_some() && now == self.at {
-            HeldVerdict::Release
-        } else if std::mem::replace(&mut self.away, true) {
-            HeldVerdict::Keep
-        } else {
-            HeldVerdict::Away
+    /// Input went missing (the watchdog, or an event the hook was too busy for): a return of
+    /// focus can't be trusted any more.
+    pub fn missed_input(&mut self) {
+        self.missed = true;
+    }
+
+    /// A focus event naming `now` (`None`: a foreground switch, which names no element), at
+    /// time `at`.
+    pub fn on_focus(&mut self, now: Option<FocusId>, at: Instant) -> HeldVerdict {
+        let same = self.at.is_some() && now == self.at;
+        match self.away_since {
+            None if same => HeldVerdict::Release,
+            None => {
+                self.away_since = Some(at);
+                HeldVerdict::Away
+            }
+            Some(since) if same => {
+                let own_child = now.is_some_and(|(_, _, child)| child != 0);
+                if own_child
+                    && !self.missed
+                    && at.saturating_duration_since(since) < Self::RETURN_WITHIN
+                {
+                    HeldVerdict::Release
+                } else {
+                    HeldVerdict::Drop
+                }
+            }
+            Some(_) => HeldVerdict::Keep,
         }
     }
 
     /// A key-down that would send it on (anything but a plain second Backspace, while focus is
     /// still where it was typed).
     pub fn on_key(&self) -> HeldVerdict {
-        if self.away {
+        if self.away() {
             HeldVerdict::Drop
         } else {
             HeldVerdict::Release
@@ -483,49 +518,104 @@ mod tests {
     #[test]
     fn a_held_backspace_follows_focus() {
         use HeldVerdict::*;
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
         let field: FocusId = (0x100, -4, 7);
         let popup: FocusId = (0x200, -4, 0);
         let list: FocusId = (0x100, -4, 9);
 
-        // The same element fires focus again: sent there now.
+        // The same element fires focus again while focus never left: sent there now.
         let mut h = HeldFocus::new(Some(field));
-        assert_eq!(h.on_focus(Some(field)), Release);
+        assert_eq!(h.on_focus(Some(field), ms(5_000)), Release);
 
-        // A toast or popup takes focus and gives it back before the next key: sent on return.
+        // A toast or popup takes focus and gives it back quickly: sent on return.
         let mut h = HeldFocus::new(Some(field));
-        assert_eq!(h.on_focus(Some(popup)), Away);
+        assert_eq!(h.on_focus(Some(popup), ms(0)), Away);
         assert!(h.away());
-        assert_eq!(h.on_focus(None), Keep, "the foreground switch back");
-        assert_eq!(h.on_focus(Some(field)), Release);
+        assert_eq!(
+            h.on_focus(None, ms(300)),
+            Keep,
+            "the foreground switch back"
+        );
+        assert_eq!(h.on_focus(Some(field), ms(400)), Release);
 
         // Another element in the same window (an autocomplete list) keeps focus: the next key
         // drops it.
         let mut h = HeldFocus::new(Some(field));
-        assert_eq!(h.on_focus(Some(list)), Away);
+        assert_eq!(h.on_focus(Some(list), ms(0)), Away);
         assert_eq!(h.on_key(), Drop);
 
         // Focus moves on and on: still kept aside, never sent elsewhere.
         let mut h = HeldFocus::new(Some(field));
-        assert_eq!(h.on_focus(Some(popup)), Away);
-        assert_eq!(h.on_focus(Some(list)), Keep);
-        assert_eq!(h.on_focus(None), Keep);
+        assert_eq!(h.on_focus(Some(popup), ms(0)), Away);
+        assert_eq!(h.on_focus(Some(list), ms(100)), Keep);
+        assert_eq!(h.on_focus(None, ms(200)), Keep);
         assert_eq!(h.on_key(), Drop);
 
         // A foreground switch names no element: away until the element itself comes back.
         let mut h = HeldFocus::new(Some(field));
-        assert_eq!(h.on_focus(None), Away);
-        assert_eq!(h.on_focus(Some(field)), Release);
+        assert_eq!(h.on_focus(None, ms(0)), Away);
+        assert_eq!(h.on_focus(Some(field), ms(999)), Release);
 
         // Where it was typed isn't known: any focus event puts it aside for good.
         let mut h = HeldFocus::new(None);
-        assert_eq!(h.on_focus(None), Away);
-        assert_eq!(h.on_focus(Some(field)), Keep);
+        assert_eq!(h.on_focus(None, ms(0)), Away);
+        assert_eq!(h.on_focus(Some(field), ms(10)), Keep);
         assert_eq!(h.on_key(), Drop);
 
         // No focus event: the next key sends it on as before (a click drops it, as before).
         let h = HeldFocus::new(Some(field));
         assert!(!h.away());
         assert_eq!(h.on_key(), Release);
+    }
+
+    /// Review of #66: a return of focus is trusted only when it names a control of its own,
+    /// comes back within a second, and no input went missing meanwhile. Otherwise dropped.
+    #[test]
+    fn an_untrusted_return_of_focus_drops_the_held_backspace() {
+        use HeldVerdict::*;
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let field: FocusId = (0x100, -4, 7);
+        // Swing, Qt, Flutter, games: every control is the window itself (CHILDID_SELF).
+        let window: FocusId = (0x300, -4, 0);
+        let popup: FocusId = (0x200, -4, 0);
+
+        let mut h = HeldFocus::new(Some(window));
+        assert_eq!(h.on_focus(Some(popup), ms(0)), Away);
+        assert_eq!(h.on_focus(Some(window), ms(100)), Drop, "no child id");
+        // ...though a re-fire while focus never left still sends it.
+        let mut h = HeldFocus::new(Some(window));
+        assert_eq!(h.on_focus(Some(window), ms(100)), Release);
+
+        // An elevated window or anything else that keeps focus for a while.
+        let mut h = HeldFocus::new(Some(field));
+        assert_eq!(h.on_focus(None, ms(0)), Away);
+        assert_eq!(
+            h.on_focus(Some(field), ms(1_000)),
+            Drop,
+            "a second is too long"
+        );
+        let mut h = HeldFocus::new(Some(field));
+        h.on_focus(Some(popup), ms(0));
+        assert_eq!(h.on_focus(Some(field), ms(120_000)), Drop);
+
+        // Input went missing while it was held, before or after focus left.
+        for before in [true, false] {
+            let mut h = HeldFocus::new(Some(field));
+            if before {
+                h.missed_input();
+            }
+            assert_eq!(h.on_focus(Some(popup), ms(0)), Away);
+            if !before {
+                h.missed_input();
+            }
+            assert_eq!(
+                h.on_focus(Some(field), ms(50)),
+                Drop,
+                "missed before: {before}"
+            );
+        }
     }
 
     /// #39: a second Backspace that went to the app instead of undoing takes the held one with
