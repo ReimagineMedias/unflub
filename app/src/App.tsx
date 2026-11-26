@@ -7,6 +7,7 @@ import {
   reportUsage, resetSettings, setSettings, systemLook, updateStatus,
 } from "./api";
 import { AppIcon, ChipList, ExternalLink, Logo, NavIcon, PowerSwitch, Row, RuleList, Segmented, Slider, Switch } from "./components";
+import { ReleaseNotes } from "./ReleaseNotes";
 import { t, type StringKey } from "./i18n";
 import { LINKS, isExternalUrl } from "./links";
 import { PillPreview } from "./PillPreview";
@@ -483,12 +484,7 @@ export default function App() {
                       !selfUpdates ? t(source === "scoop" ? "about.via.scoop" : source === "winget" ? "about.via.winget" : source === "chocolatey" ? "about.via.chocolatey" : source === "store" ? "about.via.store" : "about.via.portable")
                       : t(pending.state === "ready" ? "about.ready.hint" : "about.available.hint")
                     }</small>
-                    {pending.notes && (
-                      <>
-                        <small className="notes-title">{t("about.notes")}</small>
-                        <div className="notes">{pending.notes}</div>
-                      </>
-                    )}
+                    {pending.notes && <ReleaseNotes notes={pending.notes} />}
                   </div>
                   <div className="actions">
                     {selfUpdates ? (
