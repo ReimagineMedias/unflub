@@ -36,7 +36,8 @@ pub enum ToEngine {
     Welcome { protocol: u32, app_exe: String },
     /// Everything the engine runs with. Sent after `Welcome` and on every change.
     Configure { settings: EngineSettings },
-    /// Confirm the engine worker is processing messages.
+    /// Confirm the engine worker is processing messages, and the hook thread's message pump
+    /// too (it must have answered the probe sent with the previous ping).
     Ping { nonce: u64 },
     /// Unhook, close the pill and exit.
     Shutdown,
@@ -59,7 +60,8 @@ pub enum FromEngine {
     Ready {
         hooked: bool,
     },
-    /// Sent by the engine worker after it reaches the matching ping in its queue.
+    /// Sent by the engine worker after it reaches the matching ping in its queue, unless the
+    /// hook thread's message pump has stopped answering (then the app restarts the engine).
     Pong {
         nonce: u64,
     },

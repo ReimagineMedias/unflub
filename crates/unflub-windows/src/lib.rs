@@ -39,6 +39,8 @@ pub mod translate;
 #[cfg(windows)]
 pub mod hook;
 #[cfg(windows)]
+pub mod pump;
+#[cfg(windows)]
 pub mod spell;
 
 #[cfg(windows)]
@@ -47,5 +49,7 @@ pub use live::{LiveConfig, LiveEngine};
 pub use overlay::{Correction, PillConfig, PillPosition, PillStyle};
 #[cfg(windows)]
 pub use overlay::{Overlay, OverlayHandle};
+#[cfg(windows)]
+pub use pump::PumpHealth;
 #[cfg(windows)]
 pub use spell::WindowsSpellBackend;

@@ -76,6 +76,7 @@ use crate::inject::{self, Finished, Input, Origin, Pipeline, RawEvent, SendOutco
 use crate::policy::{
     injection_veto, is_ime_language, veto_modifiers, Gate, GateDecision, PendingWord,
 };
+use crate::pump::{PumpAck, PumpHealth, PumpProbe};
 use crate::stats::{LatencyHistogram, MinuteMarks, UsageCounters};
 use crate::translate::{KeyTranslator, Modifiers, RawKey, Typed};
 use crate::Corrector;
@@ -292,10 +293,14 @@ pub struct HookReport {
     pub end_to_end: LatencyHistogram,
 }
 
+/// How long the hook thread's message pump may take to answer a liveness probe (#184).
+const PUMP_DEADLINE: Duration = Duration::from_secs(5);
+
 /// The running hook thread. Stops (and unhooks) on [`Hook::stop`] or drop.
 pub struct Hook {
     thread_id: u32,
     thread: Option<JoinHandle<HookReport>>,
+    pump: PumpProbe,
 }
 
 impl Hook {
@@ -307,14 +312,17 @@ impl Hook {
     ) -> std::io::Result<(Hook, Receiver<HookEvent>)> {
         let (events_tx, events_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let ack = Arc::new(PumpAck::default());
+        let pump_ack = ack.clone();
         let thread = std::thread::Builder::new()
             .name(HOOK_THREAD_NAME.into())
-            .spawn(move || run(Box::new(corrector), options, events_tx, ready_tx))?;
+            .spawn(move || run(Box::new(corrector), options, events_tx, ready_tx, pump_ack))?;
         match ready_rx.recv() {
             Ok(Ok(thread_id)) => Ok((
                 Hook {
                     thread_id,
                     thread: Some(thread),
+                    pump: PumpProbe::new(thread_id, ack, PUMP_DEADLINE),
                 },
                 events_rx,
             )),
@@ -327,6 +335,14 @@ impl Hook {
                 Err(std::io::Error::other("hook thread exited during startup"))
             }
         }
+    }
+
+    /// Is the hook thread's message pump still turning? Never blocks: posts a probe when the
+    /// last one was answered, and reports [`PumpHealth::Unresponsive`] once one has gone
+    /// unanswered for a few seconds (see [`crate::pump`]). Call it now and then, such as on a
+    /// heartbeat.
+    pub fn check_pump(&mut self) -> PumpHealth {
+        self.pump.check(Instant::now())
     }
 
     /// Unhook, end the thread and return its timing report.
@@ -539,6 +555,7 @@ fn run(
     options: HookOptions,
     events: Sender<HookEvent>,
     ready: mpsc::SyncSender<Result<u32, String>>,
+    pump_ack: Arc<PumpAck>,
 ) -> HookReport {
     if let Err(e) = crate::spell::ensure_mta() {
         // A WindowsSpellBackend in the corrector still works: `new` put its own thread in the
@@ -642,6 +659,10 @@ fn run(
     // and re-arm requests from the session window.
     unsafe {
         while GetMessageW(&mut msg, HWND::default(), 0, 0).0 > 0 {
+            if crate::pump::answer(&msg, &pump_ack) {
+                // A liveness probe (#184): reaching it shows the pump turns.
+                continue;
+            }
             match msg.message {
                 WM_APP_SENT if msg.hwnd.is_invalid() => {
                     with_state(State::on_results);
