@@ -1434,16 +1434,6 @@ impl State {
         if let Some(reason) = injection_veto(key, mods, repeat, self.dry_run) {
             return self.skip(replacement, reason);
         }
-        // The second Backspace: the held one goes with the undo, and back to the app with it if
-        // SendInput takes none of the undo (see `Pipeline::begin_undo`).
-        let held = if undo {
-            self.undo_deadline = None;
-            self.set_held(None)
-        } else {
-            self.undo_deadline = self.corrector.undo_window().map(|w| Instant::now() + w);
-            None
-        };
-        // Swallow the key and hand the batch over; SendInput runs on the injector thread.
         let strokes = if undo {
             inject::plan(replacement.delete, &replacement.insert)
         } else {
@@ -1459,7 +1449,21 @@ impl State {
         let caps_lock = unsafe { GetKeyState(i32::from(VK_CAPITAL.0)) } & 1 != 0;
         let keys = inject::TargetLayout::new(foreground_layout(), caps_lock);
         let shift = held_shift();
-        let events = inject::key_events(&inject::with_keys(strokes, &keys, shift), shift);
+        let strokes = inject::with_keys(strokes, &keys, shift);
+        if let Some(reason) = inject::packet_veto(self.focus.app.as_deref(), &strokes, &keys) {
+            return self.skip(replacement, reason);
+        }
+        let events = inject::key_events(&strokes, shift);
+        // The second Backspace: the held one goes with the undo, and back to the app with it if
+        // SendInput takes none of the undo (see `Pipeline::begin_undo`).
+        let held = if undo {
+            self.undo_deadline = None;
+            self.set_held(None)
+        } else {
+            self.undo_deadline = self.corrector.undo_window().map(|w| Instant::now() + w);
+            None
+        };
+        // Swallow the key and hand the batch over; SendInput runs on the injector thread.
         let batch = self.pipeline.begin_undo(ev, held, events.len());
         let handed_over = Instant::now();
         let job = Job {

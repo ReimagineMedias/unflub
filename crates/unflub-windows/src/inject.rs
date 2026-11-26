@@ -62,6 +62,29 @@ pub fn with_keys(strokes: Vec<Stroke>, keys: &impl KeyLookup, held: ShiftKeys) -
         .collect()
 }
 
+/// Apps that turn `KEYEVENTF_UNICODE` packets into spaces (#33): the Windows 11 Notepad.
+pub const PACKETS_BECOME_SPACES: &[&str] = &["notepad.exe"];
+
+/// Why a planned fix mustn't be sent in `app` (a lowercased exe name), if it mustn't: it would
+/// send a character the layout has a key for as a packet, which only happens while the user
+/// holds Shift ([`with_keys`]), in an app that turns packets into spaces. `teh?` or Shift+Space
+/// in Notepad would otherwise come out as blanks. Elsewhere the packets land fine, and fixes
+/// ended by `?` or `!` go ahead.
+pub fn packet_veto(
+    app: Option<&str>,
+    strokes: &[Stroke],
+    keys: &impl KeyLookup,
+) -> Option<&'static str> {
+    let hostile = app.is_some_and(|a| PACKETS_BECOME_SPACES.contains(&a));
+    let keyed_packet = || {
+        strokes.iter().any(|s| {
+            matches!(*s, Stroke::Unit(u)
+                if char::from_u32(u32::from(u)).and_then(|c| keys.key_for(c)).is_some())
+        })
+    };
+    (hostile && keyed_packet()).then_some("Shift held in an app that drops Unicode packets")
+}
+
 /// Which Shift keys are down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ShiftKeys {
@@ -1182,6 +1205,36 @@ mod tests {
             &[Stroke::Unit(0xD83D), Stroke::Unit(0xDE00)],
             "astral characters stay packets"
         );
+    }
+
+    /// Re-review A: with Shift held, a fix in Notepad would send letters as packets, which
+    /// Notepad turns into spaces: no fix there. Everywhere else, and without Shift, it goes.
+    #[test]
+    fn shift_held_fixes_are_vetoed_where_packets_become_spaces() {
+        let none = ShiftKeys::default();
+        let right = ShiftKeys {
+            left: false,
+            right: true,
+        };
+        let fix = |insert: &str, held| with_keys(plan_correction(3, insert, Some('h')), &Us, held);
+        let notepad = Some("notepad.exe");
+        for insert in ["the?", "the "] {
+            assert!(
+                packet_veto(notepad, &fix(insert, right), &Us).is_some(),
+                "{insert:?}"
+            );
+            assert_eq!(
+                packet_veto(notepad, &fix(insert, none), &Us),
+                None,
+                "{insert:?}"
+            );
+            for app in [Some("chrome.exe"), Some("winword.exe"), None] {
+                assert_eq!(packet_veto(app, &fix(insert, right), &Us), None, "{app:?}");
+            }
+        }
+        // Packets for characters without a key are what they always were.
+        let accented = with_keys(plan(3, "café"), &Us, none);
+        assert_eq!(packet_veto(notepad, &accented, &Us), None);
     }
 
     /// The real lookup on this thread's layout (a query; nothing is typed). Space is the same
