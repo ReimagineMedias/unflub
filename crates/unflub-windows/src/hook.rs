@@ -9,6 +9,8 @@
 //!
 //! Keys typed while the field is secure (password, or not yet known to be safe), under an IME
 //! layout, or in an excluded app never reach the corrector: it gets one `Key::Reset` instead.
+//! Letters typed while the field's check is still pending are kept by the hook and handed over
+//! only if UIA clears the field before the word ends ([`PendingWord`]).
 //!
 //! Windows removes a low-level hook whose callback is too slow (`LowLevelHooksTimeout`, at most
 //! 1 s on Windows 10+), and every millisecond here is input lag for the whole desktop, so the
@@ -68,9 +70,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_WTSSESSION_CHANGE, WM_XBUTTONDOWN, WNDCLASSW, WTS_SESSION_UNLOCK,
 };
 
-use crate::focus::{self, FocusState, PasswordProbe};
+use crate::focus::{self, FieldCheck, FocusState, PasswordProbe};
 use crate::inject::{self, Finished, Input, Origin, Pipeline, RawEvent, SendOutcome, Tag};
-use crate::policy::{injection_veto, is_ime_language, Gate, GateDecision};
+use crate::policy::{injection_veto, is_ime_language, Gate, GateDecision, PendingWord};
 use crate::stats::{LatencyHistogram, MinuteMarks, UsageCounters};
 use crate::translate::{KeyTranslator, Modifiers, RawKey, Typed};
 use crate::Corrector;
@@ -438,6 +440,8 @@ struct State {
     usage: Option<Arc<UsageCounters>>,
     /// Which keys end a word, for counting words skipped in secure fields.
     word_ends: WordEnds,
+    /// Letters typed while the field's UIA check is pending (#110).
+    pending_word: PendingWord,
     minutes: MinuteMarks,
 }
 
@@ -544,6 +548,7 @@ fn run(
         next_probe: 0,
         usage: options.usage.clone(),
         word_ends: WordEnds::default(),
+        pending_word: PendingWord::default(),
         minutes: MinuteMarks::default(),
     };
     state.refresh_focus(None, Duration::ZERO);
@@ -1330,14 +1335,28 @@ impl State {
             // on the way in).
             return false;
         }
-        let blocked = self.focus.secure() || ime || self.excluded();
+        // Read once: the UIA answer may land at any moment.
+        let check = self.focus.check();
+        let other_block = ime || self.excluded();
         let word_end = self.word_ends.ends_word(key);
-        if word_end && self.focus.secure() && !ime && !self.excluded() {
+        if word_end && check != FieldCheck::Cleared && !other_block {
             if let Some(usage) = &self.usage {
                 usage.skipped_secure.fetch_add(1, Ordering::Relaxed);
             }
         }
         self.take_word_start();
+        let kept = if other_block {
+            self.pending_word.clear();
+            Vec::new()
+        } else {
+            match self.pending_word.on_key(key, check) {
+                // Kept until UIA answers; the key goes to the app as usual (#110).
+                None => return false,
+                Some(letters) => letters,
+            }
+        };
+        self.feed_kept(kept);
+        let blocked = other_block || check != FieldCheck::Cleared;
         match self.gate.decide(key, blocked) {
             GateDecision::Feed => {}
             GateDecision::ResetOnly => {
@@ -1452,6 +1471,33 @@ impl State {
             }
         }
         self.pump();
+    }
+
+    /// Letters typed while the field was pending, now cleared: the corrector gets them in order,
+    /// as it would have (they are already in the app). They can't lead to an action; if one
+    /// does anyway, the rest of the word is dropped as for a field that turned secure.
+    fn feed_kept(&mut self, letters: Vec<char>) {
+        for c in letters {
+            let key = Key::Char(c);
+            match self.gate.decide(key, false) {
+                GateDecision::Feed => {}
+                GateDecision::ResetOnly => {
+                    self.reset_corrector();
+                    continue;
+                }
+                GateDecision::Drop => continue,
+            }
+            match self.call(key) {
+                Some(Action::Pass) => {}
+                Some(_) => {
+                    if self.gate.decide(key, true) == GateDecision::ResetOnly {
+                        self.reset_corrector();
+                    }
+                    return;
+                }
+                None => return,
+            }
+        }
     }
 
     /// If the UIA worker has answered the word-start question, tell the corrector (only a "yes"
@@ -1730,6 +1776,7 @@ impl State {
     fn reset(&mut self) {
         self.translator.forget_selection();
         self.drop_held();
+        self.pending_word.clear();
         self.gate.on_reset();
         self.reset_corrector();
     }
