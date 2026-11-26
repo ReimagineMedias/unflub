@@ -7,8 +7,8 @@
 //!   file (`dl.rmgn.net/unflub/{version}/tauri-{target}-{arch}.json`), and its download URL and
 //!   signature must match the manifest's. Nothing identifying is sent; the bucket never leaves
 //!   the computer. The first check runs about two minutes after launch, then every 24 hours
-//!   plus up to 90 random minutes, and also on "Check now". Never more than once an hour (or the
-//!   manifest's `min_check_interval_h`).
+//!   plus up to 90 random minutes. Automatic checks respect the manifest interval on startup.
+//!   A failed check retries sooner. "Check now" refreshes even within the automatic interval.
 //! - **Who updates.** Only copies from the setup update themselves (`install.rs`); winget,
 //!   Chocolatey, Scoop, Store and portable copies are told to update with their tool. A machine policy
 //!   (`managed.rs`) can turn update checks off entirely.
@@ -366,8 +366,8 @@ async fn find_update(app: &AppHandle) -> Result<Option<Found>, String> {
 }
 
 /// Check now (`manual`: the user pressed "Check now"). One check, download or install runs at a
-/// time; a second caller gets the current status. Within the minimum interval since the last
-/// check, the last answer stands, unless there is none yet or it was an error.
+/// time; a second caller gets the current status. The automatic interval never blocks a manual
+/// check.
 pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
     let updates = app.state::<Updates>();
     if app.state::<crate::AppInfo>().managed.disable_updates {
@@ -380,10 +380,6 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
     }
     let min_secs = u64::from(app.state::<Remote>().flags().min_check_interval_h) * HOUR_SECS;
     let current = updates.status();
-    let recent = !waited(updates.last_check(), now_secs(), min_secs);
-    if manual && recent && !matches!(current, UpdateStatus::Idle | UpdateStatus::Error { .. }) {
-        return current;
-    }
     if !manual && !updates.background_due(now_secs(), min_secs) {
         // Restarted within the hour: the background check waits for the next round.
         return current;
@@ -411,7 +407,7 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
         }
     }
     let status = match result {
-        Ok(found) => found_update(app, found).await,
+        Ok(found) => found_update(app, found, &current).await,
         Err(message) if quiet => {
             eprintln!("update check: {message}");
             current
@@ -423,7 +419,11 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
 }
 
 /// What a successful check found. Downloads it when automatic updates are on.
-async fn found_update(app: &AppHandle, found: Option<Found>) -> UpdateStatus {
+async fn found_update(
+    app: &AppHandle,
+    found: Option<Found>,
+    previous: &UpdateStatus,
+) -> UpdateStatus {
     let updates = app.state::<Updates>();
     let Some(found) = found else {
         // Paused, blocked or replaced in the manifest: don't install what we downloaded.
@@ -443,7 +443,7 @@ async fn found_update(app: &AppHandle, found: Option<Found>) -> UpdateStatus {
         .unwrap()
         .as_ref()
         .is_some_and(|(_, hash)| *hash == found.expected.sha256)
-        && matches!(updates.status(), UpdateStatus::Ready { version: ref v, .. } if *v == version);
+        && matches!(previous, UpdateStatus::Ready { version: v, .. } if *v == version);
     if already {
         *updates.update.lock().unwrap() = Some(found);
         return UpdateStatus::Ready {
