@@ -37,3 +37,9 @@ export function readableAccent(accent: string, surface: string, toward: 0 | 255,
   }
   return "#" + result.map((channel) => channel.toString(16).padStart(2, "0")).join("");
 }
+
+export function systemTourKeyAccent(accent: string, dark: boolean): string {
+  // The keycap adds 12% pill ink over a 78% pill background. Over black in light
+  // mode and white in dark mode, round the resulting gray toward lower contrast.
+  return readableAccent(accent, dark ? "#6f6f6f" : "#aeaeae", dark ? 255 : 0, 4.55);
+}
