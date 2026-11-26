@@ -723,22 +723,6 @@ pub async fn install(app: &AppHandle, restart: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Quitting from the tray: install a downloaded update on the way out, without reopening
-/// unflub. True when the installer took over (on Windows the process has exited by then).
-pub fn install_on_quit(app: &AppHandle) -> bool {
-    let updates = app.state::<Updates>();
-    if cfg!(debug_assertions) || updates.downloaded.lock().unwrap().is_none() {
-        return false;
-    }
-    match tauri::async_runtime::block_on(install(app, false)) {
-        Ok(()) => true,
-        Err(e) => {
-            eprintln!("install on quit: {e}");
-            false
-        }
-    }
-}
-
 /// The `unflub-update` thread. Release builds only: a dev build would find every release newer
 /// than itself.
 pub fn spawn_background(app: AppHandle) {

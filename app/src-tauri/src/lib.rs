@@ -30,7 +30,7 @@ use stats::{Stats, StatsView};
 use std::sync::{Arc, Mutex};
 use tauri::{
     image::Image,
-    menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder},
+    menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
 };
@@ -844,14 +844,15 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         .checked(enabled)
         .build(app)?;
     let mut menu = MenuBuilder::new(app).item(&toggle).separator();
-    match app.state::<Updates>().status() {
+    let update = app.state::<Updates>().status();
+    match &update {
         UpdateStatus::Ready { version, .. } => {
-            menu = menu.text("update", strings::menu_restart_to_update(&version));
+            menu = menu.text("update", strings::menu_restart_to_update(version));
         }
         UpdateStatus::Available {
             version, critical, ..
         } => {
-            menu = menu.text("update", strings::menu_update_available(&version, critical));
+            menu = menu.text("update", strings::menu_update_available(version, *critical));
         }
         UpdateStatus::Error {
             phase: updates::UpdatePhase::Install,
@@ -873,9 +874,17 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         .separator()
         .text("support", strings::MENU_SUPPORT)
         .text("star", strings::MENU_STAR)
-        .separator()
-        .text("quit", strings::MENU_QUIT)
-        .build()?;
+        .separator();
+    let menu = match update {
+        UpdateStatus::Ready { .. } => menu.text("quit-update", strings::MENU_QUIT_UPDATE),
+        UpdateStatus::Installing { .. } => menu.item(
+            &MenuItemBuilder::with_id("installing", strings::MENU_INSTALLING)
+                .enabled(false)
+                .build(app)?,
+        ),
+        _ => menu.text("quit", strings::MENU_QUIT),
+    }
+    .build()?;
     *app.state::<AppState>().toggle.lock().unwrap() = Some(toggle);
     Ok(menu)
 }
@@ -908,12 +917,23 @@ fn rebuild_tray_menu(app: &AppHandle) {
 }
 
 fn quit(app: &AppHandle) {
-    // A downloaded update installs on the way out; the installer closes unflub itself.
-    if updates::install_on_quit(app) {
-        return;
-    }
     stop_on_exit(app);
     app.exit(0);
+}
+
+fn tray_install(app: &AppHandle, restart: bool) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match updates::install(&app, restart).await {
+            // The Windows updater exits after launching the installer.
+            Ok(()) if !restart => quit(&app),
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("update: {e}");
+                open_settings(&app, Some("about"));
+            }
+        }
+    });
 }
 
 fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
@@ -929,21 +949,14 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
             }
             "settings" => open_settings(app, None),
             "update" => match app.state::<Updates>().status() {
-                UpdateStatus::Ready { .. } => {
-                    let app = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        if let Err(e) = updates::install(&app, true).await {
-                            eprintln!("update: {e}");
-                            open_settings(&app, Some("about"));
-                        }
-                    });
-                }
+                UpdateStatus::Ready { .. } => tray_install(app, true),
                 _ => open_settings(app, Some("about")),
             },
             "crash" | "message" => open_settings(app, Some("about")),
             "tour" => open_settings(app, Some("tour")),
             "support" => open_url(app, links::SPONSOR_URL),
             "star" => open_url(app, links::REPO_URL),
+            "quit-update" => tray_install(app, false),
             "quit" => quit(app),
             _ => {}
         })
