@@ -191,6 +191,7 @@ pub fn engine_settings(
             },
             uia_caret: flags.uia_caret,
         },
+        announce: s.announce_fixes,
     }
 }
 
@@ -1077,6 +1078,31 @@ mod tests {
                 to
             );
         }
+    }
+
+    /// Announcements are on by default and follow the setting, whatever the pill or the
+    /// remote flags say (they are how screen reader users learn of a fix).
+    #[test]
+    fn announcements_follow_the_setting_not_the_pill() {
+        assert!(
+            engine_settings(&Settings::default(), &RemoteFlags::default(), Vec::new()).announce
+        );
+        let off = Settings {
+            announce_fixes: false,
+            ..Settings::default()
+        };
+        assert!(!engine_settings(&off, &RemoteFlags::default(), Vec::new()).announce);
+        let no_pill = RemoteFlags {
+            pill_enabled: false,
+            ..RemoteFlags::default()
+        };
+        let quiet_pill = Settings {
+            pill_style: settings::PillStyle::Off,
+            ..Settings::default()
+        };
+        assert!(engine_settings(&quiet_pill, &no_pill, Vec::new()).announce);
+        let missing: Settings = serde_json::from_str("{}").unwrap();
+        assert!(missing.announce_fixes, "older settings files turn it on");
     }
 
     #[test]

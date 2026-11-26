@@ -9,14 +9,15 @@
 //! | `unflub-spell` | MTA | slow `ComprehensiveCheck` lookups that fill the auto-replace cache |
 //! | `unflub-overlay` | none | the correction pill window ([`overlay`]): caret lookup, Direct2D drawing, fades |
 //! | `unflub-caret` | MTA | UI Automation caret position for browser and XAML fields, for the pill |
+//! | `unflub-announce` | MTA | screen reader announcements of fixes and undos ([`announce`]), only while one runs |
 //!
 //! Settings change while the hook runs through [`LiveEngine`]: the hook thread picks up a new
 //! config at the start of the next key event, without blocking.
 //!
 //! The pure parts ([`translate`], [`policy`], [`inject::plan`], [`stats`], [`live`], parts of
-//! [`focus`], [`overlay`] and [`caret`]) compile and are tested on every OS. Everything that
-//! calls Windows is behind `cfg(windows)`, so on Linux and macOS this crate builds to just
-//! those helpers.
+//! [`focus`], [`overlay`], [`caret`] and [`announce`]) compile and are tested on every OS.
+//! Everything that calls Windows is behind `cfg(windows)`, so on Linux and macOS this crate
+//! builds to just those helpers.
 //!
 //! Requirements and limitations:
 //! - Windows 10 1607 or later: key translation relies on `ToUnicodeEx`'s "don't change
@@ -27,6 +28,7 @@
 /// Re-exported so callers can name the hook's trait bound without depending on core directly.
 pub use unflub_core::Corrector;
 
+pub mod announce;
 pub mod caret;
 pub mod focus;
 pub mod inject;

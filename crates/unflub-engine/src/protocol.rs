@@ -226,11 +226,24 @@ impl ReinstallReason {
 
 /// What the engine runs with: the core config plus the pill. The app has already applied the
 /// remote flags (they can only switch things off).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EngineSettings {
     pub core: Config,
     pub pill: PillSettings,
+    /// Tell a running screen reader about each fix and undo (`unflub_windows::announce`). On
+    /// by default; nothing is said while no screen reader runs.
+    pub announce: bool,
+}
+
+impl Default for EngineSettings {
+    fn default() -> Self {
+        Self {
+            core: Config::default(),
+            pill: PillSettings::default(),
+            announce: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -410,6 +423,10 @@ mod tests {
         };
         assert_eq!(settings.pill.style, PillStyle::Off);
         assert_eq!(settings.core, Config::default());
+        assert!(
+            settings.announce,
+            "an older app's settings keep announcements on"
+        );
         assert!(serde_json::from_str::<FromEngine>(r#"{"type":"from-the-future"}"#).is_err());
     }
 }

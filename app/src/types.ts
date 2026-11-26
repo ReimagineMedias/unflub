@@ -47,6 +47,8 @@ export interface Settings {
   pillPosition: PillPosition;
   theme: Theme;
   appearance: Appearance;
+  /** Tell a running screen reader about each fix and undo. */
+  announceFixes: boolean;
   /** BCP 47 tag for the system spell checker, like "en-US". */
   language: string;
   /** English dictionary fixes even when `language` isn't English. */
@@ -153,6 +155,7 @@ export const defaultSettings: Settings = {
   pillPosition: "above",
   theme: "unflub",
   appearance: "auto",
+  announceFixes: true,
   language: "en-US",
   englishForOtherLanguages: false,
 };

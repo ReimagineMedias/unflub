@@ -145,6 +145,8 @@ export const en = {
   "appearance.duration": "Undo window",
   "appearance.duration.hint": "How long the capsule stays, and how long you have to undo a fix.",
   "appearance.duration.value": "{s} s",
+  "appearance.announce": "Tell screen readers",
+  "appearance.announce.hint": "While Narrator, NVDA or another screen reader is on, it reads each fix and how to undo it. Never in password fields or terminals.",
   "pillPreview.label": "Correction preview. {sentence}",
   "pillPreview.undo": "⌫ undo",
 

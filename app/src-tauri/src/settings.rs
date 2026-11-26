@@ -155,6 +155,9 @@ pub struct Settings {
     pub pill_position: PillPosition,
     pub theme: Theme,
     pub appearance: Appearance,
+    /// Tell a running screen reader about each fix and undo. On by default; nothing is said
+    /// while no screen reader runs.
+    pub announce_fixes: bool,
     /// BCP 47 tag for the system spell checker, like `en-US`.
     pub language: String,
     /// Use the English dictionary's fixes even when `language` isn't English (off: only the
@@ -202,6 +205,7 @@ impl Default for Settings {
             pill_position: PillPosition::Above,
             theme: Theme::Unflub,
             appearance: Appearance::Auto,
+            announce_fixes: true,
             language: core.language,
             english_for_other_languages: core.english_for_other_languages,
             extra: serde_json::Map::new(),

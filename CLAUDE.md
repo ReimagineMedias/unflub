@@ -31,6 +31,10 @@ Repo is private until v0.1, then flipped public.
   corrected or suggested), and words from `extra_words`/`tech_words`/`spelling_variants` are "curated": never
   rewritten when only the OS checker flags them. A slip of a very common word (amd, ssd, gst) stays off the
   protected list. The synthetic quality typos include `wth` for `with` 10 times, now left alone on purpose (#36).
+- Screen reader announcements (`announce.rs`, #79): a UIA notification on the focused window's host provider
+  (`UiaHostProviderFromHwnd`), raised on `unflub-announce` from the engine thread, only with `announceFixes` on,
+  `SPI_GETSCREENREADER` set and `policy::keep_words` true. Not on a window of our own: NVDA drops notifications from
+  background apps (`event_UIA_notification` in NVDA's `NVDAObjects/UIA/__init__.py`). Never raise one from a test.
 - Pill (`overlay.rs`, `caret.rs`): `cargo run -p unflub-windows --example pill_snapshot` renders every style offscreen to
   `.local/pill/*.png` without showing a window; check visuals there, never by running the hook. Fonts resolve to
   Segoe UI Variable Text and Cascadia Mono on Windows 11. Software Direct2D renderer setup is ~2 ms warm (26 ms on
