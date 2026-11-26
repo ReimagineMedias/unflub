@@ -23,6 +23,7 @@ use unflub_engine::category::category_of;
 use unflub_engine::look::OsLook;
 use unflub_engine::pill::pill_config;
 use unflub_engine::pipe::Pipe;
+use unflub_engine::protocol::EngineDiagnostic;
 use unflub_engine::protocol::{
     EngineSettings, FixSource, FromEngine, ReinstallReason, ToEngine, Trigger,
 };
@@ -139,7 +140,7 @@ fn read_pipe(pipe: &Pipe, tx: &Sender<Msg>) {
             Ok(ToEngine::Shutdown) => return,
             // Only valid during the handshake.
             Ok(ToEngine::Welcome { .. }) => {}
-            Err(e) => eprintln!("unflub-engine: skipped a message ({e})"),
+            Err(_) => eprintln!("unflub-engine: skipped an invalid app message"),
         }
     }
 }
@@ -307,7 +308,9 @@ impl State {
             }
             None => match Overlay::spawn(want.clone()) {
                 Ok(overlay) => self.pill = Some((overlay, want)),
-                Err(e) => eprintln!("unflub-engine: correction pill unavailable ({e})"),
+                Err(_) => self.out.send(&FromEngine::Diagnostic {
+                    event: EngineDiagnostic::PillUnavailable,
+                }),
             },
         }
     }
@@ -353,7 +356,18 @@ impl State {
             return;
         }
         match event {
-            HookEvent::Warning(w) => eprintln!("unflub-engine: {w}"),
+            HookEvent::Warning(w) => {
+                // Select a fixed category. The warning text never crosses the pipe.
+                let event = if w.starts_with("UI Automation")
+                    || w.starts_with("COM init for UI Automation")
+                    || w.starts_with("can't start the UI Automation thread")
+                {
+                    EngineDiagnostic::UiaWarning
+                } else {
+                    EngineDiagnostic::HookWarning
+                };
+                self.out.send(&FromEngine::Diagnostic { event });
+            }
             HookEvent::HooksReinstalled { reason } => {
                 eprintln!("unflub-engine: hooks installed again ({reason})");
                 self.out.send(&FromEngine::HookReinstalled {
@@ -365,9 +379,9 @@ impl State {
                 eprintln!("unflub-engine: the engine panicked; keys pass through");
                 self.out.send(&FromEngine::CorrectorPanicked);
             }
-            HookEvent::InjectFailed { sent, total, .. } => {
-                eprintln!("unflub-engine: SendInput sent {sent}/{total} events")
-            }
+            HookEvent::InjectFailed { sent, total, .. } => self.out.send(&FromEngine::Diagnostic {
+                event: EngineDiagnostic::InjectionPartial { sent, total },
+            }),
             HookEvent::UndoDeclined => {
                 if let Some((overlay, _)) = &self.pill {
                     overlay.hide();

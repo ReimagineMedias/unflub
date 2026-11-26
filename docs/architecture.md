@@ -220,19 +220,24 @@ stopped in 2025). The engine opens with `Hello { protocol, version }`; the app a
 
 | Direction | Messages |
 |---|---|
-| app to engine | `Configure` (core `Config` plus pill settings, remote flags already applied), `Shutdown` |
-| engine to app | `Ready { hooked }`, `Corrected`, `Undone` (with the words, for the local Stats page), `WordsChecked` every 10 s when it moved, `Learned`, `HookReinstalled`, `CorrectorPanicked` |
+| app to engine | `Configure` (core `Config` plus pill settings, remote flags already applied), `Ping`, `Shutdown` |
+| engine to app | `Ready { hooked }`, `Corrected`, `Undone` (with the words, for the local Stats page), `WordsChecked` every 10 s when it moved, `Learned`, `HookReinstalled`, `CorrectorPanicked`, `Pong`, `Diagnostic` |
 
 **Supervision** (`app/src-tauri/src/engine.rs`). The app starts the engine beside `unflub.exe`
 in a Job Object with kill-on-close, so the engine never outlives the app (crash, Task Manager,
 the installer closing `unflub.exe`); the engine also exits when its pipe closes. If it exits
 unasked, the app counts a crash and starts it again after 1 s, doubling to at most 5 minutes,
-and back to 1 s once a run lasted a minute.
+and back to 1 s once a run lasted a minute. The tray uses its paused icon and a retry tooltip
+whenever autocorrect is enabled and the engine is not ready.
+
+Once the engine is ready, the app sends a heartbeat every 15 s. The engine worker replies from
+its message loop. Two missed replies end the session and trigger a restart. Both peers give a
+whole frame 60 s to arrive, including its length prefix and body.
 
 - **Pause ends the engine process**; resume starts a new one (~0.3 s, mostly the dictionary
   index, which an in-process resume rebuilt too). Unhooking inside a live engine would keep
   ~20 MB and a process that could still see keys. While paused nothing holds a hook or a typed
-  character.
+  character. Pause or Quit also cancels a pending handshake or initial configuration write.
 - **Quit and updates** send `Shutdown`, wait up to 3 s, then end it. The updater does this
   before the installer runs, so `unflub-engine.exe` is never locked.
 - **Settings** go over the pipe as one `Configure`; the engine applies them live. Engine
@@ -251,7 +256,9 @@ and back to 1 s once a run lasted a minute.
   into the same opt-in crash report as its own (`crash.rs`) and restarts the engine. Release
   builds use `panic = "abort"`, so a panic in the corrector inside the hook ends the engine the
   same way; the hook's `catch_unwind` (keys pass through, `CorrectorPanicked`) only applies
-  where panics unwind, in debug builds and tests.
+  where panics unwind, in debug builds and tests. Both executables disable default Windows
+  Error Reporting at startup. The tray's Windows release panic hook writes its scrubbed marker
+  and terminates the process directly.
 - **The tour** runs its own engine inside the app (`tour.rs`), with no hook: the web view sends
   each key typed in the practice box over Tauri IPC and draws the result itself.
 
@@ -371,6 +378,20 @@ Releases; the only thing unflub posts is usage stats to api.rmgn.net (contract:
   tool, and portable copies to download the new version.
 - **Settings file** `settings.json` has a `schemaVersion`; `migrations.rs` upgrades older files
   step by step and keeps a `.v<N>` copy. Fields from a newer unflub are kept and written back.
+
+### Local diagnostics
+
+On Windows, open `%LOCALAPPDATA%\ca.rmgn.unflub` in File Explorer. The tray app writes
+`diagnostics.log` and keeps its two most recent rotations (`diagnostics.1.log` and
+`diagnostics.2.log`), up to 256 KiB per file. Each line has a Unix timestamp in seconds
+and a fixed event name with optional codes, counts or retry delays.
+
+The log records engine starts, exits, retry delays, heartbeat failures, hook reinstall reasons,
+changes in input interference, hook and UI Automation warnings, partial injection counts,
+and configuration or usage save failures. It contains no typed text, corrected words, window
+titles, paths or raw messages. The engine sends only fixed diagnostic categories and counts
+for the log. The files stay on the device and can be deleted. Crash reports and usage stats
+have their own controls and never upload these files.
 
 ## Later layers
 

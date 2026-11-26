@@ -125,6 +125,10 @@ pub enum FromEngine {
         /// Each Windows spell checker `Check` call.
         spellcheck_us: Vec<u32>,
     },
+    /// A local diagnostic. The wire representation contains no user-derived strings.
+    Diagnostic {
+        event: EngineDiagnostic,
+    },
     /// The corrector panicked; keys pass through until the engine restarts.
     CorrectorPanicked,
     /// `active`: our injected input stopped coming back (another program is interfering with
@@ -133,6 +137,16 @@ pub enum FromEngine {
     InputInterference {
         active: bool,
     },
+}
+
+/// Fixed warning types the app may keep in its local log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum EngineDiagnostic {
+    HookWarning,
+    UiaWarning,
+    PillUnavailable,
+    InjectionPartial { sent: usize, total: usize },
 }
 
 /// What ended a fixed word.

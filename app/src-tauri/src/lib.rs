@@ -1,4 +1,5 @@
 mod crash;
+mod diagnostics;
 mod engine;
 mod facts;
 mod files;
@@ -461,7 +462,12 @@ fn update_settings(
     change: impl FnOnce(&mut Settings),
 ) -> std::io::Result<Settings> {
     let state = app.state::<AppState>();
-    let (prev, next) = state.store.update(&state.settings, change)?;
+    let (prev, next) = state
+        .store
+        .update(&state.settings, change)
+        .inspect_err(|e| {
+            diagnostics::record(diagnostics::Event::SettingsSaveFailed(e.kind()));
+        })?;
 
     if prev.start_at_login != next.start_at_login {
         sync_autostart(app, next.start_at_login);
@@ -590,11 +596,19 @@ fn observe(app: &AppHandle, event: Observed) {
             }
         }
         Observed::UndoArmed => usage.undo_armed(),
-        Observed::CorrectorPanicked => usage.crash(),
-        Observed::HookReinstalled { reason } => usage.hook_reinstall(reason),
+        Observed::CorrectorPanicked => {
+            diagnostics::record(diagnostics::Event::CorrectorPanicked);
+            usage.crash();
+        }
+        Observed::Diagnostic(event) => diagnostics::record(diagnostics::Event::Engine(event)),
+        Observed::HookReinstalled { reason } => {
+            diagnostics::record(diagnostics::Event::HookReinstalled(reason));
+            usage.hook_reinstall(reason);
+        }
         Observed::HookStartFailed => usage.hook_unavailable(),
         Observed::UsageCounts(counts) => usage.engine_counts(&counts),
         Observed::InputInterference { active } => {
+            diagnostics::record(diagnostics::Event::InputInterference(active));
             if active {
                 usage.self_pause();
             }
@@ -991,6 +1005,7 @@ pub fn run() {
             let (crashes, crashed_last_time) =
                 crash::install(&data_dir, &version, info.managed.disable_crash_reports);
             app.manage(crashes);
+            diagnostics::init(&local_dir);
             // Before 0.2 these were in the roaming folder with the settings (#120).
             files::move_machine_state(&config_dir, &local_dir, files::MACHINE_STATE);
             if data_dir != config_dir {
