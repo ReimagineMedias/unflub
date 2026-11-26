@@ -3,9 +3,12 @@
 //! The hook thread runs its own Win32 message loop: every keyboard and mouse callback, the
 //! watchdog and the injector's results arrive through it. If it blocks, Windows stops calling
 //! our hooks (and may drop them), yet the engine worker on another thread keeps answering the
-//! app's heartbeat. [`PumpProbe`] posts a private thread message carrying a nonce; the pump
-//! stores the nonce in a shared [`PumpAck`] when it gets there ([`answer`]). The probe never
-//! blocks, keeps at most one request outstanding and carries no input or window data.
+//! app's heartbeat. [`PumpProbe`] posts a private thread message carrying a nonce; when the
+//! pump gets there it clears the shared [`PumpAck`], but only if the nonce is the one in flight
+//! ([`answer`]). Any process of the user can post to the thread, so a stray or forged message
+//! (`wParam` 0, an old nonce) never counts as an answer nor undoes one. A forged answer can only
+//! be read by a pump that turns, so it can't hide a stuck one. The probe never blocks, keeps at
+//! most one request outstanding and carries no input or window data.
 //!
 //! A posted thread message wakes `GetMessageW` whether or not anyone types, so an idle pump
 //! answers within milliseconds; after a sleep the queued request is answered as soon as the
@@ -22,22 +25,28 @@ use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, MSG, WM_APP};
 /// `WM_APP + n` messages.
 pub const WM_APP_PUMP_PING: u32 = WM_APP + 0x40;
 
-/// What the pump last acknowledged.
+/// The nonce of the request in flight, or 0 once the pump has answered it.
 #[derive(Debug, Default)]
 pub struct PumpAck(AtomicUsize);
 
 impl PumpAck {
-    fn acknowledged(&self) -> usize {
-        self.0.load(Ordering::Acquire)
+    fn answered(&self) -> bool {
+        self.0.load(Ordering::Acquire) == 0
     }
 }
 
-/// For the pump's loop: acknowledge `msg` if it is a probe. Returns true if it was.
+/// For the pump's loop: is `msg` a probe? It answers the request in flight only when its nonce
+/// matches; any other probe message is swallowed without effect. Returns true for every probe.
 pub fn answer(msg: &MSG, ack: &PumpAck) -> bool {
     if msg.message != WM_APP_PUMP_PING || !msg.hwnd.is_invalid() {
         return false;
     }
-    ack.0.store(msg.wParam.0, Ordering::Release);
+    let nonce = msg.wParam.0;
+    if nonce != 0 {
+        let _ = ack
+            .0
+            .compare_exchange(nonce, 0, Ordering::AcqRel, Ordering::Acquire);
+    }
     true
 }
 
@@ -78,7 +87,7 @@ impl PumpProbe {
     /// never more than one at a time. A request still within its deadline counts as alive.
     pub fn check(&mut self, now: Instant) -> PumpHealth {
         if let Some(since) = self.pending_since {
-            if self.ack.acknowledged() != self.nonce {
+            if !self.ack.answered() {
                 return if now.saturating_duration_since(since) >= self.deadline {
                     PumpHealth::Unresponsive
                 } else {
@@ -88,6 +97,8 @@ impl PumpProbe {
             self.pending_since = None;
         }
         self.nonce = self.nonce.wrapping_add(1).max(1);
+        // In flight before it is posted, so the pump can't answer it first.
+        self.ack.0.store(self.nonce, Ordering::Release);
         // SAFETY: posting a plain number to a thread; no pointers cross.
         let posted = unsafe {
             PostThreadMessageW(
@@ -177,9 +188,9 @@ mod tests {
     }
 
     /// Wait until the pump has answered the outstanding request.
-    fn settle(pump: &TestPump, probe: &PumpProbe) {
+    fn settle(pump: &TestPump, _probe: &PumpProbe) {
         let started = Instant::now();
-        while pump.ack.acknowledged() != probe.nonce {
+        while !pump.ack.answered() {
             assert!(started.elapsed() < Duration::from_secs(5), "no answer");
             thread::sleep(Duration::from_millis(5));
         }
@@ -246,7 +257,7 @@ mod tests {
 
     #[test]
     fn other_messages_are_not_answers() {
-        let ack = PumpAck::default();
+        let ack = PumpAck(AtomicUsize::new(7));
         let msg = MSG {
             message: WM_APP_PUMP_PING + 1,
             wParam: WPARAM(7),
@@ -262,6 +273,51 @@ mod tests {
             }
         };
         assert!(!answer(&window, &ack), "only thread messages");
-        assert_eq!(ack.acknowledged(), 0);
+        assert!(!ack.answered());
+    }
+
+    fn ping(nonce: usize) -> MSG {
+        MSG {
+            message: WM_APP_PUMP_PING,
+            wParam: WPARAM(nonce),
+            ..Default::default()
+        }
+    }
+
+    /// Review L1: another process posting the probe message with `wParam` 0 or a wrong nonce
+    /// neither answers the request in flight nor undoes an answer.
+    #[test]
+    fn forged_probe_messages_change_nothing() {
+        let ack = PumpAck(AtomicUsize::new(5));
+        for forged in [0, 4, 6, usize::MAX] {
+            assert!(answer(&ping(forged), &ack), "swallowed as a probe");
+            assert!(!ack.answered(), "{forged} is not the nonce in flight");
+        }
+        assert!(answer(&ping(5), &ack));
+        assert!(ack.answered());
+        for forged in [0, 5, 6] {
+            answer(&ping(forged), &ack);
+            assert!(ack.answered(), "{forged} can't undo the answer");
+        }
+    }
+
+    /// Review L1, end to end: a forged `wParam` 0 sent after each real answer used to make an
+    /// alive pump look stuck.
+    #[test]
+    fn a_forged_zero_does_not_make_an_alive_pump_unresponsive() {
+        let pump = TestPump::start();
+        pump.run();
+        let mut probe = pump.probe();
+        let start = Instant::now();
+        assert_eq!(probe.check(start), PumpHealth::Alive);
+        settle(&pump, &probe);
+        // SAFETY: posting a plain number to a thread with a queue.
+        unsafe { PostThreadMessageW(pump.thread_id, WM_APP_PUMP_PING, WPARAM(0), LPARAM(0)) }
+            .unwrap();
+        thread::sleep(Duration::from_millis(50));
+        assert_eq!(probe.check(start + DEADLINE * 4), PumpHealth::Alive);
+        settle(&pump, &probe);
+        assert_eq!(probe.check(start + DEADLINE * 8), PumpHealth::Alive);
+        pump.stop();
     }
 }
