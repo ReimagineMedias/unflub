@@ -209,7 +209,8 @@ pub enum SendOutcome {
     /// Every event went out.
     Complete,
     /// Only `sent` of `total` events went out (0 when blocked, e.g. by UIPI). `released` is
-    /// true when a key-down went out without its key-up and we sent the key-up separately.
+    /// true when keys the sent part left in the wrong state were put back with one more call
+    /// ([`unwind_injection`], [`unwind_keys`]).
     Partial {
         sent: usize,
         total: usize,
@@ -217,11 +218,59 @@ pub enum SendOutcome {
     },
 }
 
-/// Inputs come in down/up pairs. If `SendInput` stopped after a key-down (odd count), returns
-/// the index of the key-up that must still be sent so no key is left held down.
-pub fn missing_key_up(sent: usize, total: usize) -> Option<usize> {
-    (sent < total && sent % 2 == 1).then_some(sent)
+/// What to send after an injection's `SendInput` stopped after `sent` of `events`, so no key is
+/// left down and Shift is back where the user holds it (`held`): a key-up for every key the
+/// sent part pressed and didn't release, and the Shift keys pressed or released back. Events
+/// don't come in down/up pairs (Shift goes down before a capital and up after it), so pairing
+/// by count could release the wrong key or none.
+pub fn unwind_injection(events: &[KeyEvent], sent: usize, held: ShiftKeys) -> Vec<KeyEvent> {
+    let mut down: Vec<KeyEvent> = Vec::new();
+    let mut shift = held;
+    for e in &events[..sent.min(events.len())] {
+        match *e {
+            KeyEvent::Vk { vk, scan, up } if (vk, scan) == LSHIFT => shift.left = !up,
+            KeyEvent::Vk { vk, scan, up } if (vk, scan) == RSHIFT => shift.right = !up,
+            KeyEvent::Vk { vk, scan, up } => {
+                down.retain(|d| !matches!(*d, KeyEvent::Vk { vk: v, .. } if v == vk));
+                if !up {
+                    down.push(KeyEvent::Vk { vk, scan, up: true });
+                }
+            }
+            KeyEvent::Unit { unit, up } => {
+                down.retain(|d| !matches!(*d, KeyEvent::Unit { unit: u, .. } if u == unit));
+                if !up {
+                    down.push(KeyEvent::Unit { unit, up: true });
+                }
+            }
+        }
+    }
+    for (side, was, is) in [
+        (LSHIFT, held.left, shift.left),
+        (RSHIFT, held.right, shift.right),
+    ] {
+        if was != is {
+            down.push(shift_event(side, !was));
+        }
+    }
+    down
 }
+
+/// What to send after `SendInput` stopped after `sent` of the user's own keys (a replay or a
+/// hand-back): a key-up for every key the sent part pressed and didn't release. Their key-ups
+/// were in the part that didn't go out.
+pub fn unwind_keys(events: &[RawEvent], sent: usize) -> Vec<RawEvent> {
+    let mut down: Vec<RawEvent> = Vec::new();
+    for e in &events[..sent.min(events.len())] {
+        down.retain(|d| d.vk != e.vk || (e.vk == VK_PACKET_CODE && d.scan != e.scan));
+        if !e.up {
+            down.push(RawEvent { up: true, ..*e });
+        }
+    }
+    down
+}
+
+/// `VK_PACKET`: another program's Unicode packet, its character in the scan code.
+const VK_PACKET_CODE: u16 = 0xE7;
 
 /// "UF". Distinct from the fixed tag older builds used (0x554E_464C), so a copy of an older
 /// build running alongside is never mistaken for ours.
@@ -699,7 +748,9 @@ impl Pipeline {
 }
 
 #[cfg(windows)]
-pub use win::{pass_inputs, probe_inputs, replay_inputs, send, to_inputs, TargetLayout};
+pub use win::{
+    pass_inputs, probe_inputs, replay_inputs, send, to_inputs, unwind_inputs, TargetLayout,
+};
 
 /// The batch number no injection ever gets: events tagged `Tag::Inject(PASS_BATCH)` match no
 /// pending batch, so the hook lets them through untouched (see [`pass_inputs`]).
@@ -735,7 +786,10 @@ mod win {
 
     /// The events of [`key_events`](super::key_events), in order, tagged as injection `batch`.
     pub fn to_inputs(events: &[KeyEvent], batch: u16) -> Vec<INPUT> {
-        let tag = Tag::Inject(batch).encode();
+        key_inputs(events, Tag::Inject(batch).encode())
+    }
+
+    fn key_inputs(events: &[KeyEvent], tag: usize) -> Vec<INPUT> {
         let up = |up: bool| {
             if up {
                 KEYEVENTF_KEYUP
@@ -883,20 +937,29 @@ mod win {
     }
 
     /// One `SendInput` call for the whole batch. Anything short of every event is a failure;
-    /// a key-down left without its key-up is released with one more call.
-    pub fn send(inputs: &[INPUT]) -> SendOutcome {
+    /// `unwind(sent)` gives the events that put keys left down (or Shift left changed) back,
+    /// sent with one more call ([`unwind_injection`](super::unwind_injection),
+    /// [`unwind_keys`](super::unwind_keys)).
+    pub fn send(inputs: &[INPUT], unwind: impl FnOnce(usize) -> Vec<INPUT>) -> SendOutcome {
         let total = inputs.len();
         let sent = send_raw(inputs);
         if sent == total {
             return SendOutcome::Complete;
         }
-        let released = super::missing_key_up(sent, total)
-            .is_some_and(|i| send_raw(std::slice::from_ref(&inputs[i])) == 1);
+        let back = unwind(sent);
+        let released = !back.is_empty() && send_raw(&back) == back.len();
         SendOutcome::Partial {
             sent,
             total,
             released,
         }
+    }
+
+    /// Key events that put things back after a partial send. Tagged as passing through, so our
+    /// hook neither counts them toward the batch (they would finish it as if complete) nor
+    /// holds them.
+    pub fn unwind_inputs(events: &[KeyEvent]) -> Vec<INPUT> {
+        key_inputs(events, Tag::Inject(super::PASS_BATCH).encode())
     }
 }
 
@@ -1174,16 +1237,70 @@ mod tests {
 
     #[test]
     fn partial_send_releases_a_held_key() {
-        // 3 strokes = 6 events.
-        assert_eq!(missing_key_up(6, 6), None, "complete");
-        assert_eq!(missing_key_up(0, 6), None, "nothing sent");
-        assert_eq!(missing_key_up(2, 6), None, "stopped between strokes");
+        // The user's own keys: whatever the sent part pressed is released.
+        let keys = [down(N), up(N), down(SHIFT), down(O), up(O), up(SHIFT)];
+        assert!(unwind_keys(&keys, 6).is_empty(), "complete");
+        assert!(unwind_keys(&keys, 0).is_empty(), "nothing sent");
+        assert!(unwind_keys(&keys, 2).is_empty(), "stopped between keys");
+        assert_eq!(unwind_keys(&keys, 1), vec![up(N)]);
+        assert_eq!(unwind_keys(&keys, 4), vec![up(SHIFT), up(O)]);
+        assert_eq!(unwind_keys(&keys, 5), vec![up(SHIFT)]);
+    }
+
+    /// Which keys are down after `events`, starting from Shift as `held`.
+    fn left_down(held: ShiftKeys, events: &[KeyEvent]) -> (Vec<u16>, ShiftKeys) {
+        let mut keys = Vec::new();
+        let mut shift = held;
+        for e in events {
+            match *e {
+                KeyEvent::Vk { vk, scan, up } if (vk, scan) == LSHIFT => shift.left = !up,
+                KeyEvent::Vk { vk, scan, up } if (vk, scan) == RSHIFT => shift.right = !up,
+                KeyEvent::Vk { vk, up, .. } | KeyEvent::Unit { unit: vk, up } => {
+                    keys.retain(|k| *k != vk);
+                    if !up {
+                        keys.push(vk);
+                    }
+                }
+            }
+        }
+        (keys, shift)
+    }
+
+    /// Review finding 1: Shift events aren't paired with a key, so a partial send is unwound
+    /// by what is down, not by counting pairs.
+    #[test]
+    fn a_partial_injection_leaves_no_key_down_and_shift_as_held() {
+        let none = ShiftKeys::default();
+        let events = key_events(&with_keys(plan(3, "The"), &Us), none);
+        // BS x3 (6 events), then LShift down: SendInput stopped there.
+        assert_eq!(events[6], shift_event(LSHIFT, false));
+        let back = unwind_injection(&events, 7, none);
+        assert_eq!(back, vec![shift_event(LSHIFT, true)]);
+        let mut sent = events[..7].to_vec();
+        sent.extend(&back);
+        assert_eq!(left_down(none, &sent), (vec![], none), "nothing stuck");
         assert_eq!(
-            missing_key_up(3, 6),
-            Some(3),
-            "stroke 2 is down: send event 3 (its up)"
+            type_into("ok teh", none, &sent).0,
+            "ok ",
+            "nothing typed beyond the sent part"
         );
-        assert_eq!(missing_key_up(5, 6), Some(5));
+
+        // Every stopping point, with and without Shift held.
+        let right = ShiftKeys {
+            left: false,
+            right: true,
+        };
+        for (held, plan) in [
+            (none, plan_correction(3, "The ", Some('h'))),
+            (right, plan_correction(3, "the?", Some('h'))),
+        ] {
+            let events = key_events(&with_keys(plan, &Us), held);
+            for stop in 0..=events.len() {
+                let mut sent = events[..stop].to_vec();
+                sent.extend(unwind_injection(&events, stop, held));
+                assert_eq!(left_down(held, &sent), (vec![], held), "{held:?} {stop}");
+            }
+        }
     }
 
     #[test]
