@@ -40,7 +40,7 @@ function updateHint(u: UpdateStatus, auto: boolean, info: AppInfo | null): strin
   switch (u.state) {
     case "checking": return t("about.check.checking");
     case "up-to-date": return t("about.check.latest");
-    case "error": return t("about.check.error", { message: u.message });
+    case "error": return t(u.phase === "install" ? "about.install.error" : "about.check.error", { message: u.message });
     default: return auto ? t("about.check.auto") : t("about.check.manual");
   }
 }
@@ -255,7 +255,7 @@ export default function App() {
     else flush();
   }, [flush, show]);
 
-  const install = () => void installUpdate().catch((e) => setUpdateState({ state: "error", message: String(e) }));
+  const install = () => void installUpdate().catch((e) => setUpdateState({ state: "error", phase: "install", message: String(e) }));
   const answerCrash = (a: "send" | "dont-send" | "always-send") => {
     setCrash(false);
     void answerCrashReport(a);
