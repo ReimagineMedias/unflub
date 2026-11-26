@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { readableAccent, systemTourKeyAccent } from "./accentContrast";
 import {
   answerCrashReport, appInfo, appVersion, checkForUpdates, crashReportPending, dismissMessage, getSettings, inTauri,
-  inputInterference, onInputInterference,
+  inputInterference, onInputInterference, onPauseControls, pauseControls, resumeAutocorrect, setPauseShortcut,
   installUpdate, onCrashReport, onOpenPage, onRemoteMessage, onSettingsChanged, onUpdateStatus, remoteMessage,
   reportUsage, resetSettings, setSettings, systemLook, updateStatus,
 } from "./api";
@@ -14,7 +14,7 @@ import { PillPreview } from "./PillPreview";
 import { PrivacyPage } from "./PrivacyPage";
 import { StatsPage } from "./StatsPage";
 import { Tour } from "./Tour";
-import { LIMITS, type AppInfo, type EngineMode, type RemoteMessage, type Settings, type SystemLook, type Theme, type UndoMode, type UpdateStatus } from "./types";
+import { LIMITS, type AppInfo, type EngineMode, type PauseControls, type RemoteMessage, type Settings, type SystemLook, type Theme, type UndoMode, type UpdateStatus } from "./types";
 
 type Page = "general" | "correction" | "appearance" | "apps" | "dictionary" | "stats" | "privacy" | "about";
 const PAGES: { id: Page; label: StringKey }[] = [
@@ -115,6 +115,43 @@ function Banners({ crash, onCrash, interference, update, autoUpdate, onInstall, 
   );
 }
 
+function ShortcutSetting({ binding, unavailable, onPreviewSave }: {
+  binding: string;
+  unavailable: boolean;
+  onPreviewSave: (settings: Settings) => void;
+}) {
+  const [draft, setDraft] = useState(binding);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<"invalid" | "save" | null>(null);
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const preview = await setPauseShortcut(draft);
+      if (preview) onPreviewSave(preview);
+    } catch (reason) {
+      setError(reason === "invalid" ? "invalid" : "save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Row stack label={t("general.shortcut")} hint={t("general.shortcut.hint")}>
+      <form className="add" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        <input aria-label={t("general.shortcut")} placeholder={t("general.shortcut.off")} maxLength={32}
+          autoComplete="off" spellCheck={false} value={draft} onChange={(e) => { setDraft(e.target.value); setError(null); }} />
+        <button type="submit" className="btn" disabled={saving || (draft === binding && !unavailable)}>
+          {t("general.shortcut.save")}
+        </button>
+      </form>
+      {(error || unavailable) && (
+        <small role="status">{t(error ? (error === "invalid" ? "general.shortcut.invalid" : "general.shortcut.failed") : "general.shortcut.unavailable")}</small>
+      )}
+    </Row>
+  );
+}
+
 export default function App() {
   const [settings, setLocal] = useState<Settings | null>(null);
   const [look, setLook] = useState<SystemLook>({ accent: null, platform: "windows" });
@@ -124,6 +161,7 @@ export default function App() {
   const [laterFor, setLaterFor] = useState<string | null>(null);
   const [crash, setCrash] = useState(false);
   const [interference, setInterference] = useState(false);
+  const [controls, setControls] = useState<PauseControls>({ paused: false, shortcutUnavailable: false });
   const [message, setMessage] = useState<RemoteMessage | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -163,6 +201,7 @@ export default function App() {
     updateStatus().then(setUpdateState);
     crashReportPending().then(setCrash);
     inputInterference().then(setInterference);
+    pauseControls().then(setControls);
     remoteMessage().then(setMessage);
     appInfo().then(setInfo);
     const offs: Promise<() => void>[] = [
@@ -170,6 +209,7 @@ export default function App() {
       onUpdateStatus(setUpdateState),
       onCrashReport(setCrash),
       onInputInterference(setInterference),
+      onPauseControls(setControls),
       onRemoteMessage(setMessage),
       onOpenPage((p) => {
         if (p === "tour") setTouring(true);
@@ -285,6 +325,11 @@ export default function App() {
   const mainMode = MAIN_MODES.find((m) => m.value === s.mode);
   const singleEngine = s.mode === "system-only" || s.mode === "bundled-only";
 
+  const changeAutocorrect = (enabled: boolean) => {
+    if (enabled && controls.paused) void resumeAutocorrect();
+    else update({ enabled });
+  };
+
   return (
     <div className="shell">
       <nav className="nav" aria-label={t("nav.label")}>
@@ -297,7 +342,7 @@ export default function App() {
           </button>
         ))}
         <div className="spacer" />
-        <PowerSwitch checked={s.enabled} onChange={(v) => update({ enabled: v })} />
+        <PowerSwitch checked={s.enabled && !controls.paused} onChange={changeAutocorrect} />
       </nav>
 
       <main>
@@ -309,9 +354,13 @@ export default function App() {
             <h1>{t("general.title")}</h1>
             <p className="lead">{t("general.lead")}</p>
             <div className="card">
-              <Row label={t("general.autocorrect")} hint={t("general.autocorrect.hint")}>
-                <Switch label={t("general.autocorrect")} checked={s.enabled} onChange={(v) => update({ enabled: v })} />
+              <Row label={t("general.autocorrect")} hint={t(controls.paused ? "general.autocorrect.paused" : "general.autocorrect.hint")}>
+                <Switch label={t("general.autocorrect")} checked={s.enabled && !controls.paused} onChange={changeAutocorrect} />
               </Row>
+              {look.platform === "windows" && (
+                <ShortcutSetting key={s.pauseShortcut} binding={s.pauseShortcut}
+                  unavailable={controls.shortcutUnavailable} onPreviewSave={fromApp} />
+              )}
               <Row label={t("general.login")} hint={info && !info.loginAllowed ? t("general.login.unavailable") : t("general.login.hint")}>
                 <Switch label={t("general.login")} disabled={info ? !info.loginAllowed : false}
                   checked={s.startAtLogin && (info?.loginAllowed ?? true)} onChange={(v) => update({ startAtLogin: v })} />

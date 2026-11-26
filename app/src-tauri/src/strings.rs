@@ -11,6 +11,16 @@ pub const TOOLTIP_HOOK_UNAVAILABLE: &str =
     "unflub can't watch the keyboard right now and keeps trying";
 
 pub const MENU_AUTOCORRECT: &str = "Autocorrect";
+pub const MENU_PAUSE: &str = "Pause autocorrect";
+pub const MENU_PAUSE_15: &str = "For 15 minutes";
+pub const MENU_PAUSE_60: &str = "For 1 hour";
+pub const MENU_PAUSE_RESTART: &str = "Until restart";
+pub const MENU_EXCLUDE_APP: &str = "Don't fix in this app";
+
+pub fn menu_exclude_app(exe: &str) -> String {
+    format!("Don't fix in {}", exe.replace('&', "&&"))
+}
+
 pub const MENU_SETTINGS: &str = "Settings…";
 pub const MENU_TOUR: &str = "Take the tour";
 pub const MENU_SUPPORT: &str = "Support unflub";

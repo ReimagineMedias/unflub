@@ -238,6 +238,11 @@ whole frame 60 s to arrive, including its length prefix and body.
   index, which an in-process resume rebuilt too). Unhooking inside a live engine would keep
   ~20 MB and a process that could still see keys. While paused nothing holds a hook or a typed
   character. Pause or Quit also cancels a pending handshake or initial configuration write.
+- The tray can pause autocorrect for 15 minutes, one hour or until unflub restarts. These
+  pauses do not change the saved Autocorrect switch. Turn autocorrect on in the tray or in
+  Settings to resume early. The Windows pause shortcut is off by default. Set it in
+  Settings > General to pause until restart or resume, without turning on autocorrect if
+  you switched it off. The tray's per-app option adds the last active app to Apps.
 - **Quit and updates** send `Shutdown`, wait up to 3 s, then end it. The updater does this
   before the installer runs, so `unflub-engine.exe` is never locked.
 - **Settings** go over the pipe as one `Configure`; the engine applies them live. Engine

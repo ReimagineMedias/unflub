@@ -34,6 +34,136 @@ pub fn taskbar_is_dark() -> bool {
     }
 }
 
+/// The active app before opening the native tray menu.
+pub fn foreground_exe() -> Option<String> {
+    #[cfg(windows)]
+    return foreground::exe();
+    #[cfg(not(windows))]
+    None
+}
+
+#[cfg(windows)]
+pub use foreground::start as track_foreground;
+
+#[cfg(windows)]
+mod foreground {
+    use std::cell::Cell;
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HWND};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetForegroundWindow, GetWindowThreadProcessId, IsWindowVisible,
+        EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT,
+    };
+
+    // Native foreground events run on the main thread, including while the tray popup is open.
+    // Keep the previous app while the Windows taskbar or its overflow puts itself in front.
+    thread_local! {
+        static LAST_APP: Cell<Option<(HWND, u32)>> = const { Cell::new(None) };
+    }
+
+    fn is_tray(window: HWND) -> bool {
+        let mut class = [0u16; 64];
+        // SAFETY: GetClassNameW bounds its write by the length of this buffer.
+        let len = unsafe { GetClassNameW(window, &mut class) };
+        matches!(
+            String::from_utf16_lossy(&class[..len.max(0) as usize]).as_str(),
+            "Shell_TrayWnd"
+                | "Shell_SecondaryTrayWnd"
+                | "NotifyIconOverflowWindow"
+                | "TopLevelWindowForOverflowXamlIsland"
+        )
+    }
+
+    fn app_pid(window: HWND) -> Option<u32> {
+        if window == unsafe { windows::Win32::UI::WindowsAndMessaging::GetShellWindow() } {
+            return None;
+        }
+        let mut pid = 0;
+        // SAFETY: pid is a valid output buffer, and these calls accept an invalid window.
+        unsafe {
+            if !IsWindowVisible(window).as_bool() {
+                return None;
+            }
+            GetWindowThreadProcessId(window, Some(&mut pid));
+        }
+        (pid != 0 && pid != std::process::id()).then_some(pid)
+    }
+
+    fn remember(window: HWND) {
+        if !is_tray(window) {
+            LAST_APP.set(app_pid(window).map(|pid| (window, pid)));
+        }
+    }
+
+    pub fn start() {
+        // SAFETY: the callback is a static function, with no user pointer. Windows removes
+        // the event subscription when the process exits. This observes focus, not input.
+        unsafe {
+            remember(GetForegroundWindow());
+            SetWinEventHook(
+                EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_FOREGROUND,
+                None,
+                Some(on_foreground),
+                0,
+                0,
+                WINEVENT_OUTOFCONTEXT,
+            );
+        }
+    }
+
+    unsafe extern "system" fn on_foreground(
+        _: HWINEVENTHOOK,
+        _: u32,
+        window: HWND,
+        _: i32,
+        _: i32,
+        _: u32,
+        _: u32,
+    ) {
+        remember(window);
+    }
+
+    pub fn exe() -> Option<String> {
+        // SAFETY: the foreground window is borrowed and may stop being valid at any time.
+        let window = unsafe { GetForegroundWindow() };
+        let pid = if is_tray(window) {
+            let (last, pid) = LAST_APP.get()?;
+            (app_pid(last) == Some(pid)).then_some(pid)?
+        } else {
+            app_pid(window)?
+        };
+        // SAFETY: the path query uses a valid output buffer. Close the handle even on error.
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let mut path = [0u16; 1024];
+            let mut len = path.len() as u32;
+            let result = QueryFullProcessImageNameW(
+                process,
+                PROCESS_NAME_WIN32,
+                PWSTR(path.as_mut_ptr()),
+                &mut len,
+            );
+            let _ = CloseHandle(process);
+            result.ok()?;
+            let path = String::from_utf16(&path[..len as usize]).ok()?;
+            let exe = std::path::Path::new(&path)
+                .file_name()?
+                .to_str()?
+                .to_lowercase();
+            (exe.ends_with(".exe")
+                && exe.chars().count() <= crate::settings::MAX_APP_CHARS
+                && !exe.chars().any(char::is_control))
+            .then_some(exe)
+        }
+    }
+}
+
 /// The tray and its engine's private bytes in whole MiB, using the owned child handle.
 #[cfg(windows)]
 pub fn pair_private_mb(child: &std::process::Child) -> Option<u64> {
