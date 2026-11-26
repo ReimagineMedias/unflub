@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { readableAccent } from "./accentContrast";
+import { readableAccent, systemTourKeyAccent } from "./accentContrast";
 import {
   answerCrashReport, appInfo, appVersion, checkForUpdates, crashReportPending, dismissMessage, getSettings, inTauri,
   inputInterference, onInputInterference,
@@ -181,6 +181,7 @@ export default function App() {
       root.style.setProperty("--os-accent", accent);
       root.style.setProperty("--os-action", readableAccent(accent, dark ? "#000000" : "#ffffff", dark ? 255 : 0, 5));
       root.style.setProperty("--os-link", readableAccent(accent, dark ? "#606060" : "#9e9e9e", dark ? 255 : 0));
+      root.style.setProperty("--os-tour-key", systemTourKeyAccent(accent, dark));
     }
   }, [theme, mode, look.accent]);
 
