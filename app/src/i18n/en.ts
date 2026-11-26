@@ -39,7 +39,7 @@ export const en = {
   "tour.skips.lead": "Code, passwords and terminals are left alone.",
   "tour.data.title": "Your choices",
   "tour.data.lead": "Nothing you type leaves your computer.",
-  "tour.data.later": "Change these any time under Privacy.",
+  "tour.data.later": "Change crash reports under Privacy and Start at login under General.",
   "tour.terms.before": "unflub is free and self-funded. By continuing, you agree to the ",
   "tour.terms.link": "Terms",
   "tour.terms.after": ".",
