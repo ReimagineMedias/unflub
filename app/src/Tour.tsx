@@ -115,6 +115,7 @@ export function Tour({ settings: s, info, update, onClose }: {
   const [fixed, setFixed] = useState(false);
   const [undone, setUndone] = useState<string | null>(null);
   const managed = info?.managed;
+  const learn = s.learnAfterUndos;
   const root = useRef<HTMLDivElement>(null);
   const shownStep = useRef(step);
 
@@ -174,7 +175,10 @@ export function Tour({ settings: s, info, update, onClose }: {
           <p className="lead">{t("tour.undo.lead")}</p>
           <PracticeBox onAction={(a) => a.kind === "undo" && setUndone(a.original)} />
           {undone
-            ? <SuccessNote>{t("tour.undo.done")}</SuccessNote>
+            ? <SuccessNote>{learn === 0
+              ? t("tour.undo.done.never")
+              : t(learn === 1 ? "tour.undo.done.one" : "tour.undo.done.many", { n: learn })}
+            </SuccessNote>
             : <p className="tour-note">{t("tour.undo.waiting")}</p>}
         </>
       )}
