@@ -94,8 +94,16 @@ pub enum UpdateStatus {
         version: String,
     },
     Error {
+        phase: UpdatePhase,
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdatePhase {
+    Check,
+    Install,
 }
 
 /// A downloaded update, kept beside its file so it survives a restart.
@@ -374,6 +382,7 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
         return set_status(
             app,
             UpdateStatus::Error {
+                phase: UpdatePhase::Check,
                 message: MANAGED.into(),
             },
         );
@@ -412,7 +421,10 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
             eprintln!("update check: {message}");
             current
         }
-        Err(message) => UpdateStatus::Error { message },
+        Err(message) => UpdateStatus::Error {
+            phase: UpdatePhase::Check,
+            message,
+        },
     };
     updates.busy.store(false, Ordering::Release);
     set_status(app, status)
@@ -683,6 +695,7 @@ pub async fn install(app: &AppHandle, restart: bool) -> Result<(), String> {
         set_status(
             app,
             UpdateStatus::Error {
+                phase: UpdatePhase::Install,
                 message: message.clone(),
             },
         );
@@ -994,9 +1007,10 @@ mod tests {
         );
         assert_eq!(
             json(UpdateStatus::Error {
+                phase: UpdatePhase::Check,
                 message: "offline".into()
             }),
-            r#"{"state":"error","message":"offline"}"#
+            r#"{"state":"error","phase":"check","message":"offline"}"#
         );
     }
 }

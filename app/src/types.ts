@@ -54,7 +54,7 @@ export type UpdateStatus =
   | { state: "idle" | "checking" | "up-to-date" }
   | { state: "available" | "ready"; version: string; notes: string; critical: boolean }
   | { state: "downloading" | "installing"; version: string }
-  | { state: "error"; message: string };
+  | { state: "error"; phase: "check" | "install"; message: string };
 
 export interface SystemLook {
   accent: string | null;
