@@ -221,7 +221,7 @@ mod host {
     use std::time::{Duration, Instant};
 
     use unflub_engine::job::KillOnClose;
-    use unflub_engine::pipe::{self, Listener, Pipe};
+    use unflub_engine::pipe::{self, Cancellation, Listener, Pipe};
     use unflub_engine::protocol::{FromEngine, ToEngine};
     use unflub_engine::{frame, session};
 
@@ -242,7 +242,7 @@ mod host {
     type Learned = Arc<Mutex<Box<dyn FnMut(String) + Send>>>;
 
     enum Cmd {
-        Apply(Box<Settings>),
+        Apply(Box<Settings>, u64),
         Flags(RemoteFlags),
         /// The engine of this generation closed its pipe.
         Exited(u64),
@@ -257,6 +257,7 @@ mod host {
     /// The supervised engine. Every method returns at once except [`shutdown`](Self::shutdown).
     pub struct EngineHost {
         tx: Sender<Cmd>,
+        startup_epoch: Arc<AtomicU64>,
         thread: Option<JoinHandle<()>>,
     }
 
@@ -278,7 +279,10 @@ mod host {
             let expects_hook = launch
                 .as_ref()
                 .is_some_and(|l| !l.args.iter().any(|a| a == "--test-ipc"));
+            let startup_epoch = Arc::new(AtomicU64::new(0));
             let supervisor = Supervisor {
+                startup_epoch: startup_epoch.clone(),
+                applied_epoch: 0,
                 expects_hook,
                 hook_unavailable: false,
                 launch,
@@ -304,12 +308,23 @@ mod host {
             if enabled && thread.is_none() {
                 startup_observer(Observed::HookUnavailable { active: true });
             }
-            Self { tx, thread }
+            Self {
+                tx,
+                startup_epoch,
+                thread,
+            }
         }
 
         /// Apply new settings (already sanitised). Pausing ends the engine; resuming starts it.
         pub fn apply(&self, settings: &Settings) {
-            let _ = self.tx.send(Cmd::Apply(Box::new(settings.clone())));
+            let epoch = if settings.enabled {
+                self.startup_epoch.load(Ordering::Relaxed)
+            } else {
+                self.startup_epoch
+                    .fetch_add(1, Ordering::Relaxed)
+                    .wrapping_add(1)
+            };
+            let _ = self.tx.send(Cmd::Apply(Box::new(settings.clone()), epoch));
         }
 
         /// Apply new remote flags.
@@ -324,6 +339,7 @@ mod host {
 
         fn stop(&mut self) {
             if let Some(thread) = self.thread.take() {
+                self.startup_epoch.fetch_add(1, Ordering::Relaxed);
                 let _ = self.tx.send(Cmd::Shutdown);
                 let _ = thread.join();
             }
@@ -349,6 +365,9 @@ mod host {
     }
 
     struct Supervisor {
+        /// Pause or Quit invalidates an in-flight startup before its command is dequeued.
+        startup_epoch: Arc<AtomicU64>,
+        applied_epoch: u64,
         launch: Option<Launch>,
         /// A started engine must hook the keyboard (false for `--test-ipc` test engines).
         expects_hook: bool,
@@ -403,7 +422,8 @@ mod host {
                     None => rx.recv().unwrap_or(Cmd::Shutdown),
                 };
                 match cmd {
-                    Cmd::Apply(next) => {
+                    Cmd::Apply(next, epoch) => {
+                        self.applied_epoch = epoch;
                         let resumed = !self.settings.enabled && next.enabled;
                         self.settings = *next;
                         if resumed {
@@ -411,7 +431,9 @@ mod host {
                             self.failures = 0;
                             self.next_start = None;
                         }
-                        self.configure();
+                        if self.settings.enabled {
+                            self.configure();
+                        }
                     }
                     Cmd::Flags(flags) => {
                         self.flags = flags;
@@ -434,12 +456,16 @@ mod host {
                 self.set_hook_unavailable(false);
                 return;
             }
-            if self.running.is_some() || self.next_start.is_some() {
+            if self.running.is_some()
+                || self.next_start.is_some()
+                || self.startup_cancellation().is_cancelled()
+            {
                 return;
             }
             self.set_hook_unavailable(true);
             match self.spawn() {
                 Ok(running) => self.running = Some(running),
+                Err(_) if self.startup_cancellation().is_cancelled() => {}
                 Err(e) => {
                     eprintln!("autocorrect: can't start the engine: {e}");
                     self.failures = self.failures.saturating_add(1);
@@ -485,6 +511,10 @@ mod host {
             self.next_start = Some(Instant::now() + super::backoff(self.failures));
         }
 
+        fn startup_cancellation(&self) -> Cancellation<'_> {
+            Cancellation::new(&self.startup_epoch, self.applied_epoch)
+        }
+
         fn spawn(&mut self) -> std::io::Result<Running> {
             let launch = self
                 .launch
@@ -510,11 +540,12 @@ mod host {
                 .and_then(|job| job.assign(&child).map(|()| job))
                 .map_err(|e| eprintln!("autocorrect: engine job object: {e}"))
                 .ok();
-            let pipe = match session::serve(
+            let pipe = match session::serve_cancellable(
                 listener,
                 child.id(),
                 &own_exe(),
                 session::HANDSHAKE_TIMEOUT,
+                self.startup_cancellation(),
             ) {
                 Ok((pipe, _version)) => Arc::new(pipe),
                 Err(e) => {
@@ -523,10 +554,18 @@ mod host {
                     return Err(e);
                 }
             };
+            if self.startup_cancellation().is_cancelled() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(std::io::ErrorKind::ConnectionAborted.into());
+            }
             self.generation += 1;
             let generation = self.generation;
             let settings = self.engine_settings();
-            if let Err(e) = frame::write(&mut &*pipe, &ToEngine::Configure { settings }) {
+            if let Err(e) = frame::write(
+                &mut pipe.cancellable_writer(self.startup_cancellation()),
+                &ToEngine::Configure { settings },
+            ) {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(e);
