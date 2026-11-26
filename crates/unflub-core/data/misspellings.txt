@@ -39,3 +39,18 @@ wierd weird
 wnat want
 yatch yacht
 waht what
+
+# Two words typed as one (#8).
+abit a bit
+alittle a little
+aswell as well
+atleast at least
+donot do not
+eachother each other
+eventhough even though
+incase in case
+infact in fact
+inspite in spite
+noone no one
+ontop on top
+thankyou thank you
