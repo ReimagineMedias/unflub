@@ -35,3 +35,17 @@ pub const ENGINE_EXE: &str = if cfg!(windows) {
 } else {
     "unflub-engine"
 };
+
+/// Disable default Windows Error Reporting for this process, preserving other error-mode bits.
+/// Call at startup, before creating worker threads. This changes no machine or user policy.
+#[cfg(windows)]
+pub fn disable_windows_crash_reporting() {
+    use windows::Win32::System::Diagnostics::Debug::{
+        GetErrorMode, SetErrorMode, SEM_NOGPFAULTERRORBOX, THREAD_ERROR_MODE,
+    };
+
+    // SAFETY: only reads and updates the calling process's error mode.
+    unsafe {
+        SetErrorMode(THREAD_ERROR_MODE(GetErrorMode()) | SEM_NOGPFAULTERRORBOX);
+    }
+}

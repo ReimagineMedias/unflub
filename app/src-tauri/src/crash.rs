@@ -36,12 +36,7 @@ pub const PENDING_EVENT: &str = "crash-report";
 /// Baked in by release CI. `None` turns crash reports off entirely.
 const DSN: Option<&str> = option_env!("SENTRY_DSN");
 
-/// Threads whose panic message may be kept. Every other thread can hold typed text or words (the
-/// hook, injector, engine, pill, spell checker, UI Automation), so only the panic's location and
-/// stack are kept for them.
-const MESSAGE_THREADS: &[&str] = &["main", "unflub-update", "unflub-stats"];
-
-const WITHHELD: &str = "panic message withheld: this thread handles typed text";
+const WITHHELD: &str = "panic message withheld: unflub handles typed text";
 
 pub fn enabled() -> bool {
     DSN.is_some_and(|d| !d.trim().is_empty())
@@ -89,7 +84,6 @@ pub fn install(dir: &Path, version: &str, disabled: bool) -> (Crashes, bool) {
     let release = format!("unflub@{version}");
     let home = home_dir();
     let path = pending_path.clone();
-    let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // Keep the first report if several threads panic at once.
         if !path.exists() {
@@ -101,7 +95,15 @@ pub fn install(dir: &Path, version: &str, disabled: bool) -> (Crashes, bool) {
                 let _ = fs::write(&path, bytes);
             }
         }
-        previous(info);
+        // The default hook prints the panic payload, which can contain practice-box input.
+        #[cfg(all(windows, panic = "abort"))]
+        // SAFETY: terminate only this process. The pseudo handle needs no closing.
+        unsafe {
+            use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+            let _ = TerminateProcess(GetCurrentProcess(), 101);
+        }
+        // With unwinding enabled the caller can still catch the panic. In an aborting build,
+        // a failed TerminateProcess falls back to Rust's abort with WER disabled at startup.
     }));
     let has_report = crashed_last_time && enabled() && !disabled;
     if crashed_last_time && !has_report {
@@ -175,11 +177,7 @@ fn event_from_panic(
         sentry::integrations::panic::PanicIntegration::new().event_from_panic_info(info);
     let thread = std::thread::current();
     let thread_name = thread.name().unwrap_or("unnamed");
-    if !MESSAGE_THREADS.contains(&thread_name) {
-        for exception in event.exception.values.iter_mut() {
-            exception.value = Some(WITHHELD.into());
-        }
-    }
+    redact_panic_message(&mut event, info.location());
     event.tags.insert("thread".into(), thread_name.into());
     event.release = Some(Cow::Owned(release.to_string()));
     // The modules loaded now, so the stack symbolicates against the binary that crashed even if
@@ -189,6 +187,17 @@ fn event_from_panic(
         ..Default::default()
     });
     scrub(event, home)
+}
+
+/// Even the app's main thread can handle practice-box input. Keep the source location and stack.
+fn redact_panic_message(event: &mut Event<'_>, location: Option<&std::panic::Location<'_>>) {
+    let safe = location.map_or_else(
+        || WITHHELD.to_string(),
+        |loc| format!("{WITHHELD} (at {loc})"),
+    );
+    for exception in &mut event.exception.values {
+        exception.value = Some(safe.clone());
+    }
 }
 
 /// Remove anything that could identify the user: machine name, user, breadcrumbs, request
@@ -392,33 +401,21 @@ mod tests {
         );
     }
 
-    /// A panic on a thread that sees keys keeps its stack but not its message.
     #[test]
-    fn hook_thread_panics_lose_their_message() {
-        let captured: Arc<Mutex<Option<Event<'static>>>> = Arc::default();
-        let sink = captured.clone();
-        let thread = std::thread::Builder::new()
-            .name("unflub-hook".into())
-            .spawn(move || {
-                let previous = std::panic::take_hook();
-                std::panic::set_hook(Box::new(move |info| {
-                    if std::thread::current().name() == Some("unflub-hook") {
-                        *sink.lock().unwrap() = Some(event_from_panic(info, "unflub@test", None));
-                    } else {
-                        previous(info);
-                    }
-                }));
-                panic!("the user typed: hunter2");
-            })
-            .unwrap();
-        assert!(thread.join().is_err());
-        let _ = std::panic::take_hook();
-        let event = captured.lock().unwrap().take().expect("hook ran");
+    fn app_panics_keep_the_location_and_stack_without_a_payload() {
+        let mut event = Event::default();
+        event.exception.values.push(Exception {
+            ty: "panic".into(),
+            value: Some("the user typed: hunter2".into()),
+            stacktrace: Some(Stacktrace::default()),
+            ..Default::default()
+        });
+        redact_panic_message(&mut event, Some(std::panic::Location::caller()));
         let text = serde_json::to_string(&event).unwrap();
-        assert!(!text.contains("hunter2"), "{text}");
+        assert!(!text.contains("hunter2"));
         assert!(text.contains(WITHHELD));
-        assert_eq!(event.tags["thread"], "unflub-hook");
-        assert_eq!(event.release.as_deref(), Some("unflub@test"));
+        assert!(text.contains("crash.rs"));
+        assert!(event.exception.values[0].stacktrace.is_some());
     }
 
     /// What `crates/unflub-engine/src/crash.rs` writes, cut down.

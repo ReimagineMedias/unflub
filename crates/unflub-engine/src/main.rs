@@ -70,6 +70,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
 }
 
 fn main() {
+    #[cfg(windows)]
+    unflub_engine::disable_windows_crash_reporting();
     let args = match parse_args(std::env::args().skip(1)) {
         Ok(args) => args,
         Err(e) => {

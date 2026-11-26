@@ -918,6 +918,8 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    unflub_engine::disable_windows_crash_reporting();
     let perf_idle = perf_idle_dir(std::env::args());
     let mut builder = tauri::Builder::default();
     if perf_idle.is_none() {
