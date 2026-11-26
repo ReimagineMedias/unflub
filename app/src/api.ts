@@ -206,36 +206,59 @@ export async function appInfo(): Promise<AppInfo> {
   return inTauri ? invoke<AppInfo>("app_info") : mockInfo();
 }
 
-/** A browser-preview stand-in for the tour's engine: three typos, undo, and remembering. */
+/**
+ * A browser-preview stand-in for the tour's engine (tour.rs): three typos, Backspace twice to
+ * undo, and remembering after two undos, whatever the settings say.
+ */
 const mockTour = (() => {
   const fixes: Record<string, string> = { teh: "the", adn: "and", recieve: "receive", taht: "that" };
   let word = "";
   let learned = new Set<string>();
+  let undos = new Map<string, number>();
   let last: { original: string; corrected: string; boundary: string } | null = null;
-  return {
-    reset() { word = ""; learned = new Set(); last = null; },
-    key(key: string): TourAction {
-      const undo = last;
-      last = null;
-      if (key === "Reset") {
-        word = "";
-        return { kind: "pass" };
-      }
-      if (key === "Backspace") {
-        if (undo) {
-          learned.add(undo.original.toLowerCase());
-          return { kind: "undo", delete: undo.corrected.length + 1, insert: undo.original + undo.boundary, ...undo };
-        }
-        word = word.slice(0, -1);
-        return { kind: "pass" };
-      }
-      if (/^[\p{L}\p{N}'-]$/u.test(key)) { word += key; return { kind: "pass" }; }
-      const typed = word;
+  let held = false;
+  const step = (key: string): TourAction => {
+    const undo = last;
+    last = null;
+    if (key === "Reset") {
       word = "";
-      const fix = fixes[typed.toLowerCase()];
-      if (!fix || learned.has(typed.toLowerCase())) return { kind: "pass" };
-      last = { original: typed, corrected: fix, boundary: key };
-      return { kind: "replace", delete: typed.length, insert: fix + key, original: typed, corrected: fix };
+      return { kind: "pass" };
+    }
+    if (key === "Backspace") {
+      if (undo && !held) {
+        held = true;
+        last = undo;
+        return { kind: "hold", original: undo.original, corrected: undo.corrected };
+      }
+      held = false;
+      if (undo) {
+        const typo = undo.original.toLowerCase();
+        undos.set(typo, (undos.get(typo) ?? 0) + 1);
+        if ((undos.get(typo) ?? 0) >= 2) learned.add(typo);
+        return { kind: "undo", delete: undo.corrected.length + 1, insert: undo.original + undo.boundary, ...undo };
+      }
+      word = word.slice(0, -1);
+      return { kind: "pass" };
+    }
+    if (/^[\p{L}\p{N}'-]$/u.test(key)) { word += key; return { kind: "pass" }; }
+    const typed = word;
+    word = "";
+    const fix = fixes[typed.toLowerCase()];
+    if (!fix || learned.has(typed.toLowerCase())) return { kind: "pass" };
+    last = { original: typed, corrected: fix, boundary: key };
+    return { kind: "replace", delete: typed.length, insert: fix + key, original: typed, corrected: fix };
+  };
+  return {
+    reset() { word = ""; learned = new Set(); undos = new Map(); last = null; held = false; },
+    key(key: string): TourAction[] {
+      // Like tour.rs: a held Backspace goes on before any other key.
+      if (held && key !== "Backspace") {
+        held = false;
+        last = null;
+        word = word.slice(0, -1);
+        return [{ kind: "release" }, step(key)];
+      }
+      return [step(key)];
     },
   };
 })();
@@ -259,7 +282,7 @@ export async function tourReset(): Promise<void> {
   else mockTour.reset();
 }
 
-/** One key typed in the tour's practice box: what to do with it. */
-export async function tourKey(key: string): Promise<TourAction> {
-  return inTauri ? invoke<TourAction>("tour_key", { key }) : mockTour.key(key);
+/** One key typed in the tour's practice box: what to do with it, step by step. */
+export async function tourKey(key: string): Promise<TourAction[]> {
+  return inTauri ? invoke<TourAction[]>("tour_key", { key }) : mockTour.key(key);
 }

@@ -7,7 +7,8 @@ import type { AppInfo, Settings, TourAction } from "./types";
 
 const RESET_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Delete"]);
 
-type Pill = { from: string; to: string; undone: boolean } | null;
+/** `asking`: a first Backspace is held and the pill asks "Undo?" until the next key. */
+type Pill = { from: string; to: string; kind: "fixed" | "undone" | "asking" } | null;
 
 /**
  * The practice box. The keyboard hook leaves unflub's own windows alone, so each key goes to a
@@ -35,14 +36,28 @@ function PracticeBox({ onAction }: { onAction: (a: TourAction) => void }) {
     if (el) el.selectionStart = el.selectionEnd = el.value.length;
   }, [text]);
 
+  const dropLast = (s: string) => Array.from(s).slice(0, -1).join("");
+
   const apply = (key: string, a: TourAction) => {
     if (a.kind === "pass") {
-      setText((s) => (key === "Backspace" ? Array.from(s).slice(0, -1).join("") : s + key));
+      setText((s) => (key === "Backspace" ? dropLast(s) : s + key));
       return;
     }
-    setText((s) => Array.from(s).slice(0, Math.max(0, Array.from(s).length - a.delete)).join("") + a.insert);
-    setPill(a.kind === "replace" ? { from: a.original, to: a.corrected, undone: false } : { from: a.corrected, to: a.original, undone: true });
     window.clearTimeout(hide.current);
+    if (a.kind === "release") {
+      // The held Backspace goes on: delete one character, and the question is answered.
+      setText(dropLast);
+      setPill(null);
+      return;
+    }
+    if (a.kind === "hold") {
+      // Nothing deleted yet; the pill asks until the next key, as the real one does.
+      setPill({ from: a.original, to: a.corrected, kind: "asking" });
+      return;
+    }
+    const { delete: remove, insert, original, corrected } = a;
+    setText((s) => Array.from(s).slice(0, Math.max(0, Array.from(s).length - remove)).join("") + insert);
+    setPill(a.kind === "replace" ? { from: original, to: corrected, kind: "fixed" } : { from: corrected, to: original, kind: "undone" });
     hide.current = window.setTimeout(() => setPill(null), 1600);
     onAction(a);
   };
@@ -54,29 +69,31 @@ function PracticeBox({ onAction }: { onAction: (a: TourAction) => void }) {
     e.preventDefault();
     const sent = key ?? "Reset";
     queue.current = queue.current.then(async () => {
-      let action: TourAction = { kind: "pass" };
+      let actions: TourAction[] = [{ kind: "pass" }];
       try {
         if (needsReset.current) {
-          await tourKey("Reset");
+          for (const a of await tourKey("Reset")) if (a.kind !== "pass") apply("", a);
           needsReset.current = false;
         }
-        action = await tourKey(sent);
+        actions = await tourKey(sent);
       } catch {
         // The failed call may have reached Rust. Reset before trusting another correction.
         needsReset.current = true;
       }
-      if (key) apply(key, action);
+      // A release comes first even for keys the box doesn't type (arrows).
+      for (const a of actions) if (key || a.kind !== "pass") apply(key ?? "", a);
     });
   };
 
   return (
     <div className="practice">
-      <div className={`pill${pill ? " show" : ""}`} style={{ left: 14, top: -34 }} aria-live="polite">
+      <div className={`pill${pill ? " show" : ""}${pill?.kind === "asking" ? " asking" : ""}`} style={{ left: 14, top: -34 }} aria-live="polite">
         {pill && (
           <>
             <s>{pill.from}</s>
             <span>→ {pill.to}</span>
-            {!pill.undone && <kbd>{t("pillPreview.undo")}</kbd>}
+            {pill.kind === "fixed" && <kbd>{t("pillPreview.undo")}</kbd>}
+            {pill.kind === "asking" && <strong>{t("tour.undo.ask")}</strong>}
           </>
         )}
       </div>
@@ -158,7 +175,9 @@ export function Tour({ settings: s, info, update, onClose }: {
           <h1>{t("tour.undo.title")}</h1>
           <p className="lead">{t("tour.undo.lead")}</p>
           <PracticeBox onAction={(a) => a.kind === "undo" && setUndone(a.original)} />
-          {undone ? <SuccessNote>{t("tour.undo.done")}</SuccessNote> : <p className="tour-note">{t("tour.undo.waiting")}</p>}
+          {undone
+            ? <SuccessNote>{t("tour.undo.done")}</SuccessNote>
+            : <p className="tour-note">{t("tour.undo.waiting")}</p>}
         </>
       )}
 
