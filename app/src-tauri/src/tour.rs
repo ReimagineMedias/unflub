@@ -260,11 +260,14 @@ mod tests {
             type_into(&tour, "\u{8}", &mut text);
             assert_eq!(text, &want[..want.len() - 1], "{keys:?}");
         }
-        // An arrow key (Reset) releases it too.
+        // Reset releases it for shortcuts, navigation and repeats. The browser applies the
+        // repeat itself, so it can delete without sending a second Backspace to the engine.
         let tour = Tour::default();
         tour.reset();
-        type_into(&tour, "adn \u{8}", &mut String::new());
+        let mut text = String::new();
+        type_into(&tour, "adn \u{8}", &mut text);
         assert_eq!(tour.key("Reset"), [TourAction::Release, TourAction::Pass]);
+        assert_eq!(tour.key("Backspace"), [TourAction::Pass]);
         // A key the box ignores changes nothing, the hold included.
         let tour = Tour::default();
         tour.reset();
