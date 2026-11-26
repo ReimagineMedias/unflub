@@ -478,6 +478,9 @@ export default function App() {
                   <button className="btn ghost" onClick={() => { setMessage(null); void dismissMessage(message.id); }}>{t("about.message.dismiss")}</button>
                 </Row>
               )}
+              {u.state === "updated" && (
+                <Row label={<span role="status">{t("about.updated", { version: u.version })}</span>}><span /></Row>
+              )}
               {pending && (
                 <div className="row update-row">
                   <div className="label">

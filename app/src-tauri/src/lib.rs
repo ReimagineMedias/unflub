@@ -1031,7 +1031,7 @@ pub fn run() {
             if data_dir != config_dir {
                 files::move_machine_state(&data_dir, &local_dir, files::MACHINE_STATE);
             }
-            app.manage(Updates::new(local_dir.clone(), local_dir.clone()));
+            app.manage(Updates::new(local_dir.clone(), local_dir.clone(), &version));
             app.manage(net::Rollout::new(local_dir.clone()));
             let store = Store::new(config_dir.clone());
             let first_run = !store.exists();
@@ -1118,12 +1118,16 @@ pub fn run() {
                     }
                 });
             }
+            let updated = matches!(
+                handle.state::<Updates>().status(),
+                UpdateStatus::Updated { .. }
+            );
             updates::spawn_background(handle.clone());
             usage::spawn(handle.clone());
             let background = std::env::args().any(|a| a == BACKGROUND_ARG);
             let welcome = !current_settings(handle).onboarded;
-            if perf_idle.is_none() && (first_run || welcome || !background) {
-                open_settings(handle, None);
+            if perf_idle.is_none() && (first_run || welcome || !background || updated) {
+                open_settings(handle, updated.then_some("about"));
             }
             Ok(())
         })

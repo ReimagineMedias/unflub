@@ -25,6 +25,20 @@
     FileWrite $R1 "installer"
     FileClose $R1
   ${EndIf}
+
+  ; A restart after installing an update opens About once. Quit updates don't pass /R.
+  ClearErrors
+  ${GetOptions} $CMDLINE "/R" $R0
+  ${If} $UpdateMode = 1
+  ${AndIfNot} ${Errors}
+    CreateDirectory "$LOCALAPPDATA\${BUNDLEID}"
+    ClearErrors
+    FileOpen $R1 "$LOCALAPPDATA\${BUNDLEID}\updated-version" w
+    ${IfNot} ${Errors}
+      FileWrite $R1 "${VERSION}"
+      FileClose $R1
+    ${EndIf}
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
