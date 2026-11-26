@@ -274,7 +274,7 @@ export const en = {
   "about.star.hint": "MIT licensed and open source. An RMGN product.",
   "about.star.button": "GitHub",
   "about.reset": "Reset settings",
-  "about.reset.hint": "Back to defaults. Your words and shortcuts are cleared.",
+  "about.reset.hint": "Back to defaults, apart from your privacy choices. Your words and shortcuts are cleared.",
   "about.reset.button": "Reset",
   "about.message.more": "Learn more",
   "about.message.dismiss": "Dismiss",

@@ -32,7 +32,8 @@ export async function setSettings(settings: Settings): Promise<Settings> {
 
 export async function resetSettings(): Promise<Settings> {
   if (inTauri) return invoke<Settings>("reset_settings");
-  mock = { ...structuredClone(defaultSettings), onboarded: mock.onboarded };
+  const { onboarded, shareUsageStats, sendCrashReports } = mock;
+  mock = { ...structuredClone(defaultSettings), onboarded, shareUsageStats, sendCrashReports };
   return structuredClone(mock);
 }
 

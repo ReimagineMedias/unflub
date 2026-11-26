@@ -156,10 +156,13 @@ fn reset_settings(app: AppHandle) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     state.pending_learned.lock().unwrap().clear();
     update_settings(&app, |current| {
-        // A reset is about preferences: the welcome isn't shown again.
+        // A reset is about preferences: the welcome isn't shown again, and usage stats and
+        // crash reports stay as the user set them (an off is never turned back on).
         *current = Settings {
             schema_version: current.schema_version,
             onboarded: current.onboarded,
+            share_usage_stats: current.share_usage_stats,
+            send_crash_reports: current.send_crash_reports,
             extra: std::mem::take(&mut current.extra),
             ..Settings::default()
         };

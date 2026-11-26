@@ -125,7 +125,8 @@ Repo is private until v0.1, then flipped public.
   Manifest flags (`remote.rs`) may only switch things off (tested). Machine
   policy `HKLM\Software\Policies\RMGN\unflub` (`managed.rs`). Typo-fix pair sharing was cut from v0.1.
 - Settings have `schemaVersion` (`migrations.rs`, step by step, keeps `settings.json.v<N>`), and unknown fields survive
-  in `Settings::extra`. All window strings are in `app/src/i18n/en.ts` (`t()`), tray strings in `strings.rs`. External
+  in `Settings::extra`. The usage-stats and crash-report switches are also kept in `privacy-switches.json`; an off in
+  either file wins, so a corrupt or downgraded settings.json never turns telemetry back on (#134). All window strings are in `app/src/i18n/en.ts` (`t()`), tray strings in `strings.rs`. External
   links only via `<ExternalLink>` / tauri-plugin-opener (scoped to github.com and unflub.rmgn.net); a cargo test fails
   on raw `<a>` in `app/src`.
 - The hook ignores unflub's own exe (HookOptions.excluded_apps), so Settings is never autocorrected; the first-run
