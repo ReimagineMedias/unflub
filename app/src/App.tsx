@@ -127,6 +127,24 @@ export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [touring, setTouring] = useState(() => new URLSearchParams(window.location.search).get("page") === "tour");
   const saveTimer = useRef<number | undefined>(undefined);
+  /** What the window shows, as of the last change (state may not have rendered it yet). */
+  const latest = useRef<Settings | null>(null);
+  const show = useCallback((s: Settings) => {
+    latest.current = s;
+    setLocal(s);
+  }, []);
+  /** Settings changed in the window and not sent yet. */
+  const unsaved = useRef<Settings | null>(null);
+  /** Every field the window changed that isn't saved yet (unsent or still being saved), so news
+   * from elsewhere (the tray, a learned word, an older save) never undoes it. */
+  const dirty = useRef<Partial<Settings>>({});
+  const saving = useRef(0);
+  /** Settings from the app, with the window's own changes still on top. */
+  const fromApp = useCallback((s: Settings) => {
+    const merged = { ...s, ...dirty.current };
+    if (unsaved.current) unsaved.current = merged;
+    show(merged);
+  }, [show]);
   /** Personal words removed since the last save (see `setSettings`). */
   const removedWords = useRef(new Set<string>());
 
@@ -136,7 +154,7 @@ export default function App() {
       const q = new URLSearchParams(window.location.search);
       const theme = q.get("theme") as Theme | null;
       const appearance = q.get("mode") as Settings["appearance"] | null;
-      setLocal({ ...s, ...(theme && { theme }), ...(appearance && { appearance }) });
+      show({ ...s, ...(theme && { theme }), ...(appearance && { appearance }) });
     });
     systemLook().then(setLook);
     appVersion().then(setVersion);
@@ -146,7 +164,7 @@ export default function App() {
     remoteMessage().then(setMessage);
     appInfo().then(setInfo);
     const offs: Promise<() => void>[] = [
-      onSettingsChanged(setLocal),
+      onSettingsChanged(fromApp),
       onUpdateStatus(setUpdateState),
       onCrashReport(setCrash),
       onInputInterference(setInterference),
@@ -157,7 +175,7 @@ export default function App() {
       }),
     ];
     return () => offs.forEach((off) => void off.then((f) => f()));
-  }, []);
+  }, [show, fromApp]);
 
   // A page change replaces the content under the focused nav button: move focus to the new page's title.
   const shownPage = useRef(page);
@@ -187,24 +205,54 @@ export default function App() {
     }
   }, [theme, mode, look.accent]);
 
-  // Optimistic local update, debounced persist so sliders don't write on every step.
-  const update = useCallback((patch: Partial<Settings>) => {
-    setLocal((prev) => {
-      if (!prev) return prev;
-      const next = { ...prev, ...patch };
-      if (patch.personalWords) {
-        for (const w of prev.personalWords) if (!patch.personalWords.includes(w)) removedWords.current.add(w);
-        for (const w of patch.personalWords) removedWords.current.delete(w);
-      }
-      window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(() => {
-        const removed = [...removedWords.current];
-        removedWords.current.clear();
-        void setSettings(next, removed);
-      }, 200);
-      return next;
+  /** Send the unsaved change now. */
+  const flush = useCallback(() => {
+    window.clearTimeout(saveTimer.current);
+    const next = unsaved.current;
+    if (!next) return;
+    unsaved.current = null;
+    const removed = [...removedWords.current];
+    removedWords.current.clear();
+    saving.current += 1;
+    void setSettings(next, removed).finally(() => {
+      saving.current -= 1;
+      if (saving.current > 0 || unsaved.current) return;
+      // Everything is saved: show the app's settings as they are now (words learned meanwhile).
+      dirty.current = {};
+      void getSettings().then((s) => {
+        if (saving.current === 0 && !unsaved.current) show(s);
+      });
     });
-  }, []);
+  }, [show]);
+
+  // Closing the window destroys the page: whatever is still waiting goes now.
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [flush]);
+
+  /** Optimistic local update, saved at once. `later`: a slider moving or a field being typed in,
+   * saved 200 ms after the last change (or on release) so it doesn't write on every step. */
+  const update = useCallback((patch: Partial<Settings>, later = false) => {
+    const prev = latest.current;
+    if (!prev) return;
+    const next = { ...prev, ...patch };
+    if (patch.personalWords) {
+      for (const w of prev.personalWords) if (!patch.personalWords.includes(w)) removedWords.current.add(w);
+      for (const w of patch.personalWords) removedWords.current.delete(w);
+    }
+    dirty.current = { ...dirty.current, ...patch };
+    unsaved.current = next;
+    show(next);
+    window.clearTimeout(saveTimer.current);
+    if (later) saveTimer.current = window.setTimeout(flush, 200);
+    else flush();
+  }, [flush, show]);
 
   const install = () => void installUpdate().catch((e) => setUpdateState({ state: "error", message: String(e) }));
   const answerCrash = (a: "send" | "dont-send" | "always-send") => {
@@ -278,12 +326,12 @@ export default function App() {
               </Row>
               <Row label={t("correction.confidence")} hint={t("correction.confidence.hint")}>
                 <Slider label={t("correction.confidence")} min={0} max={1} step={0.05} value={s.confidence}
-                  onChange={(v) => update({ confidence: v })}
+                  onChange={(v) => update({ confidence: v }, true)} onCommit={flush}
                   format={(v) => (v < 0.35 ? t("correction.confidence.eager") : v > 0.75 ? t("correction.confidence.cautious") : t("correction.confidence.balanced"))} />
               </Row>
               <Row label={t("correction.minLen")} hint={t("correction.minLen.hint")}>
                 <Slider label={t("correction.minLen.label")} min={1} max={6} step={1} value={s.minWordLen}
-                  onChange={(v) => update({ minWordLen: v })} format={(v) => t(v === 1 ? "correction.minLen.one" : "correction.minLen.many", { n: v })} />
+                  onChange={(v) => update({ minWordLen: v }, true)} onCommit={flush} format={(v) => t(v === 1 ? "correction.minLen.one" : "correction.minLen.many", { n: v })} />
               </Row>
               <Row label={t("correction.code")} hint={t("correction.code.hint")}>
                 <Switch label={t("correction.code")} checked={s.skipCode} onChange={(v) => update({ skipCode: v })} />
@@ -364,13 +412,13 @@ export default function App() {
                   </Row>
                   <Row label={t("appearance.opacity")}>
                     <Slider label={t("appearance.opacity")} min={0.3} max={1} step={0.02} value={s.pillOpacity}
-                      onChange={(v) => update({ pillOpacity: v })} format={(v) => `${Math.round(v * 100)}%`} />
+                      onChange={(v) => update({ pillOpacity: v }, true)} onCommit={flush} format={(v) => `${Math.round(v * 100)}%`} />
                   </Row>
                 </>
               )}
               <Row label={t("appearance.duration")} hint={t("appearance.duration.hint")}>
                 <Slider label={t("appearance.duration")} min={300} max={5000} step={100} value={s.pillDurationMs}
-                  onChange={(v) => update({ pillDurationMs: v })} format={(v) => t("appearance.duration.value", { s: (v / 1000).toFixed(1) })} />
+                  onChange={(v) => update({ pillDurationMs: v }, true)} onCommit={flush} format={(v) => t("appearance.duration.value", { s: (v / 1000).toFixed(1) })} />
               </Row>
             </div>
           </>
@@ -400,7 +448,7 @@ export default function App() {
                   placeholder={t("dictionary.words.placeholder")} empty={t("dictionary.words.empty")} single={t("dictionary.words.single")} maxLength={LIMITS.word} />
               </Row>
               <Row stack label={t("dictionary.shortcuts")} hint={t("dictionary.shortcuts.hint")}>
-                <RuleList rules={s.userRules} onChange={(v) => update({ userRules: v })} />
+                <RuleList rules={s.userRules} onChange={(v, typing) => update({ userRules: v }, typing)} onCommit={flush} />
               </Row>
             </div>
           </>
@@ -476,7 +524,14 @@ export default function App() {
                 <ExternalLink className="btn ghost" href={LINKS.repo}>{t("about.star.button")}</ExternalLink>
               </Row>
               <Row label={t("about.reset")} hint={t("about.reset.hint")}>
-                <button className="btn ghost" onClick={() => void resetSettings().then(setLocal)}>{t("about.reset.button")}</button>
+                <button className="btn ghost" onClick={() => {
+                  // A change still waiting would land after the reset.
+                  window.clearTimeout(saveTimer.current);
+                  unsaved.current = null;
+                  dirty.current = {};
+                  removedWords.current.clear();
+                  void resetSettings().then(show);
+                }}>{t("about.reset.button")}</button>
               </Row>
             </div>
           </>

@@ -156,19 +156,22 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
   );
 }
 
-export function Slider({ value, min, max, step, onChange, format, label }: {
+/** `onCommit`: the user let go (pointer up, key up, focus left), so a debounced save can go now. */
+export function Slider({ value, min, max, step, onChange, onCommit, format, label }: {
   value: number;
   min: number;
   max: number;
   step: number;
   onChange: (v: number) => void;
+  onCommit?: () => void;
   format: (v: number) => string;
   label: string;
 }) {
   const id = useId();
   return (
     <div className="slider">
-      <input id={id} type="range" aria-label={label} aria-valuetext={format(value)} min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      <input id={id} type="range" aria-label={label} aria-valuetext={format(value)} min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(Number(e.target.value))} onPointerUp={onCommit} onKeyUp={onCommit} onBlur={onCommit} />
       <output htmlFor={id}>{format(value)}</output>
     </div>
   );
@@ -245,7 +248,13 @@ function RuleTrigger({ value, onRename }: { value: string; onRename: (typed: str
   );
 }
 
-export function RuleList({ rules, onChange }: { rules: [string, string][]; onChange: (r: [string, string][]) => void }) {
+/** `onChange`'s `typing` is true while a shortcut is being edited in place; `onCommit` runs when
+ * that field loses focus. */
+export function RuleList({ rules, onChange, onCommit }: {
+  rules: [string, string][];
+  onChange: (r: [string, string][], typing?: boolean) => void;
+  onCommit?: () => void;
+}) {
   const [from, setFrom] = useState("");
   const [target, setTarget] = useState("");
   const add = () => {
@@ -265,7 +274,7 @@ export function RuleList({ rules, onChange }: { rules: [string, string][]; onCha
             onChange(rules.map((r, j) => (j === i ? [typed, r[1]] : r)));
           }} />
           <span className="arrow">→</span>
-          <input value={to} aria-label={t("dictionary.shortcuts.becomes")} maxLength={LIMITS.replacement} spellCheck={false} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
+          <input value={to} aria-label={t("dictionary.shortcuts.becomes")} maxLength={LIMITS.replacement} spellCheck={false} onBlur={onCommit} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [r[0], e.target.value] : r)), true)} />
           <button className="icon-btn" aria-label={t("common.remove", { item: f })} onClick={() => onChange(rules.filter((_, j) => j !== i))}>
             <X />
           </button>
