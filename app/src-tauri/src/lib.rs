@@ -73,6 +73,9 @@ struct AppState {
     interference: Mutex<Interference>,
     /// Autocorrect has no working engine session yet.
     hook_unavailable: std::sync::atomic::AtomicBool,
+    /// The user typed into an administrator window since unflub started, where it can't fix
+    /// anything: the tray tooltip says so for the rest of the session (#132).
+    elevated_seen: std::sync::atomic::AtomicBool,
     stopping: std::sync::atomic::AtomicBool,
 }
 
@@ -779,6 +782,16 @@ fn observe(app: &AppHandle, event: Observed) {
                 .store(active, std::sync::atomic::Ordering::Relaxed);
             refresh_tray(app);
         }
+        Observed::ElevatedWindow => {
+            // Once per session: the tooltip changes, nothing pops up.
+            let first = !app
+                .state::<AppState>()
+                .elevated_seen
+                .swap(true, std::sync::atomic::Ordering::Relaxed);
+            if first {
+                refresh_tray(app);
+            }
+        }
         Observed::EngineCrashed => {
             set_interference(app, false);
             usage.crash();
@@ -896,11 +909,17 @@ fn tray_image(enabled: bool) -> Image<'static> {
     Image::from_bytes(bytes).expect("bundled tray icon is a valid PNG")
 }
 
-fn tooltip(enabled: bool, interference: bool, hook_unavailable: bool) -> &'static str {
+fn tooltip(
+    enabled: bool,
+    interference: bool,
+    hook_unavailable: bool,
+    elevated_seen: bool,
+) -> &'static str {
     match (enabled, interference, hook_unavailable) {
         (false, _, _) => strings::TOOLTIP_PAUSED,
         (true, _, true) => strings::TOOLTIP_HOOK_UNAVAILABLE,
         (true, true, false) => strings::TOOLTIP_INTERFERENCE,
+        (true, false, false) if elevated_seen => strings::TOOLTIP_ELEVATED,
         (true, false, false) => strings::TOOLTIP,
     }
 }
@@ -916,12 +935,20 @@ fn refresh_tray_on_main_thread(app: &AppHandle) {
     let hook_unavailable = state
         .hook_unavailable
         .load(std::sync::atomic::Ordering::Relaxed);
+    let elevated_seen = state
+        .elevated_seen
+        .load(std::sync::atomic::Ordering::Relaxed);
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         // Paused by itself, or not working yet, looks paused.
         let _ = tray.set_icon(Some(tray_image(
             enabled && !interference && !hook_unavailable,
         )));
-        let _ = tray.set_tooltip(Some(tooltip(enabled, interference, hook_unavailable)));
+        let _ = tray.set_tooltip(Some(tooltip(
+            enabled,
+            interference,
+            hook_unavailable,
+            elevated_seen,
+        )));
     }
     if let Some(item) = state.toggle.lock().unwrap().as_ref() {
         let _ = item.set_checked(enabled);
@@ -1118,7 +1145,7 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
     let menu = tray_menu(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_image(enabled && !cfg!(windows)))
-        .tooltip(tooltip(enabled, false, cfg!(windows)))
+        .tooltip(tooltip(enabled, false, cfg!(windows), false))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -1270,6 +1297,7 @@ pub fn run() {
                 pending_learned: Mutex::new(Vec::new()),
                 interference: Mutex::default(),
                 hook_unavailable: Default::default(),
+                elevated_seen: Default::default(),
                 stopping: Default::default(),
             });
             let handle = app.handle();
@@ -1408,17 +1436,43 @@ mod tests {
 
     #[test]
     fn the_tray_says_when_unflub_paused_itself() {
-        assert_eq!(tooltip(true, false, false), strings::TOOLTIP);
-        assert_eq!(tooltip(true, true, false), strings::TOOLTIP_INTERFERENCE);
+        assert_eq!(tooltip(true, false, false, false), strings::TOOLTIP);
+        assert_eq!(
+            tooltip(true, true, false, false),
+            strings::TOOLTIP_INTERFERENCE
+        );
         // Review finding 7: a hook that couldn't be installed shows, until it works.
         assert_eq!(
-            tooltip(true, false, true),
+            tooltip(true, false, true, false),
             strings::TOOLTIP_HOOK_UNAVAILABLE
         );
-        assert_eq!(tooltip(true, true, true), strings::TOOLTIP_HOOK_UNAVAILABLE);
+        assert_eq!(
+            tooltip(true, true, true, false),
+            strings::TOOLTIP_HOOK_UNAVAILABLE
+        );
         // The user's pause wins.
-        assert_eq!(tooltip(false, true, false), strings::TOOLTIP_PAUSED);
-        assert_eq!(tooltip(false, false, true), strings::TOOLTIP_PAUSED);
+        assert_eq!(tooltip(false, true, false, false), strings::TOOLTIP_PAUSED);
+        assert_eq!(tooltip(false, false, true, false), strings::TOOLTIP_PAUSED);
+    }
+
+    /// #132: after typing in an administrator window the tooltip says why nothing was fixed
+    /// there, quietly; every other state still wins.
+    #[test]
+    fn the_tray_explains_administrator_windows() {
+        assert_eq!(tooltip(true, false, false, true), strings::TOOLTIP_ELEVATED);
+        assert_eq!(tooltip(false, false, false, true), strings::TOOLTIP_PAUSED);
+        assert_eq!(
+            tooltip(true, true, false, true),
+            strings::TOOLTIP_INTERFERENCE
+        );
+        assert_eq!(
+            tooltip(true, false, true, true),
+            strings::TOOLTIP_HOOK_UNAVAILABLE
+        );
+        assert!(
+            strings::TOOLTIP_ELEVATED.chars().count() < 128,
+            "Windows cuts tooltips at 127"
+        );
     }
 
     #[test]

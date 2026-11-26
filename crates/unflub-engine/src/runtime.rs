@@ -416,6 +416,7 @@ impl State {
             HookEvent::InputInterference { active } => {
                 self.out.send(&FromEngine::InputInterference { active })
             }
+            HookEvent::ElevatedWindow => self.out.send(&FromEngine::ElevatedWindow),
             _ => {}
         }
     }
