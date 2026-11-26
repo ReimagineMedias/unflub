@@ -228,6 +228,31 @@ pub fn retry_after(answer: Secure, tries: usize) -> Option<std::time::Duration> 
         .map(|ms| std::time::Duration::from_millis(*ms))
 }
 
+/// UIA control type ids (`UIA_EditControlTypeId` and so on), as plain numbers for the pure
+/// logic here; a Windows test checks them against the crate's constants.
+pub const EDIT_CONTROL: i32 = 50004;
+pub const DOCUMENT_CONTROL: i32 = 50030;
+pub const PANE_CONTROL: i32 = 50033;
+
+/// Is a focused element a text input, so a retried "not a password" may clear it? It needs
+/// keyboard focus (`has_focus`) and either to be an edit box, or to have a value or text
+/// pattern without being a document or pane: Chromium's root document has both patterns while
+/// its accessibility tree is still being built, and the field may be a password box inside it.
+/// An unknown control type fails closed.
+pub fn is_text_input(
+    has_focus: bool,
+    control_type: Option<i32>,
+    value_pattern: bool,
+    text_pattern: bool,
+) -> bool {
+    has_focus
+        && match control_type {
+            Some(EDIT_CONTROL) => true,
+            Some(DOCUMENT_CONTROL | PANE_CONTROL) | None => false,
+            Some(_) => value_pattern || text_pattern,
+        }
+}
+
 /// A retried query's answer. A retry runs while Chromium is still building its accessibility
 /// tree, when the focused element can be the page's document or a pane rather than the field,
 /// and a password field's letters held for #110 would then go to the engine. So a retried "not
@@ -730,17 +755,30 @@ mod win {
         super::password_answer(terminal, is_password, named, seen_before)
     }
 
-    /// Does `element` have keyboard focus and take text (an edit box, or a value or text
-    /// pattern)?
+    /// Does `element` have keyboard focus and take text? See [`super::is_text_input`].
     unsafe fn focused_text_input(element: &IUIAutomationElement) -> bool {
-        element.CurrentHasKeyboardFocus().is_ok_and(|b| b.as_bool())
-            && (element.CurrentControlType().ok() == Some(UIA_EditControlTypeId)
-                || element
-                    .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-                    .is_ok()
-                || element
-                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-                    .is_ok())
+        let focus = element.CurrentHasKeyboardFocus().is_ok_and(|b| b.as_bool());
+        let control_type = element.CurrentControlType().ok().map(|t| t.0);
+        // Patterns only matter for other control types; skip the cross-process calls otherwise.
+        let other = focus
+            && control_type.is_some_and(|t| {
+                ![
+                    super::EDIT_CONTROL,
+                    super::DOCUMENT_CONTROL,
+                    super::PANE_CONTROL,
+                ]
+                .contains(&t)
+            });
+        let value = other
+            && element
+                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .is_ok();
+        let text = other
+            && !value
+            && element
+                .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                .is_ok();
+        super::is_text_input(focus, control_type, value, text)
     }
 
     fn serve(uia: &IUIAutomation, rx: &Receiver<Request>, slot: &PasswordSlot) {
@@ -1113,6 +1151,42 @@ mod tests {
         f.uia_available = false;
         f.refresh(9, FieldKind::Probe, false);
         assert_eq!(f.check(), FieldCheck::Secure, "no UIA: nothing to wait for");
+    }
+
+    /// Re-review C: documents and panes never count as text inputs, whatever patterns they
+    /// have; an unknown control type fails closed.
+    #[test]
+    fn text_inputs_for_a_retried_clear() {
+        const GROUP: i32 = 50026;
+        assert!(is_text_input(true, Some(EDIT_CONTROL), false, false));
+        assert!(
+            is_text_input(true, Some(GROUP), false, true),
+            "contenteditable"
+        );
+        assert!(is_text_input(true, Some(GROUP), true, false));
+        for t in [DOCUMENT_CONTROL, PANE_CONTROL] {
+            assert!(!is_text_input(true, Some(t), true, true), "{t}");
+        }
+        assert!(!is_text_input(true, None, true, true), "unknown type");
+        assert!(
+            !is_text_input(true, Some(GROUP), false, false),
+            "no pattern"
+        );
+        assert!(
+            !is_text_input(false, Some(EDIT_CONTROL), true, true),
+            "no focus"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn control_type_ids_match_windows() {
+        use windows::Win32::UI::Accessibility::{
+            UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_PaneControlTypeId,
+        };
+        assert_eq!(UIA_EditControlTypeId.0, EDIT_CONTROL);
+        assert_eq!(UIA_DocumentControlTypeId.0, DOCUMENT_CONTROL);
+        assert_eq!(UIA_PaneControlTypeId.0, PANE_CONTROL);
     }
 
     /// Review finding 4: a retry clears a field only from a focused text input.
