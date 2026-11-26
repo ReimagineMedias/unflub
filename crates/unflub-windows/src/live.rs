@@ -20,7 +20,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use unflub_core::{
-    Action, Adjacency, Config, Context, Corrector, Engine, Event, Key, PreparedConfig,
+    Action, Adjacency, Config, Context, Corrector, Engine, Event, Key, PreparedConfig, Replacement,
 };
 
 /// An [`Engine`] whose config can be replaced from another thread. See the module docs.
@@ -109,6 +109,11 @@ impl Corrector for LiveEngine {
         self.engine.end_undo_window()
     }
 
+    fn undo_landed(&mut self, undo: &Replacement) {
+        self.engine.undo_landed(undo);
+        self.report_learned();
+    }
+
     fn undo_window(&self) -> Option<std::time::Duration> {
         Corrector::undo_window(&self.engine)
     }
@@ -126,13 +131,20 @@ impl Corrector for LiveEngine {
         let action = self.engine.on_key(key, ctx);
         // The engine only queues events when it acts, so draining here keeps its buffer empty.
         if action != Action::Pass {
-            for event in self.engine.drain_events() {
-                if let Event::Learned(word) = event {
-                    (self.on_learned)(word);
-                }
-            }
+            self.report_learned();
         }
         action
+    }
+}
+
+impl LiveEngine {
+    /// Drain the engine's events and hand each learned word to the callback.
+    fn report_learned(&mut self) {
+        for event in self.engine.drain_events() {
+            if let Event::Learned(word) = event {
+                (self.on_learned)(word);
+            }
+        }
     }
 }
 
@@ -237,10 +249,12 @@ mod tests {
             Action::HoldBackspace(_)
         ));
         assert!(rx.try_recv().is_err(), "nothing learned yet");
-        assert!(matches!(
-            live.on_key(Key::Backspace, &ctx()),
-            Action::Undo(_)
-        ));
+        let Action::Undo(undo) = live.on_key(Key::Backspace, &ctx()) else {
+            panic!("the second Backspace undoes");
+        };
+        // #43: learned once the hook reports the undo landed, not when it is decided.
+        assert!(rx.try_recv().is_err(), "nothing learned before it lands");
+        live.undo_landed(&undo);
         assert_eq!(rx.try_recv().as_deref(), Ok("teh"));
         assert!(rx.try_recv().is_err());
     }

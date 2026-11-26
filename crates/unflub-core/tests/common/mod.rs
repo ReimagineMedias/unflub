@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use unflub_core::{Action, Config, Context, Engine, EngineMode, Key};
+use unflub_core::{Action, Config, Context, Engine, EngineMode, Key, Replacement};
 
 pub fn key_for(c: char) -> Key {
     if c.is_alphanumeric() || c == '\'' || c == '-' {
@@ -15,6 +15,8 @@ pub fn key_for(c: char) -> Key {
 pub struct Typist {
     pub engine: Engine,
     pub text: String,
+    /// Act like a hook that refuses to type every undo (see [`Action::Undo`]).
+    pub refuse_undos: bool,
 }
 
 impl Typist {
@@ -26,6 +28,7 @@ impl Typist {
         let mut t = Self {
             engine,
             text: String::new(),
+            refuse_undos: false,
         };
         // Start the field with a known boundary so the first word counts as fully seen.
         t.key(Key::Boundary('\n'));
@@ -62,16 +65,28 @@ impl Typist {
                     }
                 }
             },
-            Action::Replace(r) | Action::Undo(r) => {
-                for _ in 0..r.delete {
-                    self.text.pop();
-                }
-                self.text.push_str(&r.insert);
+            Action::Replace(r) => self.apply(r),
+            Action::Undo(_) if self.refuse_undos => {
+                // Like a hook veto (auto-repeat, modifier held, dry run): the Backspace goes
+                // through as a plain one and the hook resets the engine.
+                self.text.pop();
+                self.engine.on_key(Key::Reset, ctx);
+            }
+            Action::Undo(r) => {
+                self.apply(r);
+                self.engine.undo_landed(r);
             }
             // Held: nothing reaches the field yet.
             Action::HoldBackspace(_) => {}
         }
         action
+    }
+
+    fn apply(&mut self, r: &Replacement) {
+        for _ in 0..r.delete {
+            self.text.pop();
+        }
+        self.text.push_str(&r.insert);
     }
 
     /// What the adapter does before any other key, and on pause or quit: send a

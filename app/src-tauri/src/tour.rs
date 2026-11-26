@@ -91,6 +91,10 @@ impl Tour {
         let mut guard = self.lock_engine();
         let engine = guard.get_or_insert_with(engine_for);
         let action = engine.on_key(key, &Context::default());
+        if let Action::Undo(r) = &action {
+            // The box applies every undo it is given.
+            engine.undo_landed(r);
+        }
         // Learned words stay in this engine; the real dictionary never hears about them.
         engine.drain_events();
         match action {

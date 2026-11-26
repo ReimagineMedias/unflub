@@ -69,7 +69,9 @@ pub enum Action {
     /// Swallow the triggering key, send `delete` backspaces, then type `insert`.
     /// `insert` already ends with the boundary character that triggered the correction.
     Replace(Replacement),
-    /// Swallow the triggering Backspace and restore what the user originally typed.
+    /// Swallow the triggering Backspace and restore what the user originally typed. Nothing is
+    /// counted or learned until the adapter reports that it landed ([`Corrector::undo_landed`]):
+    /// an undo the adapter refuses to type (auto-repeat, modifier held, dry run) teaches nothing.
     Undo(Replacement),
     /// [`UndoMode::Twice`]: swallow this Backspace and hold it; the fix (`Replacement`) may be
     /// undone by a second Backspace. Before anything else reaches the engine, the adapter
@@ -175,6 +177,10 @@ pub trait Corrector {
         false
     }
 
+    /// The undo from [`Action::Undo`] reached the text in full. Only now is it counted, and the
+    /// word learned once it was undone often enough ([`Event::Learned`]).
+    fn undo_landed(&mut self, _undo: &Replacement) {}
+
     /// How long a fix stays undoable by a double Backspace, if this corrector holds
     /// Backspaces at all.
     fn undo_window(&self) -> Option<Duration> {
@@ -202,6 +208,10 @@ impl Corrector for Engine {
 
     fn end_undo_window(&mut self) -> bool {
         Engine::end_undo_window(self)
+    }
+
+    fn undo_landed(&mut self, undo: &Replacement) {
+        Engine::undo_landed(self, undo);
     }
 
     fn undo_window(&self) -> Option<Duration> {
@@ -240,6 +250,8 @@ pub struct Engine {
     learned: HashSet<String>,
     /// `typo\tfix` (lowercased) to times undone, seeded from `Config::undo_counts`.
     undo_counts: HashMap<String, u32>,
+    /// The last [`Action::Undo`], until the adapter reports it landed ([`Engine::undo_landed`]).
+    unconfirmed: Option<Replacement>,
     events: Vec<Event>,
     word: String,
     lower: String,
@@ -352,6 +364,7 @@ impl Engine {
             undo: None,
             learned: HashSet::new(),
             undo_counts: HashMap::new(),
+            unconfirmed: None,
             events: Vec::new(),
             word: String::with_capacity(64),
             lower: String::with_capacity(64),
@@ -560,6 +573,18 @@ impl Engine {
         };
         self.session.pop_n(undo.delete);
         self.session.push_str(&undo.insert);
+        // Counted when the adapter says it landed: a refused undo left the fix in place (#43).
+        self.unconfirmed = Some(undo.clone());
+        Action::Undo(undo)
+    }
+
+    /// The adapter typed the undo from the last [`Action::Undo`] (`undo`) in full: count it, and
+    /// learn the word once it was undone `learn_after_undos` times. Anything else (an older
+    /// undo, one already reported, an undo that was never typed) changes nothing.
+    pub fn undo_landed(&mut self, undo: &Replacement) {
+        let Some(undo) = self.unconfirmed.take_if(|u| u == undo) else {
+            return;
+        };
         let threshold = u32::from(self.config.learn_after_undos.min(5));
         // Only counted while learning is on, and never for a user's own shortcut (they edit it
         // in Settings): a count nothing will use is a typed word kept for nothing.
@@ -574,8 +599,7 @@ impl Engine {
                 self.push_event(Event::Learned(undo.original.clone()));
             }
         }
-        self.push_event(Event::Undone(undo.clone()));
-        Action::Undo(undo)
+        self.push_event(Event::Undone(undo));
     }
 
     /// Decides whether the word before the caret should be replaced, given boundary `c`.

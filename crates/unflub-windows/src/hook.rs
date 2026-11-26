@@ -1874,6 +1874,10 @@ impl State {
         b.finish_timing(Instant::now());
         self.report.decide.record(b.timing.decide);
         self.report.end_to_end.record(b.timing.end_to_end);
+        if b.undo {
+            // Only an undo typed in full counts towards learning the word (#43).
+            self.undo_landed(&b.replacement);
+        }
         let event = if b.undo {
             HookEvent::Undone {
                 replacement: b.replacement,
@@ -1950,6 +1954,20 @@ impl State {
                     .send(HookEvent::CorrectorPanicked(panic_message(&*payload)));
                 None
             }
+        }
+    }
+
+    /// Tell the corrector its undo reached the text, catching panics like [`State::call`].
+    fn undo_landed(&mut self, undo: &Replacement) {
+        if self.broken {
+            return;
+        }
+        let corrector = &mut self.corrector;
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| corrector.undo_landed(undo))) {
+            self.broken = true;
+            let _ = self
+                .events
+                .send(HookEvent::CorrectorPanicked(panic_message(&*payload)));
         }
     }
 
