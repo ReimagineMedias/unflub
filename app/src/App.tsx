@@ -125,6 +125,7 @@ export default function App() {
   const [interference, setInterference] = useState(false);
   const [message, setMessage] = useState<RemoteMessage | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
   const [touring, setTouring] = useState(() => new URLSearchParams(window.location.search).get("page") === "tour");
   const saveTimer = useRef<number | undefined>(undefined);
   /** What the window shows, as of the last change (state may not have rendered it yet). */
@@ -524,14 +525,17 @@ export default function App() {
                 <ExternalLink className="btn ghost" href={LINKS.repo}>{t("about.star.button")}</ExternalLink>
               </Row>
               <Row label={t("about.reset")} hint={t("about.reset.hint")}>
-                <button className="btn ghost" onClick={() => {
+                <button className="btn ghost clear" onBlur={() => setConfirmReset(false)} onClick={() => {
+                  if (!confirmReset) return setConfirmReset(true);
+                  setConfirmReset(false);
                   // A change still waiting would land after the reset.
                   window.clearTimeout(saveTimer.current);
                   unsaved.current = null;
                   dirty.current = {};
                   removedWords.current.clear();
                   void resetSettings().then(show);
-                }}>{t("about.reset.button")}</button>
+                }}>{confirmReset ? t("about.reset.confirm") : t("about.reset.button")}</button>
+                <span className="sr-only" role="status">{confirmReset ? t("about.reset.status") : ""}</span>
               </Row>
             </div>
           </>

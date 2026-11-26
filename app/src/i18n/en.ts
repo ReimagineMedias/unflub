@@ -276,6 +276,8 @@ export const en = {
   "about.reset": "Reset settings",
   "about.reset.hint": "Back to defaults, apart from your privacy choices. Your words and shortcuts are cleared.",
   "about.reset.button": "Reset",
+  "about.reset.confirm": "Click again to reset",
+  "about.reset.status": "Press the button again to reset every setting and clear your words and shortcuts.",
   "about.message.more": "Learn more",
   "about.message.dismiss": "Dismiss",
 
