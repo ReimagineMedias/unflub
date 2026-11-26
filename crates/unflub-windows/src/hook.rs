@@ -1380,7 +1380,11 @@ impl State {
         let strokes = if undo {
             inject::plan(replacement.delete, &replacement.insert)
         } else {
-            inject::plan_correction(replacement.delete, &replacement.insert)
+            inject::plan_correction(
+                replacement.delete,
+                &replacement.insert,
+                replacement.original.chars().last(),
+            )
         };
         // Real keys of the focused app's layout where it has them (#33).
         // Caps Lock as Windows has it: `mods` is empty for keys another program injected.

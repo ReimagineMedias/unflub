@@ -155,16 +155,26 @@ pub const TAB: Stroke = Stroke::Vk {
 /// some combo boxes) have the suggested tail selected after the word; a first Backspace would
 /// only remove that selection, leaving one letter behind (`teh` + Space became `tthe `).
 /// Typing replaces the selection and closes the suggestion. Two more events, the same text
-/// everywhere else. Enter and Tab can't go first (they would send or commit what is there), so
-/// those keep the plain order ([`plan`]).
-pub fn plan_correction(delete: usize, insert: &str) -> Vec<Stroke> {
-    match insert.chars().last() {
-        Some(b) if unflub_core::undoable_boundary(b) => {
-            let mut out = plan(0, b.encode_utf8(&mut [0; 4]));
+/// everywhere else.
+///
+/// Enter and Tab can't go first (they would send or commit what is there). A space instead
+/// would let Word-style AutoCorrect change the word before it is deleted (#42), so those type
+/// `last_typed`, the word's own last letter, again: a letter replaces the selection too and
+/// sets off no app's autocorrect (#108: `teh` + Enter with `ran` suggested became `tthe`).
+/// Without a letter to repeat they keep the plain order ([`plan`]).
+pub fn plan_correction(delete: usize, insert: &str, last_typed: Option<char>) -> Vec<Stroke> {
+    let first = match insert.chars().last() {
+        Some(b) if unflub_core::undoable_boundary(b) => Some(b),
+        Some(_) => last_typed.filter(|c| c.is_alphanumeric()),
+        None => None,
+    };
+    match first {
+        Some(c) => {
+            let mut out = plan(0, c.encode_utf8(&mut [0; 4]));
             out.extend(plan(delete + 1, insert));
             out
         }
-        _ => plan(delete, insert),
+        None => plan(delete, insert),
     }
 }
 
@@ -911,13 +921,37 @@ mod tests {
         );
     }
 
+    /// Strokes into a field holding `text` with the last `selected` bytes selected (an inline
+    /// autocomplete suggestion): typing or a Backspace first removes the selection.
+    fn into_field(text: &str, selected: usize, strokes: &[Stroke]) -> String {
+        let mut text = text.to_string();
+        let mut selection = selected;
+        for s in strokes {
+            let typed = match *s {
+                BACKSPACE if selection > 0 => None,
+                BACKSPACE => {
+                    text.pop();
+                    None
+                }
+                ENTER => Some('\n'),
+                TAB => Some('\t'),
+                Stroke::Unit(c) => Some(char::from_u32(u32::from(c)).unwrap()),
+                other => panic!("{other:?}"),
+            };
+            text.truncate(text.len() - selection);
+            selection = 0;
+            text.extend(typed);
+        }
+        text
+    }
+
     /// Review S2: inline autocomplete selects a suggested tail after the word. Typing the
     /// boundary first replaces it; then the word and that boundary go.
     #[test]
     fn corrections_type_the_boundary_first() {
         let u = |c: char| Stroke::Unit(c as u16);
         assert_eq!(
-            plan_correction(3, "the "),
+            plan_correction(3, "the ", Some('h')),
             vec![
                 u(' '),
                 BACKSPACE,
@@ -930,44 +964,46 @@ mod tests {
                 u(' '),
             ]
         );
-        assert_eq!(plan_correction(3, "the.")[0], u('.'));
-        // Simulate both kinds of field: plain, and one with "ran" selected after "teh".
+        assert_eq!(plan_correction(3, "the.", Some('h'))[0], u('.'));
+        // Both kinds of field: plain, and one with "ran" selected after "teh".
         for selected in ["", "ran"] {
-            let mut text = String::from("ok teh");
-            let mut selection = selected.len();
-            text.push_str(selected);
-            for s in plan_correction(3, "the ") {
-                match s {
-                    BACKSPACE if selection > 0 => {
-                        text.truncate(text.len() - selection);
-                        selection = 0;
-                    }
-                    BACKSPACE => {
-                        text.pop();
-                    }
-                    Stroke::Unit(c) => {
-                        text.truncate(text.len() - selection);
-                        selection = 0;
-                        text.push(char::from_u32(u32::from(c)).unwrap());
-                    }
-                    other => panic!("{other:?}"),
-                }
-            }
-            assert_eq!(text, "ok the ", "selected tail {selected:?}");
+            let field = format!("ok teh{selected}");
+            let plan = plan_correction(3, "the ", Some('h'));
+            assert_eq!(
+                into_field(&field, selected.len(), &plan),
+                "ok the ",
+                "{selected:?}"
+            );
         }
     }
 
-    /// Enter and Tab would send or commit, so they still come last, once.
+    /// #108: Enter and Tab would send or commit, so they come last, once; the word's last
+    /// letter goes first to clear an autocomplete selection without setting off the app's
+    /// own autocorrect (a space would, #42).
     #[test]
-    fn enter_and_tab_corrections_keep_the_plain_order() {
-        assert_eq!(plan_correction(3, "the\n"), plan(3, "the\n"));
-        assert_eq!(plan_correction(3, "the\t"), plan(3, "the\t"));
-        let enters = plan_correction(3, "the\n")
-            .iter()
-            .filter(|s| **s == ENTER)
-            .count();
-        assert_eq!(enters, 1);
-        assert!(plan_correction(0, "").is_empty());
+    fn enter_and_tab_corrections_type_a_letter_first() {
+        let u = |c: char| Stroke::Unit(c as u16);
+        for (insert, key) in [("the\n", ENTER), ("the\t", TAB)] {
+            let plan = plan_correction(3, insert, Some('h'));
+            assert_eq!(plan[0], u('h'));
+            assert_eq!(plan[1..5], [BACKSPACE; 4]);
+            assert_eq!(plan.iter().filter(|s| **s == key).count(), 1);
+            assert_eq!(plan.last(), Some(&key));
+            for selected in ["", "ran"] {
+                let field = format!("ok teh{selected}");
+                let want = format!("ok {insert}");
+                assert_eq!(
+                    into_field(&field, selected.len(), &plan),
+                    want,
+                    "{selected:?}"
+                );
+            }
+        }
+        // The plain order (which leaves "tthe" behind a selection) only without a letter.
+        assert_eq!(into_field("ok tehran", 3, &plan(3, "the\n")), "ok tthe\n");
+        assert_eq!(plan_correction(3, "the\n", None), plan(3, "the\n"));
+        assert_eq!(plan_correction(3, "the\n", Some('.')), plan(3, "the\n"));
+        assert!(plan_correction(0, "", Some('h')).is_empty());
     }
 
     #[test]
@@ -1098,7 +1134,7 @@ mod tests {
     fn shift_is_pressed_for_capitals_and_left_as_the_user_holds_it() {
         let none = ShiftKeys::default();
         // No Shift needed, none held: just the keys.
-        let events = key_events(&with_keys(plan_correction(3, "the "), &Us), none);
+        let events = key_events(&with_keys(plan_correction(3, "the ", Some('h')), &Us), none);
         assert_eq!(events.len(), 2 * 9);
         assert_eq!(type_into("ok teh", none, &events), ("ok the ".into(), none));
 
@@ -1120,7 +1156,7 @@ mod tests {
                 right: true,
             },
         ] {
-            let events = key_events(&with_keys(plan_correction(3, "the?"), &Us), held);
+            let events = key_events(&with_keys(plan_correction(3, "the?", Some('h')), &Us), held);
             assert_eq!(type_into("so teh", held, &events), ("so the?".into(), held));
             let shift_events = events
                 .iter()
