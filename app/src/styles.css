@@ -320,3 +320,17 @@ button.link { border: 0; padding: 0; background: none; color: var(--link, var(--
 .report-preview p { color: var(--muted); font-weight: 400; }
 .report-preview pre { max-height: 50vh; overflow: auto; margin: 0; padding: 12px; border-radius: 9px; background: var(--raised);
   font: 12px/1.55 var(--mono); user-select: text; }
+
+.dictionary-transfer { margin-top: 16px; }
+.dictionary-transfer .row .report-actions { margin-top: 0; }
+.transfer-inputs { display: grid; gap: 10px; margin-top: 14px; }
+.transfer-inputs label { display: grid; gap: 4px; min-width: 0; }
+.transfer-inputs :is(select, textarea) { min-width: 0; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--raised); }
+.transfer-inputs input { min-width: 0; }
+.transfer-inputs textarea { resize: vertical; font-family: var(--mono); user-select: text; }
+.transfer-preview { list-style: none; padding: 0; margin: 0; max-height: 32vh; overflow: auto; }
+.transfer-preview li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+.transfer-preview li span { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.transfer-preview li small { flex-shrink: 0; max-width: 45%; color: var(--muted); text-align: right; }
+.dictionary-transfer .report-actions { align-items: center; }
