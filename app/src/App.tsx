@@ -364,7 +364,8 @@ export default function App() {
             <div className="card">
               <Row stack label={t("apps.never")} hint={t("apps.never.hint")}>
                 <ChipList items={s.excludedApps} onChange={(v) => update({ excludedApps: v })}
-                  placeholder={t("apps.placeholder")} empty={t("apps.empty")} normalise={(v) => v.trim().toLowerCase()} />
+                  placeholder={t("apps.placeholder")} empty={t("apps.empty")} normalise={(v) => v.trim().toLowerCase()}
+                  validate={(v) => !/^[^<>:"/\\|?*]+\.exe$/.test(v) ? t("apps.invalid") : undefined} />
               </Row>
             </div>
           </>

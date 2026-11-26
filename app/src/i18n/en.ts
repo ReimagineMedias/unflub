@@ -142,7 +142,8 @@ export const en = {
   "apps.title": "Apps",
   "apps.lead": "unflub stays off in these apps. Password fields are always skipped.",
   "apps.never": "Never fix in",
-  "apps.never.hint": "The program's file name, like code.exe or windowsterminal.exe.",
+  "apps.never.hint": "Use the program's .exe file name. Some Microsoft Store apps run in a shared Windows process and can't be excluded individually.",
+  "apps.invalid": "Enter a file name ending in .exe, like code.exe.",
   "apps.placeholder": "app.exe",
   "apps.empty": "No apps excluded.",
 
