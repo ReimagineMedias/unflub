@@ -61,7 +61,7 @@ struct AppState {
     pending_learned: Mutex<Vec<String>>,
     /// The engine paused itself because another program interferes with keyboard input.
     interference: Mutex<Interference>,
-    /// The engine couldn't install the keyboard hook and is being retried with backoff.
+    /// Autocorrect has no working engine session yet.
     hook_unavailable: std::sync::atomic::AtomicBool,
     stopping: std::sync::atomic::AtomicBool,
 }
@@ -577,7 +577,10 @@ fn observe(app: &AppHandle, event: Observed) {
             set_interference(app, active);
         }
         Observed::HookUnavailable { active } => {
-            // Each failed start is counted as `HookStartFailed`; this only drives the tray.
+            if active {
+                set_interference(app, false);
+            }
+            // Each hook failure is counted separately; this state only drives the tray.
             app.state::<AppState>()
                 .hook_unavailable
                 .store(active, std::sync::atomic::Ordering::Relaxed);
@@ -872,8 +875,8 @@ fn quit(app: &AppHandle) {
 fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
     let menu = tray_menu(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(tray_image(enabled))
-        .tooltip(tooltip(enabled, false, false))
+        .icon(tray_image(enabled && !cfg!(windows)))
+        .tooltip(tooltip(enabled, false, cfg!(windows)))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
