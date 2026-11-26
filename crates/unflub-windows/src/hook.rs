@@ -446,6 +446,9 @@ thread_local! {
     static LAST_CALLBACK: Cell<u32> = const { Cell::new(0) };
     /// A real keyboard or mouse callback arrived since the hooks were last (re)installed.
     static CALLBACK_SEEN: Cell<bool> = const { Cell::new(false) };
+    /// Input up to this tick happened where our hooks can't see it (see
+    /// [`input_hidden_from_hooks`]), so the watchdog doesn't count it as missed.
+    static EXCUSED: Cell<Option<u32>> = const { Cell::new(None) };
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
     /// Set when an event arrived while the state was busy (re-entrancy); the next event sends
     /// a Reset first so the corrector never acts on a word it only partly saw.
@@ -585,7 +588,15 @@ fn run(
                             watchdog = Watchdog::new(now);
                         }
                     } else {
-                        let missed = hooks_missed_input(last_input(), last_callback());
+                        let input = last_input();
+                        let mut missed =
+                            hooks_missed_input(input, newest(Some(last_callback()), excused()));
+                        if missed && input_hidden_from_hooks() {
+                            // Typed into an elevated window or on the secure desktop: our
+                            // hooks were never going to see it (#135).
+                            excuse(input);
+                            missed = false;
+                        }
                         if watchdog.should_reinstall(now, missed, callback_seen()) {
                             hooks.reinstall(REINSTALL_WATCHDOG);
                         }
@@ -667,6 +678,105 @@ fn callback_seen() -> bool {
 fn mark_callback() {
     let _ = LAST_CALLBACK.try_with(|c| c.set(tick_now()));
     let _ = CALLBACK_SEEN.try_with(|c| c.set(true));
+}
+
+fn excused() -> Option<u32> {
+    EXCUSED.with(Cell::get)
+}
+
+/// Input up to tick `until` doesn't count as missed.
+fn excuse(until: u32) {
+    let _ = EXCUSED.try_with(|c| c.set(Some(newest(c.get(), Some(until)))));
+}
+
+/// The later of two ticks (across the 49.7-day wrap), as the watchdog's baseline.
+fn newest(a: Option<u32>, b: Option<u32>) -> u32 {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            if (b.wrapping_sub(a) as i32) > 0 {
+                b
+            } else {
+                a
+            }
+        }
+        (Some(t), None) | (None, Some(t)) => t,
+        (None, None) => 0,
+    }
+}
+
+/// Is input right now going where a low-level hook of ours can't see it? Windows doesn't call
+/// a process's low-level hooks for input to a window of a higher integrity level (an elevated
+/// app, UIPI), nor on the secure desktop (UAC prompt, lock screen, Ctrl+Alt+Del), where there
+/// is no foreground window for us to read. `GetLastInputInfo` counts that input all the same,
+/// which made the watchdog reinstall the hooks over and over (#135).
+fn input_hidden_from_hooks() -> bool {
+    let (hwnd, pid) = focus::foreground();
+    if hwnd.is_invalid() || pid == 0 {
+        return true;
+    }
+    hidden_by_integrity(integrity::of_process(pid), integrity::own())
+}
+
+/// Input to a process of integrity level `foreground` is invisible to hooks of level `own`. A
+/// foreground process we can't even query counts as invisible (elevated or protected).
+fn hidden_by_integrity(foreground: Option<u32>, own: Option<u32>) -> bool {
+    match (foreground, own) {
+        (Some(f), Some(o)) => f > o,
+        (None, _) => true,
+        (Some(_), None) => false,
+    }
+}
+
+mod integrity {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
+        TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    /// Integrity level (the mandatory label's RID: 0x2000 medium, 0x3000 high) of `pid`.
+    pub fn of_process(pid: u32) -> Option<u32> {
+        // SAFETY: the handle is closed below.
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let level = of_handle(process);
+            let _ = CloseHandle(process);
+            level
+        }
+    }
+
+    /// This process's integrity level.
+    pub fn own() -> Option<u32> {
+        // SAFETY: the pseudo handle needs no closing.
+        unsafe { of_handle(GetCurrentProcess()) }
+    }
+
+    unsafe fn of_handle(process: HANDLE) -> Option<u32> {
+        let mut token = HANDLE::default();
+        OpenProcessToken(process, TOKEN_QUERY, &mut token).ok()?;
+        // u64s: TOKEN_MANDATORY_LABEL holds a pointer and must be aligned for it.
+        let mut buf = [0u64; 16];
+        let mut len = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenIntegrityLevel,
+            Some(buf.as_mut_ptr().cast()),
+            std::mem::size_of_val(&buf) as u32,
+            &mut len,
+        );
+        let _ = CloseHandle(token);
+        ok.ok()?;
+        let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+        let sid = label.Label.Sid;
+        let count = *GetSidSubAuthorityCount(sid);
+        if count == 0 {
+            return None;
+        }
+        Some(*GetSidSubAuthority(sid, u32::from(count - 1)))
+    }
 }
 
 /// The hooks were just (re)installed: input before now isn't theirs to have missed, but nothing
@@ -996,6 +1106,12 @@ unsafe extern "system" fn win_event_proc(
     // A focus event names the focused window; a foreground event names the top-level one, so
     // look up its focused child instead.
     let target = (event == EVENT_OBJECT_FOCUS).then_some(hwnd);
+    if event == EVENT_SYSTEM_FOREGROUND {
+        // Input before the switch may have gone to a window our hooks can't see (an elevated
+        // one that closed or lost the foreground): it doesn't count as missed. Input after the
+        // switch still does.
+        excuse(tick_now());
+    }
     with_state(|s| {
         // Reset first: the word-start question asked by the refresh belongs to this reset.
         s.reset();
@@ -1714,6 +1830,53 @@ mod watchdog_tests {
             HookEvent::KeyboardHookLost { error } => assert_eq!(error, "access denied"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// #135: input our hooks can't see doesn't count as missed.
+    #[test]
+    fn input_to_higher_integrity_windows_is_excused() {
+        const LOW: u32 = 0x1000;
+        const MEDIUM: u32 = 0x2000;
+        const HIGH: u32 = 0x3000;
+        const SYSTEM: u32 = 0x4000;
+        assert!(
+            hidden_by_integrity(Some(HIGH), Some(MEDIUM)),
+            "elevated app"
+        );
+        assert!(hidden_by_integrity(Some(SYSTEM), Some(HIGH)));
+        assert!(hidden_by_integrity(None, Some(MEDIUM)), "can't query it");
+        assert!(!hidden_by_integrity(Some(MEDIUM), Some(MEDIUM)));
+        assert!(
+            !hidden_by_integrity(Some(LOW), Some(MEDIUM)),
+            "sandboxed app"
+        );
+        assert!(
+            !hidden_by_integrity(Some(HIGH), Some(HIGH)),
+            "we run elevated too"
+        );
+        assert!(
+            !hidden_by_integrity(Some(HIGH), None),
+            "own level unknown: keep checking"
+        );
+        let own = integrity::own();
+        assert!(own.is_some_and(|l| l >= LOW), "{own:?}");
+
+        // An excuse moves the baseline forward, never back, across the tick wrap too.
+        assert_eq!(newest(Some(10_000), None), 10_000);
+        assert_eq!(newest(Some(10_000), Some(30_000)), 30_000);
+        assert_eq!(newest(Some(30_000), Some(10_000)), 30_000);
+        assert_eq!(newest(Some(u32::MAX - 5), Some(3)), 3);
+        assert_eq!(newest(None, None), 0);
+        // Typed into an elevated window from 10 s to 20 s, excused at the tick: not missed.
+        assert!(!hooks_missed_input(
+            20_000,
+            newest(Some(10_000), Some(20_000))
+        ));
+        // Input our hooks missed after the excuse still counts.
+        assert!(hooks_missed_input(
+            25_000,
+            newest(Some(10_000), Some(20_000))
+        ));
     }
 
     #[test]
