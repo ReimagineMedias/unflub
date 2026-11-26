@@ -3,9 +3,8 @@ import { reportUsage, tourKey, tourReset } from "./api";
 import { AppIcon, Disclosure, ExternalLink, Row, Switch, SuccessNote } from "./components";
 import { t } from "./i18n";
 import { LINKS } from "./links";
+import { practiceInput } from "./tourInput";
 import type { AppInfo, Settings, TourAction } from "./types";
-
-const RESET_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Delete"]);
 
 /** `asking`: a first Backspace is held and the pill asks "Undo?" until the next key. */
 type Pill = { from: string; to: string; kind: "fixed" | "undone" | "asking" } | null;
@@ -63,11 +62,10 @@ function PracticeBox({ onAction }: { onAction: (a: TourAction) => void }) {
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.ctrlKey || e.metaKey || e.altKey || e.nativeEvent.isComposing || e.key === "Tab") return;
-    const key = e.key === "Backspace" ? "Backspace" : e.key === "Enter" ? "\n" : [...e.key].length === 1 ? e.key : null;
-    if (key === null && !RESET_KEYS.has(e.key)) return;
-    e.preventDefault();
-    const sent = key ?? "Reset";
+    const input = practiceInput(e.nativeEvent);
+    if (!input) return;
+    const { sent, key, preventDefault } = input;
+    if (preventDefault) e.preventDefault();
     queue.current = queue.current.then(async () => {
       let actions: TourAction[] = [{ kind: "pass" }];
       try {
