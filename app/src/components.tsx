@@ -222,6 +222,22 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
   );
 }
 
+function RuleTrigger({ value, onRename }: { value: string; onRename: (typed: string) => void }) {
+  const [draft, setDraft] = useState<{ from: string; typed: string } | null>(null);
+  return (
+    <input value={draft?.from === value ? draft.typed : value} aria-label={t("dictionary.shortcuts.typed")} spellCheck={false}
+      onChange={(e) => setDraft({ from: value, typed: e.currentTarget.value })}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.nativeEvent.isComposing) e.currentTarget.blur();
+      }}
+      onBlur={(e) => {
+        setDraft(null);
+        const typed = e.currentTarget.value.trim();
+        if (typed && typed !== value) onRename(typed);
+      }} />
+  );
+}
+
 export function RuleList({ rules, onChange }: { rules: [string, string][]; onChange: (r: [string, string][]) => void }) {
   const [from, setFrom] = useState("");
   const [target, setTarget] = useState("");
@@ -236,8 +252,11 @@ export function RuleList({ rules, onChange }: { rules: [string, string][]; onCha
     <div className="rules">
       {rules.length === 0 && <div className="empty">{t("dictionary.shortcuts.empty")}</div>}
       {rules.map(([f, to], i) => (
-        <div className="rule" key={f}>
-          <input value={f} aria-label={t("dictionary.shortcuts.typed")} spellCheck={false} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
+        <div className="rule" key={i}>
+          <RuleTrigger value={f} onRename={(typed) => {
+            if (rules.some(([other], j) => j !== i && other.toLowerCase() === typed.toLowerCase())) return;
+            onChange(rules.map((r, j) => (j === i ? [typed, r[1]] : r)));
+          }} />
           <span className="arrow">→</span>
           <input value={to} aria-label={t("dictionary.shortcuts.becomes")} spellCheck={false} onChange={(e) => onChange(rules.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
           <button className="icon-btn" aria-label={t("common.remove", { item: f })} onClick={() => onChange(rules.filter((_, j) => j !== i))}>
