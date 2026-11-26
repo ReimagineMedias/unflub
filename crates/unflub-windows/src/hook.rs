@@ -1829,7 +1829,7 @@ impl State {
     /// the word is forgotten.
     fn on_focus_event(&mut self, element: Option<FocusId>) {
         self.last_focus = element;
-        if self.held.is_some() {
+        if let Some(held) = self.held {
             if MISSED.with(Cell::get) {
                 // The hook was too busy for some event: a return of focus can't be trusted.
                 self.held_focus.missed_input();
@@ -1843,6 +1843,7 @@ impl State {
                 HeldVerdict::Away => {
                     // Never sent from here on unless focus comes back, not by a crash either.
                     HELD_FOR_CRASH.store(0, Ordering::Release);
+                    self.pipeline.forget_held_key_up(held);
                     self.corrector.end_undo_window();
                     self.undo_deadline = None;
                     let _ = self.events.send(HookEvent::UndoDeclined);

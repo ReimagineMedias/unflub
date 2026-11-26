@@ -589,6 +589,11 @@ impl Pipeline {
         self.swallow.awaits_up(vk)
     }
 
+    /// Focus left the held key's target, and its physical key-up may never reach the hook.
+    pub fn forget_held_key_up(&mut self, held: RawEvent) {
+        self.swallow.on_up(held.vk);
+    }
+
     /// Send a key held with [`Pipeline::hold`] after all, as a key-down and key-up ahead of
     /// anything held now, so the key that caused the release follows it. Call
     /// [`Pipeline::pump`] afterwards.
@@ -1697,6 +1702,19 @@ mod tests {
         assert_eq!(user(&mut p, up(BACK)), Input::Consumed);
         assert!(!p.awaits_up(BACK), "a fresh second press is not a repeat");
         assert_eq!(user(&mut p, down(BACK)), Input::Process { repeat: false });
+    }
+
+    #[test]
+    fn setting_a_backspace_aside_forgets_its_missing_key_up() {
+        let mut p = Pipeline::new();
+        let backspace = down(BACK);
+        user(&mut p, backspace);
+        p.hold(backspace);
+        assert!(p.awaits_up(BACK));
+        p.forget_held_key_up(backspace);
+        assert!(!p.awaits_up(BACK));
+        assert_eq!(user(&mut p, backspace), Input::Process { repeat: false });
+        assert_eq!(user(&mut p, up(BACK)), Input::Process { repeat: false });
     }
 
     /// Review blocker: a replayed key that releases a held Backspace waits behind it, and so
