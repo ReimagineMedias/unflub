@@ -86,8 +86,8 @@ mod win {
 
     use unflub_core::{Config, Engine, SpellBackend};
     use unflub_windows::{
-        Correction, Corrector, Hook, HookEvent, HookOptions, InjectTiming, Overlay, OverlayHandle,
-        PillConfig, PillStyle, WindowsSpellBackend,
+        Corrector, Hook, HookEvent, HookOptions, InjectTiming, Overlay, OverlayHandle, PillConfig,
+        PillStyle, PillUpdate, WindowsSpellBackend,
     };
     use windows::Win32::Foundation::{BOOL, TRUE};
     use windows::Win32::System::Console::{SetConsoleCtrlHandler, CTRL_CLOSE_EVENT};
@@ -185,8 +185,10 @@ mod win {
             match events.recv_timeout(Duration::from_millis(100)) {
                 Ok(event) => {
                     // The hook already sent this event; the pill costs the hook nothing.
-                    if let (Some(o), Some(c)) = (&overlay, Correction::from_hook_event(&event)) {
-                        o.show(c);
+                    match (&overlay, PillUpdate::for_hook_event(&event)) {
+                        (Some(o), Some(PillUpdate::Show(c))) => o.show(c),
+                        (Some(o), Some(PillUpdate::Hide)) => o.hide(),
+                        _ => {}
                     }
                     print_event(&event);
                 }
@@ -282,7 +284,9 @@ mod win {
                     r.corrected, r.original
                 )
             }
-            HookEvent::UndoDeclined => println!("undo?  no: the held Backspace went on"),
+            HookEvent::UndoDeclined => {
+                println!("undo?  no: the held Backspace went on, or was dropped")
+            }
             HookEvent::InputInterference { active: true } => eprintln!(
                 "our injected input isn't coming back: corrections paused, keys pass through"
             ),
