@@ -287,7 +287,7 @@ export default function App() {
           <button key={p.id} aria-current={page === p.id ? "page" : undefined} onClick={() => setPage(p.id)}>
             <NavIcon name={p.id} />
             {t(p.label)}
-            {p.id === "about" && (u.state === "ready" || u.state === "available") && <span className="badge" aria-hidden="true" />}
+            {p.id === "about" && pending && <span className="badge" aria-hidden="true" />}
           </button>
         ))}
         <div className="spacer" />
