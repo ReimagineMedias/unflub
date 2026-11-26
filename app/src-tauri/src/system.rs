@@ -34,17 +34,40 @@ pub fn taskbar_is_dark() -> bool {
     }
 }
 
-/// Memory only this process holds (Windows "private bytes"), in whole MB. `None` where the OS
-/// doesn't say.
-pub fn private_memory_mb() -> Option<u64> {
+/// The tray and its engine's private bytes in whole MiB, using the owned child handle.
+#[cfg(windows)]
+pub fn pair_private_mb(child: &std::process::Child) -> Option<u64> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    // SAFETY: this pseudo handle needs no closing.
+    let app = unsafe { GetCurrentProcess() };
+    let engine = HANDLE(child.as_raw_handle());
+    let bytes =
+        windows_impl::private_bytes(app)?.checked_add(windows_impl::private_bytes(engine)?)?;
+    Some(bytes / (1024 * 1024))
+}
+
+/// True after 60 seconds with no mouse or keyboard input in the current Windows session.
+pub fn input_idle() -> bool {
     #[cfg(windows)]
     {
-        windows_impl::private_bytes().map(|b| b / (1024 * 1024))
+        use windows::Win32::System::SystemInformation::GetTickCount;
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+
+        let mut last = LASTINPUTINFO {
+            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: last is a valid, sized buffer. Wrapping subtraction handles the tick rollover.
+        unsafe {
+            GetLastInputInfo(&mut last).as_bool()
+                && GetTickCount().wrapping_sub(last.dwTime) >= 60_000
+        }
     }
     #[cfg(not(windows))]
-    {
-        None
-    }
+    false
 }
 
 /// The Windows build number (`CurrentBuildNumber`, e.g. 26100). `None` elsewhere.
@@ -107,6 +130,7 @@ pub fn policy_dword(key: &str, name: &str) -> Option<u32> {
 #[cfg(windows)]
 mod windows_impl {
     use windows::core::HSTRING;
+    use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::ProcessStatus::{
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
     };
@@ -114,7 +138,6 @@ mod windows_impl {
         RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
     };
     use windows::Win32::System::SystemInformation::GetPhysicallyInstalledSystemMemory;
-    use windows::Win32::System::Threading::GetCurrentProcess;
     use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -166,14 +189,14 @@ mod windows_impl {
         read_dword_in(HKEY_LOCAL_MACHINE, key, value)
     }
 
-    pub fn private_bytes() -> Option<u64> {
+    pub fn private_bytes(process: HANDLE) -> Option<u64> {
         let mut counters = PROCESS_MEMORY_COUNTERS_EX::default();
         let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
-        // SAFETY: the pseudo handle needs no closing; counters is a valid local of `size` bytes,
+        // SAFETY: the caller owns a valid process handle; counters is a valid local of `size` bytes,
         // and the EX struct starts with the plain one.
         unsafe {
             GetProcessMemoryInfo(
-                GetCurrentProcess(),
+                process,
                 &mut counters as *mut PROCESS_MEMORY_COUNTERS_EX as *mut PROCESS_MEMORY_COUNTERS,
                 size,
             )

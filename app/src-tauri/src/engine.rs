@@ -257,6 +257,7 @@ mod host {
             generation: u64,
             nonce: u64,
         },
+        SampleMemory(Sender<Option<u64>>),
         Shutdown,
     }
 
@@ -336,6 +337,13 @@ mod host {
         /// Apply new remote flags.
         pub fn set_flags(&self, flags: RemoteFlags) {
             let _ = self.tx.send(Cmd::Flags(flags));
+        }
+
+        /// Ask for a sample without holding a lock while the supervisor responds.
+        pub fn sample_memory(&self) -> std::sync::mpsc::Receiver<Option<u64>> {
+            let (tx, rx) = mpsc::channel();
+            let _ = self.tx.send(Cmd::SampleMemory(tx));
+            rx
         }
 
         /// Stop the engine process and the supervisor.
@@ -500,6 +508,9 @@ mod host {
                             r.heartbeat.acknowledge(nonce);
                         }
                     }
+                    Cmd::SampleMemory(reply) => {
+                        let _ = reply.send(self.sample_memory());
+                    }
                     Cmd::Shutdown => break,
                 }
             }
@@ -568,6 +579,18 @@ mod host {
             (self.observer)(Observed::EngineCrashed);
             self.failures = failures_after(self.failures, running.started.elapsed());
             self.next_start = Some(Instant::now() + super::backoff(self.failures));
+        }
+
+        fn sample_memory(&mut self) -> Option<u64> {
+            let running = self.running.as_mut()?;
+            if !running.ready
+                || running.started.elapsed() < super::STABLE_RUN
+                || !crate::system::input_idle()
+                || running.child.try_wait().ok()?.is_some()
+            {
+                return None;
+            }
+            crate::system::pair_private_mb(&running.child)
         }
 
         fn probe_engine(&mut self) {

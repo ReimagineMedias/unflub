@@ -182,3 +182,9 @@ switch a check off.
 - Linux and macOS idle footprint: there is no adapter for them yet. The engine bench runs there.
 - Per-key latency inside the real hook under load: the bench times the engine alone. `unflub-cli`
   prints the hook's own latency histogram when you stop it.
+
+
+The daily usage report's `perf.idle_private_mb` is the lowest private memory sample for the
+tray and engine together, in whole MiB. The app checks for a sample on its ten-minute stats
+tick, with Settings closed, a ready engine at least a minute old, and at least a minute
+without keyboard or mouse input. A period with no sample reports zero.

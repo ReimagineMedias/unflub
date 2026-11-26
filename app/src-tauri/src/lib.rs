@@ -323,6 +323,30 @@ pub(crate) fn env_facts(app: &AppHandle) -> usage::EnvFacts {
     }
 }
 
+/// Best-effort idle sample. Avoid an open Settings window and do not wait for a busy supervisor.
+fn sample_idle_memory(app: &AppHandle) -> Option<u64> {
+    if app.get_webview_window(SETTINGS_WINDOW).is_some() || !system::input_idle() {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        let receiver = app
+            .state::<AppState>()
+            .engine
+            .lock()
+            .ok()?
+            .as_ref()?
+            .sample_memory();
+        let sample = receiver
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .ok()?;
+        if app.get_webview_window(SETTINGS_WINDOW).is_none() && system::input_idle() {
+            return sample;
+        }
+    }
+    None
+}
+
 /// `user-agent` as `User-Agent`, for reading.
 fn canonical_header(name: &str) -> String {
     match name {

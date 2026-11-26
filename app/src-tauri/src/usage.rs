@@ -140,6 +140,7 @@ pub struct Perf {
     /// The Windows spell checker's `Check` call alone.
     pub spellcheck_p99_us: u64,
     pub inject_p99_us: u64,
+    /// Lowest idle private MiB sampled for the tray and engine together. Zero without a sample.
     pub idle_private_mb: u64,
 }
 
@@ -417,6 +418,7 @@ struct Tally {
     decide_all: Hist,
     spellcheck: Hist,
     inject: Hist,
+    idle_private_mb: Option<u64>,
     /// Seconds autocorrect was off this period, not counting a pause still going on.
     paused_secs: u64,
     /// While autocorrect is off: since when (folded into `paused_secs` at every save).
@@ -655,6 +657,13 @@ impl Usage {
         });
     }
 
+    fn record_idle_memory(&self, sample: u64) {
+        self.record(|tally| {
+            tally.idle_private_mb =
+                Some(tally.idle_private_mb.map_or(sample, |old| old.min(sample)));
+        });
+    }
+
     /// The payload the current period would post, from the counts so far.
     pub fn payload(&self, settings: &Settings, version: &str, env: &EnvFacts) -> Payload {
         let tally = self.tally.lock().unwrap();
@@ -662,7 +671,7 @@ impl Usage {
             &tally,
             settings,
             version,
-            crate::system::private_memory_mb().unwrap_or(0),
+            tally.idle_private_mb.unwrap_or(0),
             env,
             now_secs(),
         )
@@ -707,7 +716,7 @@ impl Usage {
             &tally,
             settings,
             version,
-            crate::system::private_memory_mb().unwrap_or(0),
+            tally.idle_private_mb.unwrap_or(0),
             env,
             now,
         );
@@ -960,10 +969,15 @@ pub fn spawn(app: tauri::AppHandle) {
                 std::thread::sleep(TICK);
                 let usage = app.state::<Usage>();
                 app.state::<Stats>().flush();
-                usage.flush();
                 let flags = app.state::<crate::remote::Remote>().flags();
                 // `is_on` already includes the user's switch and the machine policy.
                 let allowed = !cfg!(debug_assertions) && may_send(usage.is_on(), flags);
+                if allowed {
+                    if let Some(sample) = crate::sample_idle_memory(&app) {
+                        usage.record_idle_memory(sample);
+                    }
+                }
+                usage.flush();
                 if usage.due(now_secs(), jitter) {
                     if allowed {
                         let settings = crate::current_settings(&app);
@@ -1701,6 +1715,32 @@ mod tests {
 
     /// One report covers one period: a report that fails to send waits, while the next day is
     /// counted on its own.
+    #[test]
+    fn idle_memory_uses_the_lowest_pair_sample_and_resets_at_period_close() {
+        let dir = std::env::temp_dir().join(format!("unflub-usage-idle-{}", std::process::id()));
+        let usage = Usage::new(dir.clone(), true);
+        let settings = Settings::default();
+        let env = env_facts();
+        assert_eq!(
+            usage.payload(&settings, "0.1.0", &env).perf.idle_private_mb,
+            0
+        );
+        for sample in [30, 24, 29] {
+            usage.record_idle_memory(sample);
+        }
+        assert_eq!(
+            usage.payload(&settings, "0.1.0", &env).perf.idle_private_mb,
+            24
+        );
+        usage.close_period(&settings, "0.1.0", &env);
+        assert_eq!(usage.pending().unwrap()["perf"]["idle_private_mb"], 24);
+        assert_eq!(
+            usage.payload(&settings, "0.1.0", &env).perf.idle_private_mb,
+            0
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn a_closed_period_waits_while_the_next_is_counted() {
         let dir = std::env::temp_dir().join(format!("unflub-usage-period-{}", std::process::id()));
