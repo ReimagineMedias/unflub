@@ -21,11 +21,16 @@ Repo is private until v0.1, then flipped public.
 - Core engine (`crates/unflub-core`): SymSpell (MIT) frequency lists in `data/`, embedded with `include_str!`. Index build
   ~100 ms release, ~15 MB heap. Boundary decision p99 ~90 us, hard unknown words ~150 us max. Ranking weights live in
   `src/rank.rs` (`TUNING`) and `src/distance.rs`; after changing them run
-  `cargo test --release -p unflub-core --test corpus -- --nocapture` (owner corpus 23/25, common typos 104/111 since
-  2026-11-17), `cargo run --release -p unflub-core --example bench` and the quality gate
-  `cargo run --release -p unflub-core --example quality -- --check perf/limits.toml` (7.9 false fixes per 10k clean
-  words, 85.86 % exact, 1.72 % wrong; `--dump <dir>` lists every false fix). Its corpora in `data/quality/` are LF
-  with `-text` in .gitattributes: the lab's CRLF copies never split into paragraphs.
+  `cargo test --release -p unflub-core --test corpus -- --nocapture` (owner corpus 23/25, common typos 108/111 since
+  2026-11-25), `cargo run --release -p unflub-core --example bench` and the quality gate
+  `cargo run --release -p unflub-core --example quality -- --check perf/limits.toml` (5.7 false fixes per 10k clean
+  words, 86.24 % exact, 1.54 % wrong since 2026-11-25; `--dump <dir>` lists every false fix). Its corpora in
+  `data/quality/` are LF with `-text` in .gitattributes: the lab's CRLF copies never split into paragraphs.
+- Engine word lists (2026-11-25): `misspellings.txt` (typo and fix, taken before ranking, never a known word: the
+  place for a typo a frequent neighbour wins), `protected_words.txt` (shorthand, brands, lowercase names: never
+  corrected or suggested), and words from `extra_words`/`tech_words`/`spelling_variants` are "curated": never
+  rewritten when only the OS checker flags them. A slip of a very common word (amd, ssd, gst) stays off the
+  protected list. The synthetic quality typos include `wth` for `with` 10 times, now left alone on purpose (#36).
 - Pill (`overlay.rs`, `caret.rs`): `cargo run -p unflub-windows --example pill_snapshot` renders every style offscreen to
   `.local/pill/*.png` without showing a window; check visuals there, never by running the hook. Fonts resolve to
   Segoe UI Variable Text and Cascadia Mono on Windows 11. Software Direct2D renderer setup is ~2 ms warm (26 ms on
