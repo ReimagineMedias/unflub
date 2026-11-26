@@ -179,7 +179,7 @@ const X = () => (
   </svg>
 );
 
-export function ChipList({ items, onChange, placeholder, empty, normalise = (s) => s.trim(), single }: {
+export function ChipList({ items, onChange, placeholder, empty, normalise = (s) => s.trim(), single, validate }: {
   items: string[];
   onChange: (items: string[]) => void;
   placeholder: string;
@@ -187,14 +187,16 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
   normalise?: (s: string) => string;
   /** Entries are one word: a space blocks adding, with this hint. */
   single?: string;
+  validate?: (value: string) => string | undefined;
 }) {
   const [draft, setDraft] = useState("");
-  const spaced = Boolean(single) && /\s/.test(draft.trim());
+  const hintId = useId();
+  const value = normalise(draft);
+  const warning = single && /\s/.test(draft.trim()) ? single : value ? validate?.(value) : undefined;
   const add = () => {
-    const v = normalise(draft);
-    if (spaced) return;
+    if (!value || warning) return;
     // The engine compares words without case, so RMGN is the same entry as rmgn.
-    if (v && !items.some((x) => x.toLowerCase() === v.toLowerCase())) onChange([...items, v]);
+    if (!items.some((x) => x.toLowerCase() === value.toLowerCase())) onChange([...items, value]);
     setDraft("");
   };
   return (
@@ -214,10 +216,13 @@ export function ChipList({ items, onChange, placeholder, empty, normalise = (s) 
         <div className="empty">{empty}</div>
       )}
       <form className="add" onSubmit={(e) => { e.preventDefault(); add(); }}>
-        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} spellCheck={false} />
-        <button className="btn" type="submit" disabled={!draft.trim() || spaced}>{t("common.add")}</button>
+        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} spellCheck={false}
+          aria-invalid={warning ? true : undefined} aria-describedby={warning ? hintId : undefined} />
+        <button className="btn" type="submit" disabled={!value || Boolean(warning)}>{t("common.add")}</button>
       </form>
-      {spaced && <small className="muted chip-hint">{single}</small>}
+      <div id={hintId} aria-live="polite">
+        {warning && <small className="muted chip-hint">{warning}</small>}
+      </div>
     </>
   );
 }
