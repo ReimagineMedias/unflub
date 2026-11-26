@@ -234,7 +234,10 @@ and back to 1 s once a run lasted a minute. The tray uses its paused icon and a 
 whenever autocorrect is enabled and the engine is not ready.
 
 Once the engine is ready, the app sends a heartbeat every 15 s. The engine worker replies from
-its message loop. Two missed replies end the session and trigger a restart. Both peers give a
+its message loop, but only while the hook thread's own message pump is turning: each heartbeat
+posts a private thread message with a nonce to that pump (`crates/unflub-windows/src/pump.rs`,
+one at a time, no input or window data), and a probe still unanswered after 5 s, checked at the
+next heartbeat, withholds the reply. Two missed replies end the session and trigger a restart. Both peers give a
 whole frame 60 s to arrive, including its length prefix and body.
 
 - **Pause ends the engine process**; resume starts a new one (~0.3 s, mostly the dictionary

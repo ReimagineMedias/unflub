@@ -31,7 +31,7 @@ use unflub_engine::{frame, session};
 use unflub_windows::stats::UsageCounters;
 use unflub_windows::{
     Correction, Hook, HookEvent, HookOptions, LiveConfig, LiveEngine, Overlay, OverlayHandle,
-    PillConfig, PillStyle, WindowsSpellBackend,
+    PillConfig, PillStyle, PumpHealth, WindowsSpellBackend,
 };
 
 use crate::Args;
@@ -184,7 +184,13 @@ impl State {
                     self.settings = Some(*next);
                     self.sync();
                 }
-                Ok(Msg::Ping(nonce)) => self.out.send(&FromEngine::Pong { nonce }),
+                Ok(Msg::Ping(nonce)) => {
+                    // No pong while the hook's own message pump is stuck: the app then ends
+                    // this engine after its usual two missed heartbeats and starts a new one.
+                    if self.hook_pump_alive() {
+                        self.out.send(&FromEngine::Pong { nonce });
+                    }
+                }
                 Ok(Msg::Hook(event)) => self.on_hook_event(event),
                 // Only unflub's own settings learn the word; the Windows dictionary, which every
                 // app shares, is never written.
@@ -200,6 +206,20 @@ impl State {
         }
         self.stop();
         self.send_counts();
+    }
+
+    /// Is the hook thread's message pump still turning (#184)? True without a hook. Each call
+    /// posts the next probe once the last was answered, so the app's heartbeat paces it: a
+    /// probe sent with one ping must be answered before the next ping (15 s later) checks it.
+    fn hook_pump_alive(&mut self) -> bool {
+        let Some(running) = self.running.as_mut() else {
+            return true;
+        };
+        let alive = running.hook.check_pump() == PumpHealth::Alive;
+        if !alive {
+            eprintln!("unflub-engine: the hook's message pump stopped answering; no pong");
+        }
+        alive
     }
 
     /// The word count and the usage counts, when they moved.
