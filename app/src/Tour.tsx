@@ -17,11 +17,14 @@ function PracticeBox({ onAction }: { onAction: (a: TourAction) => void }) {
   const [text, setText] = useState("");
   const [pill, setPill] = useState<Pill>(null);
   const queue = useRef<Promise<void>>(Promise.resolve());
+  const needsReset = useRef(false);
   const box = useRef<HTMLTextAreaElement>(null);
   const hide = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    void tourReset();
+    queue.current = queue.current.then(tourReset).catch(() => {
+      needsReset.current = true;
+    });
     box.current?.focus();
     return () => window.clearTimeout(hide.current);
   }, []);
@@ -51,8 +54,18 @@ function PracticeBox({ onAction }: { onAction: (a: TourAction) => void }) {
     e.preventDefault();
     const sent = key ?? "Reset";
     queue.current = queue.current.then(async () => {
-      const a = await tourKey(sent);
-      if (key) apply(key, a);
+      let action: TourAction = { kind: "pass" };
+      try {
+        if (needsReset.current) {
+          await tourKey("Reset");
+          needsReset.current = false;
+        }
+        action = await tourKey(sent);
+      } catch {
+        // The failed call may have reached Rust. Reset before trusting another correction.
+        needsReset.current = true;
+      }
+      if (key) apply(key, action);
     });
   };
 
