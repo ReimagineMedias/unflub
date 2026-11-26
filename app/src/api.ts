@@ -24,8 +24,10 @@ export async function getSettings(): Promise<Settings> {
   return inTauri ? invoke<Settings>("get_settings") : structuredClone(mock);
 }
 
-export async function setSettings(settings: Settings): Promise<Settings> {
-  if (inTauri) return invoke<Settings>("set_settings", { settings });
+/** `removed`: personal words the user removed since the last save, so a word the engine learned
+ * meanwhile isn't merged back in. */
+export async function setSettings(settings: Settings, removed: string[] = []): Promise<Settings> {
+  if (inTauri) return invoke<Settings>("set_settings", { settings, removed });
   mock = structuredClone(settings);
   return structuredClone(mock);
 }

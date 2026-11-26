@@ -125,17 +125,30 @@ fn get_settings(app: AppHandle) -> serde_json::Value {
     for_window(&current_settings(&app))
 }
 
+/// `removed`: personal words the user removed in the window since its last save. A word the
+/// engine learned and the window showed is then not merged back in.
 #[tauri::command]
-fn set_settings(app: AppHandle, mut settings: Settings) -> Result<serde_json::Value, String> {
+fn set_settings(
+    app: AppHandle,
+    mut settings: Settings,
+    removed: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
-    let pending = state.pending_learned.lock().unwrap().clone();
+    forget_removed(
+        &mut state.pending_learned.lock().unwrap(),
+        &removed.unwrap_or_default(),
+    );
     let added = words_added(
         &state.settings.lock().unwrap().personal_words,
         &settings.personal_words,
-        &pending,
+        &state.pending_learned.lock().unwrap(),
     );
-    merge_learned(&mut settings.personal_words, &pending);
+    let mut pending = Vec::new();
     let saved = update_settings(&app, |current| {
+        // Read while no other change can land, so a word learned and saved since the window's
+        // copy is always in here.
+        pending = state.pending_learned.lock().unwrap().clone();
+        merge_learned(&mut settings.personal_words, &pending);
         // The window doesn't set the file's schema version.
         settings.schema_version = current.schema_version;
         *current = settings;
@@ -187,6 +200,14 @@ fn words_added(prev: &[String], next: &[String], learned: &[String]) -> u64 {
         }
     }
     added.len() as u64
+}
+
+/// Drop from `pending` every word the user removed (ignoring case).
+fn forget_removed(pending: &mut Vec<String>, removed: &[String]) {
+    pending.retain(|w| {
+        let key = w.to_lowercase();
+        !removed.iter().any(|r| r.to_lowercase() == key)
+    });
 }
 
 /// Add each of `learned` to `words` unless it is already there (ignoring case).
@@ -1094,6 +1115,18 @@ mod tests {
         );
         assert_eq!(perf_idle_dir(args(&["unflub.exe", "--perf-idle"])), None);
         assert_eq!(perf_idle_dir(args(&["unflub.exe", "--background"])), None);
+    }
+
+    /// Review #95: removing a word the engine just learned doesn't put it straight back, but a
+    /// stale save from a window that never showed it still keeps it.
+    #[test]
+    fn a_removed_learned_word_stays_removed() {
+        let mut pending = vec!["unflub".to_string(), "teh".to_string()];
+        forget_removed(&mut pending, &["Unflub".to_string()]);
+        assert_eq!(pending, ["teh"]);
+        let mut from_window = vec!["rmgn".to_string()];
+        merge_learned(&mut from_window, &pending);
+        assert_eq!(from_window, ["rmgn", "teh"]);
     }
 
     #[test]
