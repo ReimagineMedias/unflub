@@ -296,6 +296,8 @@ struct FileState {
     /// The file couldn't be read at startup, so the settings in memory are defaults: back the
     /// file up before the first save replaces it.
     unreadable: bool,
+    /// What `privacy-switches.json` holds, once this run has written it.
+    switches: Option<PrivacySwitches>,
 }
 
 /// The file's bytes. A file another program holds open for a moment (antivirus, a sync client)
@@ -347,8 +349,44 @@ impl FileState {
     }
 }
 
+/// The usage-stats and crash-report switches as last saved, in a file of their own
+/// (`privacy-switches.json`) so that an off survives anything that happens to settings.json:
+/// corruption, a field this version can't read, a file another program holds. A switch that is
+/// off in either file loads as off. New installs have neither file and start with both on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct PrivacySwitches {
+    share_usage_stats: bool,
+    send_crash_reports: bool,
+}
+
+impl Default for PrivacySwitches {
+    fn default() -> Self {
+        Self::of(&Settings::default())
+    }
+}
+
+impl PrivacySwitches {
+    fn of(settings: &Settings) -> Self {
+        Self {
+            share_usage_stats: settings.share_usage_stats,
+            send_crash_reports: settings.send_crash_reports,
+        }
+    }
+
+    fn read(path: &Path) -> Option<Self> {
+        let bytes = read_retrying(path).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    fn write(&self, path: &Path) -> io::Result<()> {
+        crate::files::replace(path, &serde_json::to_vec_pretty(self)?)
+    }
+}
+
 pub struct Store {
     path: PathBuf,
+    privacy_path: PathBuf,
     /// Held for every write, and across read, change and write in [`Store::update`].
     writing: Mutex<FileState>,
 }
@@ -357,6 +395,7 @@ impl Store {
     pub fn new(dir: PathBuf) -> Self {
         Self {
             path: dir.join("settings.json"),
+            privacy_path: dir.join("privacy-switches.json"),
             writing: Mutex::new(FileState::default()),
         }
     }
@@ -370,15 +409,66 @@ impl Store {
     /// replaces it. A file that isn't a JSON object is moved to a timestamped backup (the last
     /// [`BACKUPS_KEPT`] are kept). A field this version can't read gets its default and the
     /// rest of the file is kept (see [`from_object`]). An older file is migrated
-    /// (`migrations.rs`) and written back.
+    /// (`migrations.rs`) and written back. Whatever happened to the file, usage stats and crash
+    /// reports stay off if the user turned them off ([`PrivacySwitches`]).
     pub fn load(&self) -> Settings {
+        let (mut settings, migrated_from, lost) = self.read_file();
+        match PrivacySwitches::read(&self.privacy_path) {
+            Some(saved) => {
+                settings.share_usage_stats &= saved.share_usage_stats;
+                settings.send_crash_reports &= saved.send_crash_reports;
+            }
+            // Written before settings.json ever changes in this version, so an off already in
+            // the file is kept too.
+            None => {
+                // The first start of this version, and the file couldn't tell us what the user
+                // chose: off, rather than an on they may have turned off.
+                if lost.share_usage_stats {
+                    settings.share_usage_stats = false;
+                }
+                if lost.send_crash_reports {
+                    settings.send_crash_reports = false;
+                }
+                let switches = PrivacySwitches::of(&settings);
+                match switches.write(&self.privacy_path) {
+                    Ok(()) => self.lock().switches = Some(switches),
+                    Err(e) => eprintln!("settings: can't save the privacy switches: {e}"),
+                }
+            }
+        }
+        if let Some(from) = migrated_from {
+            // Keep the old file beside the new one, in case the migration got it wrong.
+            let _ = fs::copy(
+                &self.path,
+                self.path.with_extension(format!("json.v{from}")),
+            );
+            if let Err(e) = self.save(&settings) {
+                eprintln!("settings: saving the migrated file: {e}");
+            }
+        }
+        settings
+    }
+
+    /// The settings in the file, the schema version they were migrated from, and which privacy
+    /// switches the file holds but couldn't be read (marked `true`).
+    fn read_file(&self) -> (Settings, Option<u32>, PrivacySwitches) {
+        let none_lost = PrivacySwitches {
+            share_usage_stats: false,
+            send_crash_reports: false,
+        };
+        let all_lost = PrivacySwitches {
+            share_usage_stats: true,
+            send_crash_reports: true,
+        };
         let bytes = match read_retrying(&self.path) {
             Ok(bytes) => bytes,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Settings::default(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return (Settings::default(), None, none_lost)
+            }
             Err(e) => {
                 eprintln!("settings: can't read the file ({e}); using defaults, and backing it up before saving over it");
                 self.lock().unreadable = true;
-                return Settings::default();
+                return (Settings::default(), None, all_lost);
             }
         };
         let parsed = decode(&bytes)
@@ -398,18 +488,12 @@ impl Store {
                         "settings: using defaults for {keys:?}, which this version can't read"
                     );
                 }
+                let lost = PrivacySwitches {
+                    share_usage_stats: unread.contains_key("shareUsageStats"),
+                    send_crash_reports: unread.contains_key("sendCrashReports"),
+                };
                 self.lock().unread = unread;
-                if let Some(from) = migrated_from {
-                    // Keep the old file beside the new one, in case the migration got it wrong.
-                    let _ = fs::copy(
-                        &self.path,
-                        self.path.with_extension(format!("json.v{from}")),
-                    );
-                    if let Err(e) = self.save(&settings) {
-                        eprintln!("settings: saving the migrated file: {e}");
-                    }
-                }
-                settings
+                (settings, migrated_from, lost)
             }
             None => {
                 match self.back_up(|from, to| fs::rename(from, to)) {
@@ -419,7 +503,7 @@ impl Store {
                         self.lock().unreadable = true;
                     }
                 }
-                Settings::default()
+                (Settings::default(), None, all_lost)
             }
         }
     }
@@ -508,11 +592,29 @@ impl Store {
             }
             file.unreadable = false;
         }
+        // First, so the file can't say "on" while this still says "off" from before.
+        let before = file.switches;
+        let switches = PrivacySwitches::of(settings);
+        if file.switches != Some(switches) {
+            match switches.write(&self.privacy_path) {
+                Ok(()) => file.switches = Some(switches),
+                Err(e) => eprintln!("settings: can't save the privacy switches: {e}"),
+            }
+        }
         let mut value = serde_json::to_value(settings)?;
         if let Value::Object(obj) = &mut value {
             file.restore_unread(obj);
         }
-        crate::files::replace(&self.path, &serde_json::to_vec_pretty(&value)?)
+        let written = crate::files::replace(&self.path, &serde_json::to_vec_pretty(&value)?);
+        if written.is_err() && file.switches != before {
+            // The settings didn't change, so neither do the switches: the file must keep
+            // matching memory, or the next save would write memory's value as a new choice.
+            match before.map(|b| b.write(&self.privacy_path).map(|()| b)) {
+                Some(Ok(b)) => file.switches = Some(b),
+                _ => file.switches = None,
+            }
+        }
+        written
     }
 }
 
@@ -684,11 +786,17 @@ mod tests {
         let in_memory = current.lock().unwrap().clone();
         assert_eq!(in_memory.personal_words.len(), 8 * 300, "no update lost");
         assert_eq!(store.load(), in_memory, "disk and memory agree");
-        let names: Vec<_> = fs::read_dir(&dir)
+        let temp_files = fs::read_dir(&dir)
             .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
-        assert_eq!(names, ["settings.json"], "no temp file left");
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .is_some_and(|x| x == "tmp")
+            })
+            .count();
+        assert_eq!(temp_files, 0, "no temp file left");
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -697,6 +805,16 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// What a file that couldn't be read loads as: the defaults, with usage stats and crash
+    /// reports off since the file may have held an off (#134).
+    fn lost_file_defaults() -> Settings {
+        Settings {
+            share_usage_stats: false,
+            send_crash_reports: false,
+            ..Settings::default()
+        }
     }
 
     fn backups(dir: &Path) -> Vec<String> {
@@ -716,7 +834,7 @@ mod tests {
         let store = Store::new(dir.clone());
         for i in 0..5 {
             fs::write(dir.join("settings.json"), format!("{{ broken {i}")).unwrap();
-            assert_eq!(store.load(), Settings::default());
+            assert_eq!(store.load(), lost_file_defaults());
             assert!(!dir.join("settings.json").exists(), "moved aside");
         }
         let kept = backups(&dir);
@@ -821,7 +939,7 @@ mod tests {
     fn a_file_that_isnt_text_is_backed_up() {
         let dir = temp_dir("settings-binary");
         fs::write(dir.join("settings.json"), [0x7B, 0xC3, 0x28, 0x7D]).unwrap();
-        assert_eq!(Store::new(dir.clone()).load(), Settings::default());
+        assert_eq!(Store::new(dir.clone()).load(), lost_file_defaults());
         let kept = backups(&dir);
         assert_eq!(kept.len(), 1);
         assert_eq!(
@@ -847,7 +965,7 @@ mod tests {
             .unwrap();
         let store = Store::new(dir.clone());
         let current = Mutex::new(store.load());
-        assert_eq!(*current.lock().unwrap(), Settings::default());
+        assert_eq!(*current.lock().unwrap(), lost_file_defaults());
         assert!(store.update(&current, |s| s.enabled = false).is_err());
         assert!(current.lock().unwrap().enabled, "nothing changed");
         drop(lock);
@@ -862,6 +980,123 @@ mod tests {
         // Only the first save backs up.
         store.update(&current, |s| s.enabled = true).unwrap();
         assert_eq!(backups(&dir).len(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Review #134: once the user turns usage stats or crash reports off, no corruption,
+    /// unreadable field or missing file turns them back on. New installs start with both on.
+    #[test]
+    fn privacy_opt_outs_survive_a_reset() {
+        let dir = temp_dir("settings-optout");
+        let fresh = Store::new(dir.clone()).load();
+        assert!(
+            fresh.share_usage_stats && fresh.send_crash_reports,
+            "on for new installs"
+        );
+
+        let store = Store::new(dir.clone());
+        let current = Mutex::new(store.load());
+        store
+            .update(&current, |s| {
+                s.share_usage_stats = false;
+                s.send_crash_reports = false;
+            })
+            .unwrap();
+        let off = |s: Settings| !s.share_usage_stats && !s.send_crash_reports;
+        for broken in [
+            "{ not json",
+            r#"{ "schemaVersion": 2, "shareUsageStats": "no", "sendCrashReports": 0 }"#,
+            r#"{ "schemaVersion": 9 }"#,
+        ] {
+            fs::write(dir.join("settings.json"), broken).unwrap();
+            assert!(off(Store::new(dir.clone()).load()), "{broken}");
+        }
+        let _ = fs::remove_file(dir.join("settings.json"));
+        assert!(off(Store::new(dir.clone()).load()), "file deleted");
+
+        // Turning one back on is the user's choice too.
+        let store = Store::new(dir.clone());
+        let current = Mutex::new(store.load());
+        store
+            .update(&current, |s| s.share_usage_stats = true)
+            .unwrap();
+        let again = Store::new(dir.clone()).load();
+        assert!(again.share_usage_stats && !again.send_crash_reports);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Review #134: an off saved by a version before `privacy-switches.json` is kept from the
+    /// first start of this one, before anything is saved.
+    #[test]
+    fn an_older_opt_out_is_kept_from_the_first_start() {
+        let dir = temp_dir("settings-optout-upgrade");
+        fs::write(
+            dir.join("settings.json"),
+            r#"{ "schemaVersion": 2, "shareUsageStats": false, "sendCrashReports": true }"#,
+        )
+        .unwrap();
+        assert!(!Store::new(dir.clone()).load().share_usage_stats);
+        fs::write(dir.join("settings.json"), "{ broken").unwrap();
+        let s = Store::new(dir.clone()).load();
+        assert!(!s.share_usage_stats && s.send_crash_reports);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Review #134: on the first start of this version, a file that can't say what the user
+    /// chose loads those switches as off, never as the default on.
+    #[test]
+    fn an_unreadable_choice_on_the_first_start_loads_as_off() {
+        let dir = temp_dir("settings-optout-lost");
+        fs::write(dir.join("settings.json"), "{ broken").unwrap();
+        let s = Store::new(dir.clone()).load();
+        assert!(
+            !s.share_usage_stats && !s.send_crash_reports,
+            "corrupt file"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+
+        let dir = temp_dir("settings-optout-lost-field");
+        fs::write(
+            dir.join("settings.json"),
+            r#"{ "schemaVersion": 2, "shareUsageStats": "no" }"#,
+        )
+        .unwrap();
+        let s = Store::new(dir.clone()).load();
+        assert!(
+            !s.share_usage_stats && s.send_crash_reports,
+            "one bad field"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Review #134: a save that fails leaves the switches as they were, so memory and the
+    /// switches file agree and the next save doesn't record the old value as a new choice.
+    #[cfg(windows)]
+    #[test]
+    fn a_failed_save_leaves_the_privacy_switches_alone() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = temp_dir("settings-optout-failed");
+        let store = Store::new(dir.clone());
+        let current = Mutex::new(store.load());
+        store.save(&current.lock().unwrap()).unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(dir.join("settings.json"))
+            .unwrap();
+        assert!(store
+            .update(&current, |s| s.share_usage_stats = false)
+            .is_err());
+        drop(lock);
+        let on_disk = PrivacySwitches::read(&dir.join("privacy-switches.json")).unwrap();
+        assert!(on_disk.share_usage_stats, "rolled back with the settings");
+        assert!(current.lock().unwrap().share_usage_stats);
+        // A retry works and sticks.
+        store
+            .update(&current, |s| s.share_usage_stats = false)
+            .unwrap();
+        store.update(&current, |s| s.enabled = false).unwrap();
+        assert!(!Store::new(dir.clone()).load().share_usage_stats);
         fs::remove_dir_all(dir).unwrap();
     }
 
