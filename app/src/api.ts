@@ -26,10 +26,19 @@ export async function getSettings(): Promise<Settings> {
 
 /** `removed`: personal words the user removed since the last save, so a word the engine learned
  * meanwhile isn't merged back in. */
-export async function setSettings(settings: Settings, removed: string[] = []): Promise<Settings> {
+export async function setSettings(settings: Partial<Settings>, removed: string[] = []): Promise<Settings> {
   if (inTauri) return invoke<Settings>("set_settings", { settings, removed });
-  mock = structuredClone(settings);
+  mock = { ...mock, ...structuredClone(settings) };
   return structuredClone(mock);
+}
+
+export async function settingsFileError(): Promise<string | null> {
+  return inTauri ? invoke("settings_file_error") : null;
+}
+
+export async function onSettingsFileError(cb: (error: string | null) => void): Promise<() => void> {
+  if (!inTauri) return () => {};
+  return listen<string | null>("settings-file-error", (e) => cb(e.payload));
 }
 
 export async function pauseControls(): Promise<PauseControls> {

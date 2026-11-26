@@ -4,7 +4,7 @@ import {
   answerCrashReport, appInfo, appVersion, checkForUpdates, crashReportPending, dismissMessage, getSettings, inTauri,
   inputInterference, onInputInterference, onPauseControls, pauseControls, resumeAutocorrect, setPauseShortcut,
   installUpdate, onCrashReport, onOpenPage, onRemoteMessage, onSettingsChanged, onUpdateStatus, remoteMessage,
-  reportUsage, resetSettings, setSettings, systemLook, updateStatus,
+  onSettingsFileError, reportUsage, resetSettings, setSettings, settingsFileError, systemLook, updateStatus,
 } from "./api";
 import { AppIcon, ChipList, ExternalLink, Logo, NavIcon, PowerSwitch, Row, RuleList, Segmented, Slider, Switch } from "./components";
 import { ReleaseNotes } from "./ReleaseNotes";
@@ -162,6 +162,8 @@ export default function App() {
   const [crash, setCrash] = useState(false);
   const [interference, setInterference] = useState(false);
   const [controls, setControls] = useState<PauseControls>({ paused: false, shortcutUnavailable: false });
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [message, setMessage] = useState<RemoteMessage | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -174,7 +176,7 @@ export default function App() {
     setLocal(s);
   }, []);
   /** Settings changed in the window and not sent yet. */
-  const unsaved = useRef<Settings | null>(null);
+  const unsaved = useRef<Partial<Settings> | null>(null);
   /** Every field the window changed that isn't saved yet (unsent or still being saved), so news
    * from elsewhere (the tray, a learned word, an older save) never undoes it. */
   const dirty = useRef<Partial<Settings>>({});
@@ -182,7 +184,6 @@ export default function App() {
   /** Settings from the app, with the window's own changes still on top. */
   const fromApp = useCallback((s: Settings) => {
     const merged = { ...s, ...dirty.current };
-    if (unsaved.current) unsaved.current = merged;
     show(merged);
   }, [show]);
   /** Personal words removed since the last save (see `setSettings`). */
@@ -202,6 +203,7 @@ export default function App() {
     crashReportPending().then(setCrash);
     inputInterference().then(setInterference);
     pauseControls().then(setControls);
+    settingsFileError().then(setFileError);
     remoteMessage().then(setMessage);
     appInfo().then(setInfo);
     const offs: Promise<() => void>[] = [
@@ -210,6 +212,7 @@ export default function App() {
       onCrashReport(setCrash),
       onInputInterference(setInterference),
       onPauseControls(setControls),
+      onSettingsFileError(setFileError),
       onRemoteMessage(setMessage),
       onOpenPage((p) => {
         if (p === "tour") setTouring(true);
@@ -256,7 +259,10 @@ export default function App() {
     const removed = [...removedWords.current];
     removedWords.current.clear();
     saving.current += 1;
-    void setSettings(next, removed).finally(() => {
+    setSaveError(null);
+    void setSettings(next, removed).catch((reason) => {
+      setSaveError(String(reason));
+    }).finally(() => {
       saving.current -= 1;
       if (saving.current > 0 || unsaved.current) return;
       // Everything is saved: show the app's settings as they are now (words learned meanwhile).
@@ -289,7 +295,7 @@ export default function App() {
       for (const w of patch.personalWords) removedWords.current.delete(w);
     }
     dirty.current = { ...dirty.current, ...patch };
-    unsaved.current = next;
+    unsaved.current = { ...unsaved.current, ...patch };
     show(next);
     window.clearTimeout(saveTimer.current);
     if (later) saveTimer.current = window.setTimeout(flush, 200);
@@ -346,6 +352,8 @@ export default function App() {
       </nav>
 
       <main>
+        {fileError && <p className="banner" role="alert">{t("settings.fileError", { message: fileError })}</p>}
+        {saveError && <p className="banner" role="alert">{t("settings.saveError", { message: saveError })}</p>}
         <Banners crash={crash} onCrash={answerCrash} interference={interference} update={u} autoUpdate={s.autoUpdate}
           onInstall={install} onDetails={() => setPage("about")} />
 
