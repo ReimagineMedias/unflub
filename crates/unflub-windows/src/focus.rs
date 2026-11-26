@@ -1,20 +1,26 @@
 //! What we know about the focused field: the foreground app's exe name and whether the field
 //! is a password box. Refreshed on focus changes and on clicks, Tab and Enter; never per key.
 //!
-//! The focused window's class decides how we check for a password field:
-//! - Standard Windows edit controls (exactly Edit, RichEdit20A/W, RICHEDIT50W, RichEditD2D,
-//!   RichEditD2DPT): the `ES_PASSWORD` style bit alone, read on the hook thread. Style and
-//!   class reads don't send messages, so they can't block.
-//! - Other classes containing "edit" (WinForms EDIT, Delphi TEdit, custom): secure at once if
-//!   `ES_PASSWORD` is set, otherwise checked with UIA like everything else.
-//! - Everything else (browsers, Electron, WPF, UWP, Qt, Java, unknown classes): UI Automation's
-//!   `IsPassword`, on a worker thread with short UIA timeouts, because UIA calls can block on
-//!   hung apps. Any accessibility query makes Chromium build its accessibility tree, which
-//!   costs CPU and memory in Chrome and Electron apps, so we only ask when focus may have moved.
+//! How we check for a password field:
+//! - Any class containing "edit" with the `ES_PASSWORD` style bit: secure at once, read on the
+//!   hook thread (style and class reads don't send messages, so they can't block), and
+//!   remembered for that window while it exists ([`SeenPasswords`]): "Show password"
+//!   checkboxes clear the bit with `EM_SETPASSWORDCHAR(0)`.
+//! - Everything else, standard edits included: UI Automation, on a worker thread with short
+//!   UIA timeouts because UIA calls can block on hung apps. Secure if `IsPassword` says so, if an
+//!   edit box's name, automation id or help text says password or PIN ([`names_a_password`]),
+//!   or if the element (by UIA runtime id) was a password field before under the same
+//!   foreground window: a revealed password box keeps its runtime id. Any accessibility query
+//!   makes Chromium build its accessibility tree, which costs CPU and memory in Chrome and
+//!   Electron apps, so we only ask when focus may have moved.
+//! - Without UIA, standard edits (Edit, RichEdit20A/W, RICHEDIT50W, RichEditD2D, RichEditD2DPT)
+//!   go by `ES_PASSWORD` alone and everything else is secure.
 //!
 //! Each check bumps a generation number; the worker publishes `(generation, answer)` in one
 //! atomic. The answer is three-state, and everything except a definite "not a password" counts
-//! as secure: no answer yet, a UIA error or timeout, or no UIA at all (fail closed).
+//! as secure: no answer yet, a UIA error or timeout, or no UIA at all (fail closed). The one
+//! exception: a standard edit UIA already cleared stays cleared while the answer for the same
+//! window is pending (Enter or a click inside it), since its window is that one field.
 //!
 //! The same query also says whether the caret sits at a word start (empty field, or whitespace
 //! before it, read through `TextPattern`), in a second atomic. After a click or focus change the
@@ -77,6 +83,134 @@ const ES_PASSWORD: u32 = 0x20;
 /// Delphi `TEdit`); on other classes the bit means something else.
 pub fn is_password_edit(class: &str, style: u32) -> bool {
     style & ES_PASSWORD != 0 && class.to_ascii_lowercase().contains("edit")
+}
+
+/// Does a field's accessible name, automation id or help text say it takes a password, PIN or
+/// passphrase? For fields that show what is typed and so don't report `IsPassword`: a password
+/// box after "Show password", a Win32 edit whose mask was taken off with
+/// `EM_SETPASSWORDCHAR(0)`, a PIN box (#40). A false match only means no corrections there.
+pub fn names_a_password(texts: &[&str]) -> bool {
+    const ANYWHERE: &[&str] = &[
+        "password",
+        "passwort",
+        "passphrase",
+        "passcode",
+        "passwd",
+        "kennwort",
+        "mot de passe",
+        "contraseña",
+        "contrasena",
+        "senha",
+        "wachtwoord",
+        "lösenord",
+        "losenord",
+        "adgangskode",
+        "salasana",
+        "hasło",
+        "haslo",
+        "heslo",
+        "jelszó",
+        "parola d'accesso",
+        "пароль",
+        "パスワード",
+        "暗証番号",
+        "密码",
+        "密碼",
+        "비밀번호",
+        "암호",
+    ];
+    // Whole words only: "pin" must not match "spinner" or "pinned".
+    const WORDS: &[&str] = &["pin", "pwd", "pass", "otp", "cvv", "cvc"];
+    texts.iter().any(|t| {
+        let lower = t.to_lowercase();
+        ANYWHERE.iter().any(|w| lower.contains(w))
+            || t.split(|c: char| !c.is_alphanumeric())
+                .flat_map(split_camel)
+                .any(|w| WORDS.contains(&w.as_str()))
+    })
+}
+
+/// Lowercased parts of a camel-case word: `newPin` -> `new`, `pin`; `userPWD` -> `user`, `pwd`.
+fn split_camel(word: &str) -> Vec<String> {
+    let mut out = vec![String::new()];
+    let mut prev_lower = false;
+    for c in word.chars() {
+        if c.is_uppercase() && prev_lower {
+            out.push(String::new());
+        }
+        prev_lower = c.is_lowercase();
+        out.last_mut()
+            .expect("never empty")
+            .extend(c.to_lowercase());
+    }
+    out
+}
+
+/// Fields seen as password fields, so they stay secure after their mask comes off (#40): a
+/// "Show password" button turns `<input type=password>` into `type=text`, and a Win32 "Show
+/// password" checkbox sends `EM_SETPASSWORDCHAR(0)`, which clears `ES_PASSWORD`. Each entry has
+/// an owner window and is forgotten once that window is gone; the oldest go first past
+/// [`SeenPasswords::CAPACITY`]. A key that turns up again on an unrelated field only makes that
+/// field secure.
+#[derive(Debug, Clone)]
+pub struct SeenPasswords<K> {
+    entries: Vec<(isize, K)>,
+}
+
+impl<K> Default for SeenPasswords<K> {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl<K: PartialEq> SeenPasswords<K> {
+    pub const CAPACITY: usize = 64;
+
+    pub fn remember(&mut self, owner: isize, key: K) {
+        if self.contains(&key) {
+            return;
+        }
+        if self.entries.len() >= Self::CAPACITY {
+            self.entries.remove(0);
+        }
+        self.entries.push((owner, key));
+    }
+
+    pub fn contains(&self, key: &K) -> bool {
+        self.entries.iter().any(|(_, k)| k == key)
+    }
+
+    /// Forget fields whose owner window no longer exists.
+    pub fn forget_gone(&mut self, exists: impl Fn(isize) -> bool) {
+        self.entries.retain(|(owner, _)| exists(*owner));
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// The UIA worker's answer from what it read about the focused element: a terminal input,
+/// UIA's `IsPassword` (`None`: the read failed), a name that says password ([`names_a_password`]),
+/// and whether this element was seen as a password field before ([`SeenPasswords`]).
+pub fn password_answer(
+    terminal: bool,
+    is_password: Option<bool>,
+    named: bool,
+    seen_before: bool,
+) -> Secure {
+    match is_password {
+        _ if terminal || named || seen_before => Secure::Secure,
+        Some(true) => Secure::Secure,
+        Some(false) => Secure::NotSecure,
+        None => Secure::Unknown,
+    }
 }
 
 /// The UIA worker's answer about one focused element.
@@ -161,6 +295,15 @@ pub struct FocusState {
     pub slot: Arc<PasswordSlot>,
     /// False when the UIA worker couldn't start or died. Non-edit fields then count as secure.
     pub uia_available: bool,
+    /// The focused window (`HWND` as an integer) this is about.
+    pub target: isize,
+    /// `target` had `ES_PASSWORD` at some point ([`FocusState::seen`]).
+    pub was_password: bool,
+    /// Windows seen with `ES_PASSWORD`, owned by themselves (forgotten once destroyed).
+    pub seen: SeenPasswords<isize>,
+    /// The same standard edit as before, which UIA had already cleared: it stays cleared while
+    /// the new answer is pending (an `HWND` of a standard edit is one field).
+    carried_safe: bool,
 }
 
 impl Default for FocusState {
@@ -173,21 +316,52 @@ impl Default for FocusState {
             generation: 0,
             slot: Arc::new(PasswordSlot::default()),
             uia_available: false,
+            target: 0,
+            was_password: false,
+            seen: SeenPasswords::default(),
+            carried_safe: false,
         }
     }
 }
 
 impl FocusState {
+    /// Secure (no corrections, and the corrector sees nothing): a password field now or before,
+    /// or anything UIA hasn't cleared. Fails closed.
+    ///
+    /// Standard edits used to count as cleared on `ES_PASSWORD` alone, which a "Show password"
+    /// checkbox removes (#40); they now need UIA's answer too, which also checks the field's
+    /// name, unless the same edit was cleared just before. Only without UIA does
+    /// `ES_PASSWORD` alone decide for them.
     pub fn secure(&self) -> bool {
-        if self.es_password {
+        if self.es_password || self.was_password {
             return true;
         }
-        match self.kind {
-            FieldKind::Win32Edit => false,
-            FieldKind::Probe => {
-                !self.uia_available || self.slot.answer(self.generation) != Some(Secure::NotSecure)
-            }
+        if !self.uia_available {
+            return self.kind == FieldKind::Probe;
         }
+        match self.slot.answer(self.generation) {
+            Some(answer) => answer != Secure::NotSecure,
+            None => !(self.kind == FieldKind::Win32Edit && self.carried_safe),
+        }
+    }
+
+    /// Focus may have moved to `target` (an `HWND` as an integer) of `kind`, with `ES_PASSWORD`
+    /// as read now. Remembers password edits, and starts a new generation: returns it when the
+    /// UIA worker should be asked ([`FocusState::next_generation`]).
+    pub fn refresh(&mut self, target: isize, kind: FieldKind, es_password: bool) -> Option<u64> {
+        let same_cleared_edit = kind == FieldKind::Win32Edit
+            && self.kind == FieldKind::Win32Edit
+            && target == self.target
+            && !self.secure();
+        if es_password {
+            self.seen.remember(target, target);
+        }
+        self.kind = kind;
+        self.es_password = es_password;
+        self.target = target;
+        self.was_password = self.seen.contains(&target);
+        self.carried_safe = same_cleared_edit;
+        self.next_generation()
     }
 
     /// Start a new generation; returns it when the worker should be asked about it: always
@@ -207,8 +381,8 @@ pub use win::{focus_window, foreground, inspect_window, process_exe, PasswordPro
 #[cfg(windows)]
 mod win {
     use super::{
-        classify_class, exe_name_from_path, is_password_edit, FieldKind, PasswordSlot, Secure,
-        WordStart,
+        classify_class, exe_name_from_path, is_password_edit, names_a_password, FieldKind,
+        PasswordSlot, Secure, SeenPasswords, WordStart,
     };
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
     use std::sync::Arc;
@@ -219,15 +393,21 @@ mod win {
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_MULTITHREADED,
     };
+    use windows::Win32::System::Ole::{
+        SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetLBound, SafeArrayGetUBound,
+        SafeArrayUnaccessData,
+    };
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
+    use windows::Win32::UI::Accessibility::UIA_EditControlTypeId;
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
         IUIAutomationTextPattern, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
         TextUnit_Character, UIA_TextPatternId,
     };
+    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
         GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowLongW,
         GetWindowThreadProcessId, GUITHREADINFO, GWL_STYLE,
@@ -311,6 +491,9 @@ mod win {
     struct Request {
         generation: u64,
         due: Instant,
+        /// The foreground window: password fields seen under it are remembered until it is
+        /// gone.
+        owner: isize,
     }
 
     /// Handle to the UIA worker thread. Dropping it stops the worker after its current query.
@@ -338,9 +521,16 @@ mod win {
 
         /// Ask about the element focused `delay` from now (after the app has handled the click
         /// or key that may move focus). False if the worker is gone.
-        pub fn request(&self, generation: u64, delay: Duration) -> bool {
+        pub fn request(&self, generation: u64, delay: Duration, owner: HWND) -> bool {
             let due = Instant::now() + delay;
-            self.requests.send(Request { generation, due }).is_ok()
+            let owner = owner.0 as isize;
+            self.requests
+                .send(Request {
+                    generation,
+                    due,
+                    owner,
+                })
+                .is_ok()
         }
     }
 
@@ -433,7 +623,63 @@ mod win {
         unsafe { CoUninitialize() };
     }
 
+    /// The element's UIA runtime id: stable for one field while it exists, also across a
+    /// "Show password" toggle (Chromium keeps the node, a Win32 edit keeps its `HWND`).
+    unsafe fn runtime_id(element: &IUIAutomationElement) -> Option<Vec<i32>> {
+        let array = element.GetRuntimeId().ok()?;
+        if array.is_null() {
+            return None;
+        }
+        let id = (|| {
+            let low = SafeArrayGetLBound(array, 1).ok()?;
+            let high = SafeArrayGetUBound(array, 1).ok()?;
+            let len = usize::try_from(high - low + 1).ok().filter(|n| *n > 0)?;
+            let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
+            SafeArrayAccessData(array, &mut data).ok()?;
+            let id = std::slice::from_raw_parts(data as *const i32, len).to_vec();
+            let _ = SafeArrayUnaccessData(array);
+            Some(id)
+        })();
+        let _ = SafeArrayDestroy(array);
+        id
+    }
+
+    /// Is the focused `element` a password field, now or before (`seen`, filled here)?
+    unsafe fn password_field(
+        element: &IUIAutomationElement,
+        owner: isize,
+        seen: &mut SeenPasswords<Vec<i32>>,
+    ) -> Secure {
+        // A terminal inside an ordinary app (VS Code's xterm.js) may be at a password prompt
+        // we can't see: secure too.
+        let terminal = element
+            .CurrentClassName()
+            .is_ok_and(|c| crate::policy::is_terminal_input_class(&c.to_string()));
+        let is_password = element.CurrentIsPassword().ok().map(|b| b.as_bool());
+        // Names are only read on edit boxes: a document's name is its title.
+        let named = element.CurrentControlType().ok() == Some(UIA_EditControlTypeId) && {
+            let texts: Vec<String> = [
+                element.CurrentName(),
+                element.CurrentAutomationId(),
+                element.CurrentHelpText(),
+            ]
+            .into_iter()
+            .filter_map(|t| t.ok().map(|t| t.to_string()))
+            .collect();
+            names_a_password(&texts.iter().map(String::as_str).collect::<Vec<_>>())
+        };
+        let id = runtime_id(element);
+        let seen_before = id.as_ref().is_some_and(|id| seen.contains(id));
+        if is_password == Some(true) || named {
+            if let Some(id) = id {
+                seen.remember(owner, id);
+            }
+        }
+        super::password_answer(terminal, is_password, named, seen_before)
+    }
+
     fn serve(uia: &IUIAutomation, rx: &Receiver<Request>, slot: &PasswordSlot) {
+        let mut seen = SeenPasswords::<Vec<i32>>::default();
         while let Ok(mut req) = rx.recv() {
             // Coalesce to the latest request and wait until it is due.
             loop {
@@ -455,24 +701,14 @@ mod win {
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
+            // SAFETY: a plain query on window handles.
+            seen.forget_gone(|owner| unsafe { IsWindow(HWND(owner as _)) }.as_bool());
             // SAFETY: valid interface used on the MTA thread that created it.
             let focused = unsafe { uia.GetFocusedElement() };
             // SAFETY: as above, for the element it returned.
-            let answer = unsafe {
-                let password = focused.as_ref().map(|e| e.CurrentIsPassword());
-                // A terminal inside an ordinary app (VS Code's xterm.js) may be at a password
-                // prompt we can't see: secure too.
-                let terminal = focused
-                    .as_ref()
-                    .ok()
-                    .and_then(|e| e.CurrentClassName().ok())
-                    .is_some_and(|c| crate::policy::is_terminal_input_class(&c.to_string()));
-                match password {
-                    _ if terminal => Secure::Secure,
-                    Ok(Ok(b)) if b.as_bool() => Secure::Secure,
-                    Ok(Ok(_)) => Secure::NotSecure,
-                    _ => Secure::Unknown,
-                }
+            let answer = match &focused {
+                Ok(e) => unsafe { password_field(e, req.owner, &mut seen) },
+                Err(_) => Secure::Unknown,
             };
             slot.publish(req.generation, answer);
             // Only worth asking where the first word may be corrected at all.
@@ -691,18 +927,143 @@ mod tests {
     }
 
     #[test]
-    fn win32_edits_use_es_password_only() {
+    fn win32_edits_use_es_password_and_uia() {
         let mut f = FocusState {
-            kind: FieldKind::Win32Edit,
             uia_available: true,
             ..FocusState::default()
         };
-        // Asked, for the word-start answer only: the password answer never counts for them.
-        let generation = f.next_generation().expect("asked about the caret");
-        assert!(!f.secure(), "not secure while the answer is pending");
-        f.slot.publish(generation, Secure::Secure);
-        assert!(!f.secure(), "ES_PASSWORD alone decides");
-        f.es_password = true;
+        let g = f.refresh(100, FieldKind::Win32Edit, false).expect("asked");
+        assert!(f.secure(), "a new edit: secure until UIA answers (#40)");
+        f.slot.publish(g, Secure::Secure);
+        assert!(f.secure(), "UIA's answer counts: its name says password");
+        f.slot.publish(g, Secure::NotSecure);
+        assert!(!f.secure());
+        // Enter or a click in the same edit: still cleared while the new answer is pending...
+        let g = f.refresh(100, FieldKind::Win32Edit, false).unwrap();
+        assert!(!f.secure(), "same edit, cleared before");
+        // ...and a late "secure" still counts.
+        f.slot.publish(g, Secure::Unknown);
         assert!(f.secure());
+        // Another edit starts over.
+        let g = f.refresh(100, FieldKind::Win32Edit, false).unwrap();
+        assert!(f.secure(), "the last answer for this edit wasn't a clear");
+        f.slot.publish(g, Secure::NotSecure);
+        f.refresh(200, FieldKind::Win32Edit, false);
+        assert!(f.secure(), "another edit: pending");
+        // ES_PASSWORD decides at once.
+        f.refresh(300, FieldKind::Win32Edit, true);
+        assert!(f.secure());
+        // Without UIA, ES_PASSWORD alone decides for standard edits.
+        let mut f = FocusState::default();
+        assert_eq!(f.refresh(100, FieldKind::Win32Edit, false), None);
+        assert!(!f.secure());
+        f.refresh(100, FieldKind::Win32Edit, true);
+        assert!(f.secure());
+    }
+
+    /// #40: "Show password" takes the mask off (EM_SETPASSWORDCHAR(0) clears ES_PASSWORD);
+    /// the edit stays secure while it exists.
+    #[test]
+    fn an_edit_that_was_a_password_box_stays_secure() {
+        let mut f = FocusState {
+            uia_available: true,
+            ..FocusState::default()
+        };
+        f.refresh(100, FieldKind::Win32Edit, true);
+        assert!(f.secure());
+        let g = f.refresh(100, FieldKind::Win32Edit, false).unwrap();
+        f.slot.publish(g, Secure::NotSecure);
+        assert!(f.secure(), "unmasked, but it was a password box");
+        assert!(f.was_password);
+        // Another edit isn't affected.
+        let g = f.refresh(101, FieldKind::Win32Edit, false).unwrap();
+        f.slot.publish(g, Secure::NotSecure);
+        assert!(!f.secure());
+        // Once the window is gone it is forgotten (its handle may be reused).
+        f.seen.forget_gone(|hwnd| hwnd != 100);
+        let g = f.refresh(100, FieldKind::Win32Edit, false).unwrap();
+        f.slot.publish(g, Secure::NotSecure);
+        assert!(!f.secure());
+    }
+
+    #[test]
+    fn seen_passwords_are_bounded_and_per_owner() {
+        let mut seen = SeenPasswords::<Vec<i32>>::default();
+        assert!(seen.is_empty());
+        seen.remember(1, vec![42, 7]);
+        seen.remember(1, vec![42, 7]);
+        assert_eq!(seen.len(), 1, "once");
+        assert!(seen.contains(&vec![42, 7]));
+        assert!(!seen.contains(&vec![42, 8]));
+        for i in 0..SeenPasswords::<Vec<i32>>::CAPACITY as i32 {
+            seen.remember(2, vec![i]);
+        }
+        assert_eq!(seen.len(), SeenPasswords::<Vec<i32>>::CAPACITY);
+        assert!(!seen.contains(&vec![42, 7]), "the oldest went first");
+        seen.forget_gone(|owner| owner != 2);
+        assert!(seen.is_empty());
+    }
+
+    /// #40: the worker's answer. Anything that says password wins; only a clean read clears.
+    #[test]
+    fn password_answers() {
+        assert_eq!(
+            password_answer(false, Some(false), false, false),
+            Secure::NotSecure
+        );
+        assert_eq!(
+            password_answer(false, Some(true), false, false),
+            Secure::Secure
+        );
+        assert_eq!(
+            password_answer(false, Some(false), true, false),
+            Secure::Secure,
+            "revealed, but named Password"
+        );
+        assert_eq!(
+            password_answer(false, Some(false), false, true),
+            Secure::Secure,
+            "revealed, but it was masked before"
+        );
+        assert_eq!(
+            password_answer(true, Some(false), false, false),
+            Secure::Secure,
+            "terminal"
+        );
+        assert_eq!(password_answer(false, None, false, false), Secure::Unknown);
+    }
+
+    #[test]
+    fn names_that_say_password() {
+        for names in [
+            &["Password"][..],
+            &["Enter password:"],
+            &["", "loginPassword"],
+            &["Confirm new passphrase"],
+            &["", "", "Your PIN"],
+            &["", "newPin"],
+            &["", "user_pwd"],
+            &["", "pass"],
+            &["Mot de passe"],
+            &["Kennwort"],
+            &["Contraseña"],
+            &["パスワード"],
+            &["Card CVV"],
+            &["Enter the OTP"],
+        ] {
+            assert!(names_a_password(names), "{names:?}");
+        }
+        for names in [
+            &["Message"][..],
+            &["Search", "searchbox", "Type to search"],
+            &["Spinner value"],
+            &["Pinned notes"],
+            &["Compass heading"],
+            &["Passenger name"],
+            &["Shopping list"],
+            &[],
+        ] {
+            assert!(!names_a_password(names), "{names:?}");
+        }
     }
 }

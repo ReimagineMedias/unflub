@@ -74,8 +74,13 @@ Repo is private until v0.1, then flipped public.
   `abort()` started Windows Error Reporting and took seconds. The default panic hook is not called: it prints the
   message, which may hold typed text.
 - UI Automation (and MSAA) queries switch on Chromium's accessibility tree, costing CPU and memory in Chrome and Electron.
-  The adapter asks UIA only on focus changes, clicks, Tab and Enter, for every class except the standard edits (Edit, RichEdit*: ES_PASSWORD alone);
-  unknown classes fail closed (secure until UIA says otherwise). Tests only create the UIA client and never query an app.
+  The adapter asks UIA only on focus changes, clicks, Tab and Enter. Every field, standard edits included, is secure
+  until UIA clears it (#40); a standard edit UIA already cleared stays cleared for Enter or a click in the same HWND.
+  Without UIA, standard edits (Edit, RichEdit*) go by ES_PASSWORD alone and unknown classes stay secure. Secure also
+  covers: ES_PASSWORD ever seen on that HWND, an edit whose UIA name/automation id/help text says password or PIN
+  (`focus::names_a_password`), and a UIA runtime id seen as a password field under the same foreground window
+  (`SeenPasswords`), so "Show password" and EM_SETPASSWORDCHAR(0) don't unlock corrections. Tests only create the
+  UIA client and never query an app.
 - Perf gate (`docs/performance.md`, limits in `perf/limits.toml` with measured values in comments): core bench
   `cargo run --release -p unflub-core --example bench -- --check perf/limits.toml [--json]`, Windows idle footprint
   `pwsh perf/idle.ps1`, low-end sim `pwsh perf/lowend.ps1` (Job Object via `examples/jobrun.rs`). The scripts run
