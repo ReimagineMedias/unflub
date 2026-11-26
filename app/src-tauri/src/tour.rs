@@ -4,10 +4,9 @@
 //! view sends each key here, applies the answer to the box and draws the pill itself. Nothing is
 //! injected, and nothing learned here reaches the real personal dictionary.
 
-use crate::settings::{EngineMode, Settings};
 use serde::Serialize;
 use std::sync::{Mutex, MutexGuard};
-use unflub_core::{Action, Context, Engine, Key};
+use unflub_core::{Action, Config, Context, Engine, EngineMode, Key, UndoMode};
 
 #[derive(Default)]
 pub struct Tour(Mutex<Option<Engine>>);
@@ -34,19 +33,15 @@ pub enum TourAction {
     },
 }
 
-/// The practice engine: the user's settings, minus what needs the OS. With no OS spell checker
-/// here, "system only" uses unflub's own dictionary.
-fn engine_for(settings: &Settings) -> Engine {
-    let mut config = settings.to_core();
-    if settings.mode == EngineMode::SystemOnly {
-        config.mode = unflub_core::EngineMode::BundledOnly;
-    }
-    config.enabled = true;
-    config.excluded_apps.clear();
-    // The practice box teaches the plain gesture and remembers at once; it has no pill timer
-    // to hold a Backspace with.
-    config.undo_mode = unflub_core::UndoMode::Once;
-    config.learn_after_undos = 1;
+/// The practice box always demonstrates the same correction and undo gesture.
+fn engine_for() -> Engine {
+    let config = Config {
+        mode: EngineMode::BundledOnly,
+        min_word_len: 3,
+        undo_mode: UndoMode::Once,
+        learn_after_undos: 1,
+        ..Config::default()
+    };
     let mut engine = Engine::new(config, None);
     // Start as if the box began at a line start, so the first word counts.
     engine.on_key(Key::Boundary('\n'), &Context::default());
@@ -85,16 +80,16 @@ impl Tour {
     }
 
     /// A fresh practice box.
-    pub fn reset(&self, settings: &Settings) {
-        *self.lock_engine() = Some(engine_for(settings));
+    pub fn reset(&self) {
+        *self.lock_engine() = Some(engine_for());
     }
 
-    pub fn key(&self, settings: &Settings, key: &str) -> TourAction {
+    pub fn key(&self, key: &str) -> TourAction {
         let Some(key) = key_of(key) else {
             return TourAction::Pass;
         };
         let mut guard = self.lock_engine();
-        let engine = guard.get_or_insert_with(|| engine_for(settings));
+        let engine = guard.get_or_insert_with(engine_for);
         let action = engine.on_key(key, &Context::default());
         // Learned words stay in this engine; the real dictionary never hears about them.
         engine.drain_events();
@@ -121,12 +116,7 @@ impl Tour {
 mod tests {
     use super::*;
 
-    fn type_into(
-        tour: &Tour,
-        settings: &Settings,
-        text: &str,
-        out: &mut String,
-    ) -> Vec<TourAction> {
+    fn type_into(tour: &Tour, text: &str, out: &mut String) -> Vec<TourAction> {
         let mut actions = Vec::new();
         for c in text.chars() {
             let key = if c == '\u{8}' {
@@ -134,7 +124,7 @@ mod tests {
             } else {
                 c.to_string()
             };
-            let action = tour.key(settings, &key);
+            let action = tour.key(&key);
             match &action {
                 TourAction::Pass if c == '\u{8}' => {
                     out.pop();
@@ -156,61 +146,45 @@ mod tests {
     #[test]
     fn fixes_undoes_and_remembers() {
         let tour = Tour::default();
-        let s = Settings::default();
-        tour.reset(&s);
+        tour.reset();
         let mut text = String::new();
-        let actions = type_into(&tour, &s, "teh ", &mut text);
+        let actions = type_into(&tour, "teh ", &mut text);
         assert_eq!(text, "the ");
         assert!(
             matches!(actions.last(), Some(TourAction::Replace { corrected, .. }) if corrected == "the")
         );
         // Backspace right after the fix puts the word back.
-        type_into(&tour, &s, "\u{8}", &mut text);
+        type_into(&tour, "\u{8}", &mut text);
         assert_eq!(text, "teh ");
         // And it is remembered: the next "teh" stays.
-        type_into(&tour, &s, "teh ", &mut text);
+        type_into(&tour, "teh ", &mut text);
         assert_eq!(text, "teh teh ");
     }
 
     #[test]
-    fn works_in_every_mode_without_the_os_checker() {
-        for mode in [
-            EngineMode::Both,
-            EngineMode::SystemOnly,
-            EngineMode::BundledOnly,
-            EngineMode::Balanced,
-            EngineMode::Aggressive,
-        ] {
-            let s = Settings {
-                mode,
-                ..Settings::default()
-            };
-            let tour = Tour::default();
-            tour.reset(&s);
-            let mut text = String::new();
-            type_into(&tour, &s, "teh ", &mut text);
-            assert_eq!(text, "the ", "{mode:?}");
-        }
+    fn a_new_box_fixes_teh_even_before_reset() {
+        let tour = Tour::default();
+        let mut text = String::new();
+        type_into(&tour, "teh ", &mut text);
+        assert_eq!(text, "the ");
     }
 
     #[test]
     fn learning_stays_in_the_box() {
         let tour = Tour::default();
-        let s = Settings::default();
-        tour.reset(&s);
+        tour.reset();
         let mut text = String::new();
-        type_into(&tour, &s, "teh \u{8}", &mut text);
-        tour.reset(&s);
+        type_into(&tour, "teh \u{8}", &mut text);
+        tour.reset();
         let mut again = String::new();
-        type_into(&tour, &s, "teh ", &mut again);
+        type_into(&tour, "teh ", &mut again);
         assert_eq!(again, "the ", "a fresh box forgets");
     }
 
     #[test]
     fn a_poisoned_practice_engine_is_rebuilt() {
         let tour = Tour::default();
-        let settings = Settings::default();
-        tour.key(&settings, "x");
+        tour.key("x");
         let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = tour.0.lock().unwrap();
             panic!("simulated practice failure");
@@ -219,7 +193,7 @@ mod tests {
         assert!(tour.0.is_poisoned());
 
         let mut text = String::new();
-        type_into(&tour, &settings, "teh ", &mut text);
+        type_into(&tour, "teh ", &mut text);
         assert_eq!(text, "the ");
         assert!(!tour.0.is_poisoned());
     }

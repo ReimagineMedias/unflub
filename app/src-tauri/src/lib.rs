@@ -358,14 +358,14 @@ fn canonical_header(name: &str) -> String {
 
 #[tauri::command]
 fn tour_reset(app: AppHandle) {
-    app.state::<tour::Tour>().reset(&current_settings(&app));
+    app.state::<tour::Tour>().reset();
 }
 
 /// Async so it runs on a runtime worker, not the main thread: a panic in the practice engine
 /// then keeps only its location (`crash.rs` keeps messages from `main`).
 #[tauri::command]
 async fn tour_key(app: AppHandle, key: String) -> tour::TourAction {
-    app.state::<tour::Tour>().key(&current_settings(&app), &key)
+    app.state::<tour::Tour>().key(&key)
 }
 
 #[tauri::command]
