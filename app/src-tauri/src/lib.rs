@@ -5,6 +5,7 @@ pub use control_cli::dispatch as dispatch_cli;
 mod controls;
 mod crash;
 mod diagnostics;
+mod dictionary;
 mod engine;
 mod facts;
 mod files;
@@ -176,6 +177,20 @@ fn set_settings(
         forget_removed(&mut learned, &removed);
         learned.retain(|w| !pending.contains(w));
     }
+    Ok(for_window(&saved))
+}
+
+/// Apply only the additions the user reviewed, against the latest dictionary.
+#[tauri::command]
+fn import_dictionary(
+    app: AppHandle,
+    additions: dictionary::Additions,
+) -> Result<serde_json::Value, String> {
+    let count = additions.words.len() as u64;
+    // Through the same checked save as the window: a rejected batch writes nothing.
+    let saved = update_settings_checked(&app, |current| additions.append_to(current))
+        .map_err(|e| e.to_string())?;
+    app.state::<Usage>().personal_words_added(count);
     Ok(for_window(&saved))
 }
 
@@ -1410,6 +1425,7 @@ pub fn run() {
             check_for_updates,
             install_update,
             send_preview,
+            import_dictionary,
             crash_preview,
             app_info,
             tour_reset,

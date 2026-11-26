@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ExternalUrl } from "./links";
 import { wordKey } from "./dictionary";
+import { planImport, type Additions } from "./dictionaryImport";
 import {
   defaultSettings, type AppInfo, type CrashAnswer, type PauseControls, type RemoteMessage, type Settings, type StatsView,
   type SystemLook, type TourAction, type UpdateStatus,
@@ -74,6 +75,15 @@ export async function setPauseShortcut(binding: string): Promise<Settings | unde
   // The plain browser preview has no global shortcuts.
   mock = { ...mock, pauseShortcut: binding.trim() };
   return structuredClone(mock);
+}
+
+export async function importDictionary(additions: Additions): Promise<Settings> {
+  if (inTauri) return invoke("import_dictionary", { additions });
+  if (planImport(additions, mock).rejected.length) throw new Error("dictionary changed or an addition was invalid");
+  return setSettings({
+    personalWords: [...mock.personalWords, ...additions.words],
+    userRules: [...mock.userRules, ...additions.shortcuts],
+  });
 }
 
 export async function resetSettings(): Promise<Settings> {

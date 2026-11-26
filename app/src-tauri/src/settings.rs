@@ -221,7 +221,7 @@ pub const MAX_USER_RULES: usize = 1000;
 pub const MAX_EXCLUDED_APPS: usize = 500;
 
 /// `text` is 1 to `max` characters with no control characters (`allow` excepted).
-fn fits(text: &str, max: usize, allow: &[char]) -> bool {
+pub(crate) fn fits(text: &str, max: usize, allow: &[char]) -> bool {
     !text.is_empty()
         && text.chars().count() <= max
         && !text.chars().any(|c| c.is_control() && !allow.contains(&c))

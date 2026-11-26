@@ -1,16 +1,18 @@
 import { useState } from "react";
 import { ChipList, Row, RuleList } from "./components";
 import { isDictionaryToken, trimWord, wordKey } from "./dictionary";
+import { DictionaryTransfer } from "./DictionaryTransfer";
 import { t } from "./i18n";
 import { LIMITS, type Settings } from "./types";
 
 const byName = new Intl.Collator(undefined, { sensitivity: "base" });
 const date = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" });
 
-export function DictionaryPage({ settings, update, flush }: {
+export function DictionaryPage({ settings, update, flush, onImported }: {
   settings: Settings;
   update: (patch: Partial<Settings>, later?: boolean) => void;
-  flush: () => void;
+  flush: () => Promise<boolean>;
+  onImported: (settings: Settings) => void;
 }) {
   const [search, setSearch] = useState("");
   const filter = wordKey(search);
@@ -43,6 +45,7 @@ export function DictionaryPage({ settings, update, flush }: {
           <RuleList rules={settings.userRules} onChange={(v, typing) => update({ userRules: v }, typing)} onCommit={flush} />
         </Row>
       </div>
+      <DictionaryTransfer settings={settings} flush={flush} onImported={onImported} />
     </>
   );
 }

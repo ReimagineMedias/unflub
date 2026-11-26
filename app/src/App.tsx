@@ -184,6 +184,7 @@ export default function App() {
    * from elsewhere (the tray, a learned word, an older save) never undoes it. */
   const dirty = useRef<Partial<Settings>>({});
   const saving = useRef(0);
+  const saveQueue = useRef(Promise.resolve(true));
   /** Settings from the app, with the window's own changes still on top. */
   const fromApp = useCallback((s: Settings) => {
     const merged = { ...s, ...dirty.current };
@@ -257,23 +258,38 @@ export default function App() {
   const flush = useCallback(() => {
     window.clearTimeout(saveTimer.current);
     const next = unsaved.current;
-    if (!next) return;
+    if (!next) return saveQueue.current;
     unsaved.current = null;
     const removed = [...removedWords.current];
     removedWords.current.clear();
     saving.current += 1;
     setSaveError(null);
-    void setSettings(next, removed).catch((reason) => {
-      setSaveError(String(reason));
-    }).finally(() => {
-      saving.current -= 1;
-      if (saving.current > 0 || unsaved.current) return;
-      // Everything is saved: show the app's settings as they are now (words learned meanwhile).
-      dirty.current = {};
-      void getSettings().then((s) => {
-        if (saving.current === 0 && !unsaved.current) show(s);
-      });
+    // Apply local saves in order so an older snapshot cannot replace a newer one.
+    const queued = saveQueue.current.then(async () => {
+      let saved = false;
+      try {
+        await setSettings(next, removed);
+        saved = true;
+      } catch (reason) {
+        setSaveError(String(reason));
+      } finally {
+        saving.current -= 1;
+      }
+      if (saving.current === 0 && !unsaved.current) {
+        // Everything is saved: show the app's settings as they are now (words learned meanwhile).
+        dirty.current = {};
+        try {
+          const current = await getSettings();
+          if (saving.current === 0 && !unsaved.current) show(current);
+        } catch (error) {
+          console.error("Settings refresh failed", error);
+        }
+      }
+      if (saveQueue.current === queued) saveQueue.current = Promise.resolve(true);
+      return saved;
     });
+    saveQueue.current = queued;
+    return queued;
   }, [show]);
 
   // Closing the window destroys the page: whatever is still waiting goes now.
@@ -505,7 +521,7 @@ export default function App() {
           </>
         )}
 
-        {page === "dictionary" && <DictionaryPage settings={s} update={update} flush={flush} />}
+        {page === "dictionary" && <DictionaryPage settings={s} update={update} flush={flush} onImported={fromApp} />}
 
         {page === "stats" && <StatsPage settings={s} update={update} />}
 

@@ -1,4 +1,4 @@
-import { LIMITS } from "./types";
+import { LIMITS } from "./types.ts";
 
 export const trimWord = (word: string): string => word.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 

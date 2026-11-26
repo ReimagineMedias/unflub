@@ -392,6 +392,12 @@ Releases; the only thing unflub posts is usage stats to api.rmgn.net (contract:
   tool, and portable copies to download the new version.
 - **Settings file** `settings.json` has a `schemaVersion`; `migrations.rs` upgrades older files
   step by step and keeps a `.v<N>` copy. Fields from a newer unflub are kept and written back.
+- **Dictionary transfer** exports words and shortcuts only, without word sources or other settings.
+  JSON has `words` and `shortcuts` lists; each shortcut is a `[trigger, replacement]` pair.
+  Plain text uses one word or tab-separated shortcut per line. A replacement beginning with a
+  double quote is read as a JSON string, which also lets it contain escaped newlines.
+  Imports stay on the device. The preview lists conflicts and invalid entries, and the app
+  checks the approved additions again against the latest settings before saving.
 
 ### Edit settings without opening the window
 
