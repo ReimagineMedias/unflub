@@ -135,7 +135,7 @@ export const en = {
   "appearance.duration": "Undo window",
   "appearance.duration.hint": "How long the capsule stays, and how long you have to undo a fix.",
   "appearance.duration.value": "{s} s",
-  "pillPreview.label": "Correction preview",
+  "pillPreview.label": "Correction preview. {sentence}",
   "pillPreview.undo": "⌫ undo",
 
   // Apps
