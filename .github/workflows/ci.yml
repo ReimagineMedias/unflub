@@ -105,6 +105,11 @@ jobs:
         run: |
           ./target/release/examples/quality --json --check perf/limits.toml | Tee-Object .local/perf/quality.json
           exit $LASTEXITCODE
+      - name: Autocorrect quality (Both with a deterministic checker)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          ./target/release/examples/quality --both --json --check perf/limits.toml | Tee-Object .local/perf/quality-both.json
+          exit $LASTEXITCODE
       - name: Idle footprint, app and engine (dry-run hook, no input sent)
         if: ${{ !cancelled() && steps.build.outcome == 'success' && runner.os == 'Windows' }}
         run: |
@@ -118,6 +123,6 @@ jobs:
       - name: Summary
         if: ${{ !cancelled() }}
         run: |
-          $files = @('.local/perf/bench.json', '.local/perf/quality.json')
+          $files = @('.local/perf/bench.json', '.local/perf/quality.json', '.local/perf/quality-both.json')
           if ($IsWindows) { $files += '.local/perf/idle.json', '.local/perf/lowend.json' }
           ./perf/summary.ps1 -Path $files -Title 'Perf (${{ matrix.os }})'

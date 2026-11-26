@@ -13,6 +13,7 @@ letter) generated from these texts with seed 20261117.
 | `node.txt` | Node.js documentation, `doc/api/stream.md` | MIT, below |
 | `rust.txt` | *The Rust Programming Language*, chapters 4.1, 4.2, 10.1 to 10.3, 13.1, 13.2, 15.1, 15.4, 15.5 and 16.1 to 16.3 | MIT or Apache-2.0, at your option; MIT below |
 | `typos.tsv` | Generated from the three texts above | As its source text |
+| `keep.tsv` | Synthetic examples covering names, addresses, URLs, chat, French, Spanish and brands. `checker_flags` lists words the fake checker rejects. `known_fix` identifies an existing false fix that the gate reports separately. | MIT |
 
 ## Node.js documentation
 

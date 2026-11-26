@@ -31,6 +31,18 @@ false_fixes_per_10k = 10      # measured 48.2 before, 7.9 after (79 in 100,000 c
 typo_exact_pct = 84           # measured 82.26 before, 85.86 after (5,000 single typos)
 typo_wrong_pct = 2.5          # measured 2.92 before, 1.72 after
 
+# Same corpora in the shipped Both mode with deterministic checker verdicts.
+# Known fixture failures are listed by exact replacement in data/quality/keep.tsv.
+[quality.both]
+false_fixes_per_10k = 0
+typo_exact_pct = 87.76
+typo_wrong_pct = 1.82
+keep_cases = 15
+keep_known_fixes = 2
+keep_unexpected_fixes = 0
+checker_error_cases = 3
+checker_error_fixes = 0
+
 # pwsh perf/idle.ps1: unflub.exe --perf-idle (tray app, no network, no window) and the
 # unflub-engine.exe it starts with --dry-run, 3 s warm-up, 20 s of samples. Per process, then
 # both together (the peak of the per-sample sums).
