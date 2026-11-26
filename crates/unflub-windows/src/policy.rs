@@ -129,6 +129,21 @@ pub fn injection_veto(
     }
 }
 
+/// The modifiers an injection must respect: those the key came with (`typed`) plus those held
+/// on the keyboard now (`physical`). A key another program injected (an on-screen keyboard, a
+/// remote tool) comes with none of its own, but Ctrl, Alt or Win held on the keyboard still
+/// turn our Backspaces into Ctrl+Backspace and our letters into shortcuts. Caps Lock is the
+/// typed key's.
+pub fn veto_modifiers(typed: Modifiers, physical: Modifiers) -> Modifiers {
+    Modifiers {
+        shift: typed.shift || physical.shift,
+        ctrl: typed.ctrl || physical.ctrl,
+        alt: typed.alt || physical.alt,
+        win: typed.win || physical.win,
+        caps_lock: typed.caps_lock,
+    }
+}
+
 /// Virtual machine consoles and remote viewers that forward scan codes to the guest. Fixes type
 /// characters with the host layout's keys and the rest as Unicode packets, which they drop, and
 /// the guest's layout may differ: the Backspaces would arrive and the fixed word might not.
@@ -492,6 +507,35 @@ mod tests {
             Some("auto-repeat")
         );
         assert!(injection_veto(Key::Reset, NONE, false, false).is_some());
+    }
+
+    /// Review finding 3: an injected key with Ctrl held on the keyboard is vetoed too.
+    #[test]
+    fn physical_modifiers_veto_injected_keys() {
+        let ctrl = Modifiers { ctrl: true, ..NONE };
+        let win = Modifiers { win: true, ..NONE };
+        for physical in [ctrl, win, Modifiers { alt: true, ..NONE }] {
+            let mods = veto_modifiers(NONE, physical);
+            assert_eq!(
+                injection_veto(Key::Boundary(' '), mods, false, false),
+                Some("modifier held"),
+                "{physical:?}"
+            );
+        }
+        assert_eq!(
+            injection_veto(Key::Boundary(' '), veto_modifiers(NONE, NONE), false, false),
+            None
+        );
+        let caps = Modifiers {
+            caps_lock: true,
+            ..NONE
+        };
+        assert!(veto_modifiers(caps, NONE).caps_lock);
+        assert!(
+            !veto_modifiers(NONE, caps).caps_lock,
+            "caps lock is the key's own"
+        );
+        assert_eq!(veto_modifiers(ctrl, NONE), ctrl);
     }
 
     #[test]

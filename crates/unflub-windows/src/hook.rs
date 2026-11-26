@@ -72,7 +72,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::focus::{self, FieldCheck, FocusState, PasswordProbe};
 use crate::inject::{self, Finished, Input, Origin, Pipeline, RawEvent, SendOutcome, Tag};
-use crate::policy::{injection_veto, is_ime_language, Gate, GateDecision, PendingWord};
+use crate::policy::{
+    injection_veto, is_ime_language, veto_modifiers, Gate, GateDecision, PendingWord,
+};
 use crate::stats::{LatencyHistogram, MinuteMarks, UsageCounters};
 use crate::translate::{KeyTranslator, Modifiers, RawKey, Typed};
 use crate::Corrector;
@@ -1407,6 +1409,16 @@ impl State {
                 usage.record_decide(decide);
             }
         }
+        if action == Action::Pass {
+            return false;
+        }
+        // A key another program injected carries no modifier state of its own, but Ctrl, Alt
+        // or Win held on the keyboard still turn our Backspaces into shortcuts.
+        let mods = if ev.foreign {
+            veto_modifiers(mods, read_keyboard().0)
+        } else {
+            mods
+        };
         let (replacement, undo) = match action {
             Action::Pass => return false,
             Action::Replace(r) => (r, false),
