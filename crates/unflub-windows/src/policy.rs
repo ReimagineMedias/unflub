@@ -3,6 +3,7 @@
 
 use unflub_core::Key;
 
+use crate::focus::FieldCheck;
 use crate::translate::Modifiers;
 
 /// What to do with a translated key, given whether corrections are blocked right now (secure or
@@ -52,6 +53,50 @@ impl Gate {
     /// A caret move or focus change is a fresh start.
     pub fn on_reset(&mut self) {
         self.suppressing = false;
+    }
+}
+
+/// Letters of a word typed while the field's UIA check is pending, kept by the hook (never
+/// given to the corrector) until the answer arrives (#110).
+///
+/// Every Enter, Tab or click asks UIA again, and the field is secure until it answers (some
+/// 50 ms plus the query). Fast typists started the next word before that, and the [`Gate`]
+/// then dropped the whole word, so the first word after Enter was never corrected. Now its
+/// letters wait here, while still going to the app as usual. Cleared: they go to the corrector
+/// first, in order, and the word is handled as if nothing had been pending. Secure, or
+/// anything but a letter while still pending (a boundary, Backspace, a caret move): they are
+/// forgotten and the field is treated as secure, as before. Password text never reaches the
+/// corrector either way.
+#[derive(Debug, Default)]
+pub struct PendingWord {
+    letters: Vec<char>,
+}
+
+impl PendingWord {
+    /// More than a word's worth: give up and treat the field as secure.
+    pub const MAX: usize = 48;
+
+    /// A key typed where corrections are otherwise allowed (no IME, app not excluded), in a
+    /// field that is `check`. `None`: the letter is kept, pass the key on and do nothing else.
+    /// `Some(letters)`: feed these to the corrector first, then handle the key with the field
+    /// secure unless it is cleared.
+    pub fn on_key(&mut self, key: Key, check: FieldCheck) -> Option<Vec<char>> {
+        match (check, key) {
+            (FieldCheck::Pending, Key::Char(c)) if self.letters.len() < Self::MAX => {
+                self.letters.push(c);
+                None
+            }
+            (FieldCheck::Cleared, _) => Some(std::mem::take(&mut self.letters)),
+            _ => {
+                self.letters.clear();
+                Some(Vec::new())
+            }
+        }
+    }
+
+    /// Forget kept letters (caret moved, focus changed, IME, excluded app).
+    pub fn clear(&mut self) {
+        self.letters.clear();
     }
 }
 
@@ -345,6 +390,52 @@ mod tests {
         assert_eq!(g.decide(Key::Backspace, false), GateDecision::Drop);
         assert_eq!(g.decide(Key::Boundary(' '), false), GateDecision::ResetOnly);
         assert_eq!(g.decide(Key::Char('n'), false), GateDecision::Feed);
+    }
+
+    /// #110: Enter, then "teh " typed before UIA answers.
+    #[test]
+    fn letters_typed_while_pending_wait_for_the_answer() {
+        use FieldCheck::*;
+        let mut w = PendingWord::default();
+        assert_eq!(w.on_key(Key::Char('t'), Pending), None);
+        assert_eq!(w.on_key(Key::Char('e'), Pending), None);
+        // Cleared before the word ends: its letters go first, then 'h' as usual.
+        assert_eq!(w.on_key(Key::Char('h'), Cleared), Some(vec!['t', 'e']));
+        assert_eq!(w.on_key(Key::Boundary(' '), Cleared), Some(vec![]));
+
+        // Still pending when the word ends: forgotten, the word is skipped as before.
+        for end in [
+            Key::Boundary(' '),
+            Key::Backspace,
+            Key::Reset,
+            Key::DeleteWordLeft,
+        ] {
+            let mut w = PendingWord::default();
+            w.on_key(Key::Char('t'), Pending);
+            assert_eq!(w.on_key(end, Pending), Some(vec![]), "{end:?}");
+            assert_eq!(w.on_key(Key::Char('x'), Cleared), Some(vec![]), "{end:?}");
+        }
+
+        // A password field: forgotten, never handed over.
+        let mut w = PendingWord::default();
+        w.on_key(Key::Char('h'), Pending);
+        w.on_key(Key::Char('u'), Pending);
+        assert_eq!(w.on_key(Key::Char('n'), Secure), Some(vec![]));
+        assert_eq!(w.on_key(Key::Char('t'), Cleared), Some(vec![]));
+
+        // Too long to be a word: forgotten.
+        let mut w = PendingWord::default();
+        for _ in 0..PendingWord::MAX {
+            assert_eq!(w.on_key(Key::Char('a'), Pending), None);
+        }
+        assert_eq!(w.on_key(Key::Char('a'), Pending), Some(vec![]));
+        assert_eq!(w.on_key(Key::Char('a'), Cleared), Some(vec![]));
+
+        // A caret move in between.
+        let mut w = PendingWord::default();
+        w.on_key(Key::Char('a'), Pending);
+        w.clear();
+        assert_eq!(w.on_key(Key::Char('b'), Cleared), Some(vec![]));
     }
 
     #[test]

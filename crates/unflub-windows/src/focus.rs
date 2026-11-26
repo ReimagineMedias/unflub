@@ -284,6 +284,17 @@ impl PasswordSlot {
     }
 }
 
+/// Where the focused field stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldCheck {
+    /// Not a password field: corrections allowed.
+    Cleared,
+    /// UIA hasn't answered yet: secure until it does.
+    Pending,
+    /// A password field, or one UIA couldn't clear: secure.
+    Secure,
+}
+
 /// Hook-thread view of the focused field.
 #[derive(Debug)]
 pub struct FocusState {
@@ -333,15 +344,26 @@ impl FocusState {
     /// name, unless the same edit was cleared just before. Only without UIA does
     /// `ES_PASSWORD` alone decide for them.
     pub fn secure(&self) -> bool {
+        self.check() != FieldCheck::Cleared
+    }
+
+    /// [`FocusState::secure`] in detail: secure for good (for this generation), or only until
+    /// the UIA answer arrives.
+    pub fn check(&self) -> FieldCheck {
         if self.es_password || self.was_password {
-            return true;
+            return FieldCheck::Secure;
         }
         if !self.uia_available {
-            return self.kind == FieldKind::Probe;
+            return match self.kind {
+                FieldKind::Win32Edit => FieldCheck::Cleared,
+                FieldKind::Probe => FieldCheck::Secure,
+            };
         }
         match self.slot.answer(self.generation) {
-            Some(answer) => answer != Secure::NotSecure,
-            None => !(self.kind == FieldKind::Win32Edit && self.carried_safe),
+            Some(Secure::NotSecure) => FieldCheck::Cleared,
+            Some(_) => FieldCheck::Secure,
+            None if self.kind == FieldKind::Win32Edit && self.carried_safe => FieldCheck::Cleared,
+            None => FieldCheck::Pending,
         }
     }
 
@@ -984,6 +1006,32 @@ mod tests {
         let g = f.refresh(100, FieldKind::Win32Edit, false).unwrap();
         f.slot.publish(g, Secure::NotSecure);
         assert!(!f.secure());
+    }
+
+    /// #110: only a missing answer is pending; anything that isn't a clear is secure for good.
+    #[test]
+    fn pending_is_only_a_missing_answer() {
+        let mut f = FocusState {
+            uia_available: true,
+            ..FocusState::default()
+        };
+        let g = f.refresh(7, FieldKind::Probe, false).unwrap();
+        assert_eq!(f.check(), FieldCheck::Pending);
+        f.slot.publish(g, Secure::NotSecure);
+        assert_eq!(f.check(), FieldCheck::Cleared);
+        let g = f.refresh(7, FieldKind::Probe, false).unwrap();
+        assert_eq!(
+            f.check(),
+            FieldCheck::Pending,
+            "one HWND, many fields: asked again"
+        );
+        f.slot.publish(g, Secure::Unknown);
+        assert_eq!(f.check(), FieldCheck::Secure);
+        f.refresh(8, FieldKind::Win32Edit, true);
+        assert_eq!(f.check(), FieldCheck::Secure, "ES_PASSWORD never waits");
+        f.uia_available = false;
+        f.refresh(9, FieldKind::Probe, false);
+        assert_eq!(f.check(), FieldCheck::Secure, "no UIA: nothing to wait for");
     }
 
     #[test]
