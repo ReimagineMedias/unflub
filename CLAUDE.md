@@ -140,7 +140,9 @@ Repo is private until v0.1, then flipped public.
   tour's practice box uses a separate engine over IPC (`tour.rs`). The adapter's hook watchdog (GetLastInputInfo vs
   last callback, plus resume/unlock re-arm) reinstalls dropped LL hooks (`HookEvent::HooksReinstalled`). Its backoff
   resets only after a real callback following a reinstall, and a resume re-arms once (`ResumeGate`); both are pure
-  logic tested in `hook.rs`.
+  logic tested in `hook.rs`. Input to a higher-integrity (elevated) foreground window or the secure desktop, and
+  input before a foreground switch, is excused (UIPI hides it from LL hooks; #135). A failed keyboard reinstall sends
+  `KeyboardHookLost`, retried every watchdog tick; the engine turns it into `Ready { hooked: false }` (#143).
 - Preview the settings UI in a plain browser (`cd app; npx vite`): query params `?welcome` (first run), `?page=tour`,
   `?update=ready&critical`, `?crash`, `?managed`, `?source=scoop`, `?theme=ink&mode=dark`.
 - Uninstall: Tauri's NSIS template already deletes `HKCU\...\Run\unflub` (not on `/UPDATE`) and has a "Delete the
