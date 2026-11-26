@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { clearStats, reportUsage, statsView } from "./api";
 import { Row, Sparkline, Switch } from "./components";
+import { isDictionaryToken, wordKey } from "./dictionary";
 import { t } from "./i18n";
-import type { Settings, StatsDay, StatsView } from "./types";
+import { LIMITS, type Settings, type StatsDay, type StatsView } from "./types";
 
 const nf = new Intl.NumberFormat("en");
 const pct = (part: number, whole: number) =>
@@ -39,6 +40,8 @@ export function StatsPage({ settings, update }: { settings: Settings; update: (p
   if (!view) return null;
   const all = view.allTime;
   const peak = Math.max(0, ...view.last30);
+  const personal = new Set(settings.personalWords.map(wordKey));
+  const shortcuts = new Set(settings.userRules.map(([trigger]) => wordKey(trigger)));
 
   return (
     <>
@@ -78,15 +81,29 @@ export function StatsPage({ settings, update }: { settings: Settings; update: (p
           <div className="row"><span className="empty">{t("stats.top.empty")}</span></div>
         ) : (
           <ol className="top-words">
-            {view.topWords.map((w) => (
-              <li key={`${w.typo}→${w.fix}`}>
-                <s>{w.typo}</s>
-                <span className="arrow">→</span>
-                <span className="fix">{w.fix}</span>
-                <span className="count">{t("stats.top.count", { n: nf.format(w.count) })}</span>
-                <i style={{ width: `${(w.count / view.topWords[0].count) * 100}%` }} />
-              </li>
-            ))}
+            {view.topWords.map((w) => {
+              const key = wordKey(w.typo);
+              const blocked = personal.has(key);
+              const reason = shortcuts.has(key) ? "stats.top.shortcut"
+                : blocked ? "stats.top.blocked"
+                  : settings.personalWords.length >= LIMITS.words ? "dictionary.words.limit"
+                    : !isDictionaryToken(w.typo) ? "dictionary.words.invalid" : undefined;
+              return (
+                <li key={`${w.typo}→${w.fix}`}>
+                  <s>{w.typo}</s>
+                  <span className="arrow">→</span>
+                  <span className="fix">{w.fix}</span>
+                  <span className="count">{t("stats.top.count", { n: nf.format(w.count) })}</span>
+                  {reason ? <small className="muted">{t(reason)}</small> : (
+                    <button className="btn ghost" aria-label={t("stats.top.block.label", { word: w.typo })}
+                      onClick={() => update({ personalWords: [...settings.personalWords, w.typo] })}>
+                      {t("stats.top.block")}
+                    </button>
+                  )}
+                  <i style={{ width: `${(w.count / view.topWords[0].count) * 100}%` }} />
+                </li>
+              );
+            })}
           </ol>
         )}
       </div>

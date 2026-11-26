@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ExternalUrl } from "./links";
+import { wordKey } from "./dictionary";
 import {
   defaultSettings, type AppInfo, type CrashAnswer, type PauseControls, type RemoteMessage, type Settings, type StatsView,
   type SystemLook, type TourAction, type UpdateStatus,
@@ -16,7 +17,8 @@ const query = () => new URLSearchParams(window.location.search);
 let mock: Settings = {
   ...defaultSettings,
   onboarded: !query().has("welcome"),
-  personalWords: ["rmgn", "Tauri"],
+  personalWords: ["rmgn", "Tauri", "unflub"],
+  wordSources: { rmgn: null, tauri: 20782 },
   userRules: [["omw", "on my way"]],
 };
 
@@ -28,7 +30,17 @@ export async function getSettings(): Promise<Settings> {
  * meanwhile isn't merged back in. */
 export async function setSettings(settings: Partial<Settings>, removed: string[] = []): Promise<Settings> {
   if (inTauri) return invoke<Settings>("set_settings", { settings, removed });
-  mock = { ...mock, ...structuredClone(settings) };
+  const { wordSources: _ignored, ...patch } = structuredClone(settings);
+  const next: Settings = { ...mock, ...patch };
+  if (patch.personalWords) {
+    // Mirrors the app: kept words keep their source, new ones are added by you.
+    const known = new Set(mock.personalWords.map(wordKey));
+    const sources = mock.wordSources ?? {};
+    next.wordSources = Object.fromEntries(patch.personalWords.map(wordKey)
+      .filter((key) => !known.has(key) || Object.prototype.hasOwnProperty.call(sources, key))
+      .map((key) => [key, known.has(key) ? sources[key] : null]));
+  }
+  mock = next;
   return structuredClone(mock);
 }
 

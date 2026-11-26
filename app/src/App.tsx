@@ -6,12 +6,13 @@ import {
   installUpdate, onCrashReport, onOpenPage, onRemoteMessage, onSettingsChanged, onUpdateStatus, remoteMessage,
   onSettingsFileError, reportUsage, resetSettings, setSettings, settingsFileError, systemLook, updateStatus,
 } from "./api";
-import { AppIcon, ChipList, ExternalLink, Logo, NavIcon, PowerSwitch, Row, RuleList, Segmented, Slider, Switch } from "./components";
+import { AppIcon, ChipList, ExternalLink, Logo, NavIcon, PowerSwitch, Row, Segmented, Slider, Switch } from "./components";
 import { ReleaseNotes } from "./ReleaseNotes";
 import { t, type StringKey } from "./i18n";
 import { LINKS, isExternalUrl } from "./links";
 import { PillPreview } from "./PillPreview";
 import { PrivacyPage } from "./PrivacyPage";
+import { DictionaryPage } from "./DictionaryPage";
 import { CrashReportPreview } from "./ReportPreview";
 import { StatsPage } from "./StatsPage";
 import { Tour } from "./Tour";
@@ -504,21 +505,7 @@ export default function App() {
           </>
         )}
 
-        {page === "dictionary" && (
-          <>
-            <h1>{t("dictionary.title")}</h1>
-            <p className="lead">{t("dictionary.lead")}</p>
-            <div className="card">
-              <Row stack label={t("dictionary.words")} hint={t("dictionary.words.hint")}>
-                <ChipList items={s.personalWords} onChange={(v) => update({ personalWords: v })}
-                  placeholder={t("dictionary.words.placeholder")} empty={t("dictionary.words.empty")} single={t("dictionary.words.single")} maxLength={LIMITS.word} />
-              </Row>
-              <Row stack label={t("dictionary.shortcuts")} hint={t("dictionary.shortcuts.hint")}>
-                <RuleList rules={s.userRules} onChange={(v, typing) => update({ userRules: v }, typing)} onCommit={flush} />
-              </Row>
-            </div>
-          </>
-        )}
+        {page === "dictionary" && <DictionaryPage settings={s} update={update} flush={flush} />}
 
         {page === "stats" && <StatsPage settings={s} update={update} />}
 
