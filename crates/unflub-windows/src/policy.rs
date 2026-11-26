@@ -285,6 +285,16 @@ pub fn releases_held_backspace(vk: u16, auto_repeat: bool, modifier: bool, repla
     replayed || vk != BACK || auto_repeat || modifier
 }
 
+/// After a key-down was handled while a first Backspace is `held`: must the held one be sent on
+/// now? Yes when this was a Backspace that went to the app (`swallowed` false) instead of
+/// undoing the fix: the undo was refused (auto-repeat, modifier, dry run) or never decided
+/// (blocked field, broken engine). Both Backspaces then reach the app, and the "Undo?" prompt
+/// ends instead of waiting for a key that would push the held one out behind it (#39).
+pub fn releases_unanswered_hold(vk: u16, swallowed: bool, held: bool) -> bool {
+    const BACK: u16 = 0x08;
+    held && vk == BACK && !swallowed
+}
+
 /// May a first Backspace be held for a double-Backspace undo? Only one straight from the user:
 /// a replayed Backspace was typed while an injection was in flight, and holding it would put
 /// it behind keys already on their way to the app.
@@ -319,6 +329,13 @@ impl SwallowTracker {
     /// We swallowed this key-down; swallow its key-up too.
     pub fn swallowed(&mut self, vk: u16) {
         self.up_pending = Some(vk);
+    }
+
+    /// Is a key-up of `vk` owed to us (its key-down was swallowed and is still held on the
+    /// keyboard)? A key-down of `vk` now is then an auto-repeat that Windows' own key state
+    /// can't show, since Windows never saw the press. Changes nothing.
+    pub fn awaits_up(&self, vk: u16) -> bool {
+        self.up_pending == Some(vk)
     }
 
     /// A key-up arrived. Returns true if it should be swallowed.
@@ -394,6 +411,25 @@ mod tests {
         }
         assert!(may_hold_backspace(false));
         assert!(!may_hold_backspace(true));
+    }
+
+    /// #39: a second Backspace that went to the app instead of undoing takes the held one with
+    /// it; the one that started the hold, an undo, or another key never does.
+    #[test]
+    fn an_unanswered_hold_goes_out_with_the_backspace() {
+        assert!(releases_unanswered_hold(0x08, false, true), "refused undo");
+        assert!(
+            !releases_unanswered_hold(0x08, true, true),
+            "undo or a new hold"
+        );
+        assert!(
+            !releases_unanswered_hold(0x08, false, false),
+            "nothing held"
+        );
+        assert!(
+            !releases_unanswered_hold(0x41, false, true),
+            "released before"
+        );
     }
 
     #[test]
@@ -658,5 +694,18 @@ mod tests {
         assert!(!t.on_up(0x08));
         // A fresh press.
         assert!(!t.on_down(0x08, false));
+    }
+
+    /// #39: a held key's repeat is known before it is handled, without using it up.
+    #[test]
+    fn a_swallowed_key_still_down_is_seen() {
+        let mut t = SwallowTracker::default();
+        assert!(!t.awaits_up(0x08));
+        t.swallowed(0x08);
+        assert!(t.awaits_up(0x08));
+        assert!(!t.awaits_up(0x41));
+        assert!(t.awaits_up(0x08), "asking changes nothing");
+        assert!(t.on_up(0x08));
+        assert!(!t.awaits_up(0x08), "let go");
     }
 }

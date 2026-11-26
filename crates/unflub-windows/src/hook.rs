@@ -1430,12 +1430,14 @@ impl State {
         // pipeline then holds this key behind it), so deleting the space to add a comma keeps
         // working. Only a fresh, plain second Backspace from the user reaches the corrector,
         // which undoes the fix. There is no timeout: the hold ends with the next key, a click,
-        // or the hook stopping.
+        // or the hook stopping. Windows never saw the held press, so its key state can't show
+        // that Backspace is still down: the first auto-repeat is spotted by the key-up we still
+        // owe (#39), and the held Backspace goes out ahead of it.
         if !ev.up
             && self.held.is_some()
             && crate::policy::releases_held_backspace(
                 vk,
-                async_down,
+                async_down || (!replayed && self.pipeline.awaits_up(vk)),
                 !replayed && modifier_down(),
                 replayed,
             )
@@ -1444,7 +1446,17 @@ impl State {
         }
         let swallow = match self.pipeline.on_input(ev, origin, async_down) {
             Input::Queued | Input::Consumed => true,
-            Input::Process { repeat } => !ev.up && self.on_key_down(ev, repeat, replayed, start),
+            Input::Process { repeat } if !ev.up => {
+                let swallow = self.on_key_down(ev, repeat, replayed, start);
+                // A Backspace going to the app while one is still held did not undo the fix
+                // (refused, field blocked, engine broken): send the held one on too, so neither
+                // is lost or left hidden behind the next key, and the pill stops asking (#39).
+                if crate::policy::releases_unanswered_hold(vk, swallow, self.held.is_some()) {
+                    self.release_held();
+                }
+                swallow
+            }
+            Input::Process { .. } => false,
         };
         self.pump();
         self.report.keyboard.record(start.elapsed());
