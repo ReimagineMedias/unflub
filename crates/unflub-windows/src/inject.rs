@@ -286,17 +286,33 @@ pub fn unwind_injection(events: &[KeyEvent], sent: usize, held: ShiftKeys) -> Ve
 }
 
 /// What to send after `SendInput` stopped after `sent` of the user's own keys (a replay or a
-/// hand-back): a key-up for every key the sent part pressed and didn't release. Their key-ups
-/// were in the part that didn't go out.
+/// hand-back), so no key stays down that the user let go of:
+/// - a key-up for every key the sent part pressed and didn't release (its key-up was in the
+///   part that didn't go out), and
+/// - every key-up in the unsent part whose key-down isn't earlier in that part: the user
+///   released a key that was down before (a Shift held while typing, then let go while we held
+///   keys back). Keys pressed and released wholly in the unsent part are left out; the app
+///   never saw them go down.
 pub fn unwind_keys(events: &[RawEvent], sent: usize) -> Vec<RawEvent> {
-    let mut down: Vec<RawEvent> = Vec::new();
-    for e in &events[..sent.min(events.len())] {
-        down.retain(|d| d.vk != e.vk || (e.vk == VK_PACKET_CODE && d.scan != e.scan));
+    let sent = sent.min(events.len());
+    let same =
+        |a: &RawEvent, b: &RawEvent| a.vk == b.vk && (a.vk != VK_PACKET_CODE || a.scan == b.scan);
+    let mut out: Vec<RawEvent> = Vec::new();
+    for e in &events[..sent] {
+        out.retain(|d| !same(d, e));
         if !e.up {
-            down.push(RawEvent { up: true, ..*e });
+            out.push(RawEvent { up: true, ..*e });
         }
     }
-    down
+    let mut pressed_in_tail: Vec<RawEvent> = Vec::new();
+    for e in &events[sent..] {
+        if !e.up {
+            pressed_in_tail.push(*e);
+        } else if !pressed_in_tail.iter().any(|d| same(d, e)) && !out.iter().any(|d| same(d, e)) {
+            out.push(*e);
+        }
+    }
+    out
 }
 
 /// `VK_PACKET`: another program's Unicode packet, its character in the scan code.
@@ -1321,6 +1337,71 @@ mod tests {
         assert_eq!(unwind_keys(&keys, 1), vec![up(N)]);
         assert_eq!(unwind_keys(&keys, 4), vec![up(SHIFT), up(O)]);
         assert_eq!(unwind_keys(&keys, 5), vec![up(SHIFT)]);
+    }
+
+    /// Keys down after `events`, starting with `before` down.
+    fn raw_down(before: &[u16], events: &[RawEvent]) -> Vec<u16> {
+        let mut keys = before.to_vec();
+        for e in events {
+            keys.retain(|k| *k != e.vk);
+            if !e.up {
+                keys.push(e.vk);
+            }
+        }
+        keys.sort_unstable();
+        keys
+    }
+
+    /// Re-review B: a replay cut off anywhere leaves no key down that the user let go of, a
+    /// Shift key-up queued in the unsent part included.
+    #[test]
+    fn a_partial_replay_releases_what_the_user_let_go() {
+        // Shift was held before the replay; the user let go of it first, then typed.
+        let tail_first = [up(SHIFT), down(N), up(N)];
+        assert_eq!(unwind_keys(&tail_first, 0), vec![up(SHIFT)]);
+        assert_eq!(unwind_keys(&tail_first, 1), vec![]);
+        assert_eq!(unwind_keys(&tail_first, 2), vec![up(N)]);
+
+        let replays: [&[RawEvent]; 3] = [
+            &tail_first,
+            &[
+                up(SHIFT),
+                down(N),
+                up(N),
+                down(SHIFT),
+                down(O),
+                up(O),
+                up(SHIFT),
+            ],
+            &[
+                down(N),
+                down(SHIFT),
+                up(N),
+                down(O),
+                up(SHIFT),
+                up(O),
+                up(BACK),
+            ],
+        ];
+        for events in replays {
+            // Down before the replay: keys whose first event in it is a key-up.
+            let mut before: Vec<u16> = Vec::new();
+            for e in events.iter() {
+                let first = events.iter().find(|d| d.vk == e.vk).expect("itself");
+                if first.up && !before.contains(&e.vk) {
+                    before.push(e.vk);
+                }
+            }
+            for stop in 0..=events.len() {
+                let mut sent = events[..stop].to_vec();
+                sent.extend(unwind_keys(events, stop));
+                assert_eq!(
+                    raw_down(&before, &sent),
+                    vec![],
+                    "{events:?} stopped at {stop}"
+                );
+            }
+        }
     }
 
     /// Which keys are down after `events`, starting from Shift as `held`.
