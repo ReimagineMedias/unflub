@@ -48,7 +48,7 @@ pub use hook::{Hook, HookEvent, HookOptions, HookReport, InjectTiming};
 pub use live::{LiveConfig, LiveEngine};
 pub use overlay::{Correction, PillConfig, PillPosition, PillStyle};
 #[cfg(windows)]
-pub use overlay::{Overlay, OverlayHandle};
+pub use overlay::{Overlay, OverlayHandle, PillUpdate};
 #[cfg(windows)]
 pub use pump::PumpHealth;
 #[cfg(windows)]

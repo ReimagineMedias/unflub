@@ -214,6 +214,28 @@ pub enum CorrectionKind {
     Undone,
 }
 
+/// What a hook event does to the pill.
+#[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PillUpdate {
+    Show(Correction),
+    /// The "Undo?" prompt was answered without an undo: the held Backspace went on or was
+    /// dropped ([`crate::HookEvent::UndoDeclined`]).
+    Hide,
+}
+
+#[cfg(windows)]
+impl PillUpdate {
+    /// For an event from the hook, if it changes the pill. Every runner showing a pill needs
+    /// the hide too, or the red "Undo?" stays on screen while typing goes on (#118).
+    pub fn for_hook_event(event: &crate::HookEvent) -> Option<Self> {
+        match event {
+            crate::HookEvent::UndoDeclined => Some(Self::Hide),
+            _ => Correction::from_hook_event(event).map(Self::Show),
+        }
+    }
+}
+
 /// What the pill shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Correction {
@@ -1936,6 +1958,28 @@ mod tests {
             (config.background, config.text)
         );
         assert_eq!(Correction::undone(&r).label(), "Undone");
+    }
+
+    /// #118: the "Undo?" pill goes once the held Backspace is answered without an undo.
+    #[cfg(windows)]
+    #[test]
+    fn a_declined_undo_hides_the_pill() {
+        use crate::HookEvent;
+        let r = replacement(3, "the ", "teh", "the");
+        assert_eq!(
+            PillUpdate::for_hook_event(&HookEvent::UndoPending {
+                replacement: r.clone()
+            }),
+            Some(PillUpdate::Show(Correction::undo_pending(&r)))
+        );
+        assert_eq!(
+            PillUpdate::for_hook_event(&HookEvent::UndoDeclined),
+            Some(PillUpdate::Hide)
+        );
+        assert_eq!(
+            PillUpdate::for_hook_event(&HookEvent::Warning("x".into())),
+            None
+        );
     }
 
     /// Review blocker B2: no undo hint after Enter or Tab, where Backspace doesn't undo.
