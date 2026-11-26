@@ -57,7 +57,7 @@ fn serve_inner(
                 format!("engine {version} speaks protocol {protocol}, the app {PROTOCOL}"),
             ))
         }
-        other => return Err(unexpected(&other)),
+        _ => return Err(unexpected()),
     };
     let welcome = ToEngine::Welcome {
         protocol: PROTOCOL,
@@ -95,18 +95,18 @@ pub fn join(name: &str, app_pid: u32, timeout: Duration) -> io::Result<(Pipe, St
             io::ErrorKind::InvalidData,
             format!("the app speaks protocol {protocol}, the engine {PROTOCOL}"),
         )),
-        other => Err(unexpected(&other)),
+        _ => Err(unexpected()),
     }
 }
 
-fn unexpected(message: &impl std::fmt::Debug) -> io::Error {
+fn unexpected() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
-        format!("unexpected message during the handshake: {message:?}"),
+        "unexpected message during the handshake",
     )
 }
 
-/// One message, read before the deadline.
+/// One message, read before `deadline`.
 fn read_until<T: serde::de::DeserializeOwned>(
     pipe: &Pipe,
     deadline: Instant,
@@ -114,7 +114,8 @@ fn read_until<T: serde::de::DeserializeOwned>(
 ) -> io::Result<T> {
     let body =
         read_frame_until(pipe, deadline, cancellation)?.ok_or(io::ErrorKind::UnexpectedEof)?;
-    frame::decode(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    frame::decode(&body)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid handshake message"))
 }
 
 /// Read one whole frame within the time limit, including the length prefix.

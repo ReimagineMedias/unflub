@@ -697,7 +697,7 @@ impl Usage {
             .map_err(std::io::Error::other)
             .and_then(|bytes| crate::files::replace(&self.path, &bytes));
         if let Err(e) = written {
-            eprintln!("usage stats: can't save ({e})");
+            crate::diagnostics::record(crate::diagnostics::Event::UsageSaveFailed(e.kind()));
         }
     }
 

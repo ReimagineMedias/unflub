@@ -73,6 +73,7 @@ pub enum Observed {
         keep_word: bool,
     },
     CorrectorPanicked,
+    Diagnostic(protocol::EngineDiagnostic),
     /// The engine installed the hooks again: its watchdog saw them miss input, or the computer
     /// resumed or was unlocked (`None` from an engine that didn't say).
     HookReinstalled {
@@ -228,6 +229,7 @@ mod host {
     use super::{
         backoff, engine_settings, failures_after, Launch, Observed, Observer, READY_TIMEOUT,
     };
+    use crate::diagnostics::{self, Event};
     use crate::remote::RemoteFlags;
     use crate::settings::Settings;
     use crate::undo_counts::UndoCounts;
@@ -310,7 +312,7 @@ mod host {
             let thread = std::thread::Builder::new()
                 .name("unflub-supervisor".into())
                 .spawn(move || supervisor.run(rx))
-                .map_err(|e| eprintln!("autocorrect: can't start the supervisor: {e}"))
+                .inspect_err(|e| diagnostics::record(Event::SupervisorStartFailed(e.kind())))
                 .ok();
             if enabled && thread.is_none() {
                 startup_observer(Observed::HookUnavailable { active: true });
@@ -469,9 +471,7 @@ mod host {
                                     self.next_start = None;
                                 }
                                 if ready_by.is_some_and(|t| t <= Instant::now()) {
-                                    eprintln!(
-                                        "autocorrect: the engine never got ready; restarting it"
-                                    );
+                                    diagnostics::record(Event::ReadyTimedOut);
                                     self.failed_start();
                                 }
                                 continue;
@@ -537,9 +537,9 @@ mod host {
                 Ok(running) => self.running = Some(running),
                 Err(_) if self.startup_cancellation().is_cancelled() => {}
                 Err(e) => {
-                    eprintln!("autocorrect: can't start the engine: {e}");
+                    diagnostics::record(Event::EngineStartupFailed(e.kind()));
                     self.failures = self.failures.saturating_add(1);
-                    self.next_start = Some(Instant::now() + backoff(self.failures));
+                    self.schedule_restart();
                 }
             }
         }
@@ -558,7 +558,7 @@ mod host {
             // The write has a deadline (`pipe::WRITE_TIMEOUT`). An engine that stopped reading,
             // or a write cut short, ends this session: kill it and restart with backoff.
             if let Err(e) = frame::write(&mut &*r.pipe, &ToEngine::Configure { settings }) {
-                eprintln!("autocorrect: can't reach the engine ({e}); restarting it");
+                diagnostics::record(Event::PipeWriteFailed(e.kind()));
                 self.end_session();
             }
         }
@@ -571,6 +571,7 @@ mod host {
             };
             self.set_hook_unavailable(true);
             running.pipe.cancel_io();
+            diagnostics::record(Event::EngineTerminated);
             let _ = running.child.kill();
             let _ = running.child.wait();
             if let Some(reader) = running.reader.take() {
@@ -578,7 +579,7 @@ mod host {
             }
             (self.observer)(Observed::EngineCrashed);
             self.failures = failures_after(self.failures, running.started.elapsed());
-            self.next_start = Some(Instant::now() + super::backoff(self.failures));
+            self.schedule_restart();
         }
 
         fn sample_memory(&mut self) -> Option<u64> {
@@ -606,9 +607,15 @@ mod host {
                 frame::write(&mut &*r.pipe, &ToEngine::Ping { nonce }).is_ok()
             });
             if !answered {
-                eprintln!("autocorrect: engine heartbeat failed; restarting");
+                diagnostics::record(Event::HeartbeatFailed);
                 self.end_session();
             }
+        }
+
+        fn schedule_restart(&mut self) {
+            let delay = backoff(self.failures);
+            self.next_start = Some(Instant::now() + delay);
+            diagnostics::record(Event::RestartAfter(delay.as_secs()));
         }
 
         fn startup_cancellation(&self) -> Cancellation<'_> {
@@ -633,9 +640,8 @@ mod host {
                 .stdin(Stdio::null())
                 .args(&launch.args)
                 .creation_flags(CREATE_NO_WINDOW);
-            let mut child = command.spawn().map_err(|e| {
-                std::io::Error::new(e.kind(), format!("{}: {e}", launch.exe.display()))
-            })?;
+            let mut child = command.spawn()?;
+            diagnostics::record(Event::EngineSpawned);
             let job = KillOnClose::new()
                 .and_then(|job| job.assign(&child).map(|()| job))
                 .map_err(|e| eprintln!("autocorrect: engine job object: {e}"))
@@ -710,9 +716,10 @@ mod host {
             running.heartbeat = Heartbeat::new(Instant::now());
             if !super::hook_start_failed(self.expects_hook, hooked) {
                 self.set_hook_unavailable(false);
+                diagnostics::record(Event::EngineReady);
                 return;
             }
-            eprintln!("autocorrect: the engine couldn't install the keyboard hook; retrying");
+            diagnostics::record(Event::HookStartFailed);
             self.failed_start();
         }
 
@@ -727,7 +734,7 @@ mod host {
                 self.failures,
                 started.map_or(Duration::ZERO, |s| s.elapsed()),
             );
-            self.next_start = Some(Instant::now() + super::backoff(self.failures));
+            self.schedule_restart();
         }
 
         fn set_hook_unavailable(&mut self, unavailable: bool) {
@@ -761,15 +768,16 @@ mod host {
                 let _ = reader.join();
             }
             let crashed = status.is_none_or(|s| !s.success());
-            eprintln!(
-                "autocorrect: the engine stopped ({}); restarting",
-                status.map_or("killed".into(), |s| s.to_string())
+            diagnostics::record(
+                status
+                    .and_then(|s| s.code())
+                    .map_or(Event::EngineTerminated, Event::EngineExit),
             );
             if crashed {
                 (self.observer)(Observed::EngineCrashed);
             }
             self.failures = failures_after(self.failures, running.started.elapsed());
-            self.next_start = Some(Instant::now() + super::backoff(self.failures));
+            self.schedule_restart();
         }
 
         /// Ask the engine to stop, then make sure it has.
@@ -782,7 +790,7 @@ mod host {
             running.pipe.set_write_timeout(Some(SHUTDOWN_WRITE));
             let asked = frame::write(&mut &*running.pipe, &ToEngine::Shutdown).is_ok();
             if !asked || wait_for(&mut running.child, STOP_TIMEOUT).is_none() {
-                eprintln!("autocorrect: the engine didn't stop; ending it");
+                diagnostics::record(Event::EngineTerminated);
                 let _ = running.child.kill();
                 let _ = running.child.wait();
             }
@@ -844,12 +852,16 @@ mod host {
             let body = match session::read_frame(pipe, unflub_engine::protocol::FRAME_READ_TIMEOUT)
             {
                 Ok(Some(body)) => body,
-                Ok(None) | Err(_) => return,
+                Ok(None) => return,
+                Err(e) => {
+                    diagnostics::record(Event::PipeReadFailed(e.kind()));
+                    return;
+                }
             };
             let message = match frame::decode::<FromEngine>(&body) {
                 Ok(m) => m,
-                Err(e) => {
-                    eprintln!("autocorrect: skipped an engine message ({e})");
+                Err(_) => {
+                    diagnostics::record(Event::InvalidEngineMessage);
                     continue;
                 }
             };
@@ -913,6 +925,7 @@ mod host {
                     decide_all_us,
                     spellcheck_us,
                 })),
+                FromEngine::Diagnostic { event } => observer(Observed::Diagnostic(event)),
                 FromEngine::CorrectorPanicked => observer(Observed::CorrectorPanicked),
                 FromEngine::InputInterference { active } => {
                     observer(Observed::InputInterference { active })
