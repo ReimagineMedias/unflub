@@ -13,7 +13,7 @@ import { PillPreview } from "./PillPreview";
 import { PrivacyPage } from "./PrivacyPage";
 import { StatsPage } from "./StatsPage";
 import { Tour } from "./Tour";
-import type { AppInfo, EngineMode, RemoteMessage, Settings, SystemLook, Theme, UndoMode, UpdateStatus } from "./types";
+import { LIMITS, type AppInfo, type EngineMode, type RemoteMessage, type Settings, type SystemLook, type Theme, type UndoMode, type UpdateStatus } from "./types";
 
 type Page = "general" | "correction" | "appearance" | "apps" | "dictionary" | "stats" | "privacy" | "about";
 const PAGES: { id: Page; label: StringKey }[] = [
@@ -383,7 +383,7 @@ export default function App() {
             <div className="card">
               <Row stack label={t("apps.never")} hint={t("apps.never.hint")}>
                 <ChipList items={s.excludedApps} onChange={(v) => update({ excludedApps: v })}
-                  placeholder={t("apps.placeholder")} empty={t("apps.empty")} normalise={(v) => v.trim().toLowerCase()}
+                  placeholder={t("apps.placeholder")} empty={t("apps.empty")} maxLength={LIMITS.app} normalise={(v) => v.trim().toLowerCase()}
                   validate={(v) => !/^[^<>:"/\\|?*]+\.exe$/.test(v) ? t("apps.invalid") : undefined} />
               </Row>
             </div>
@@ -397,7 +397,7 @@ export default function App() {
             <div className="card">
               <Row stack label={t("dictionary.words")} hint={t("dictionary.words.hint")}>
                 <ChipList items={s.personalWords} onChange={(v) => update({ personalWords: v })}
-                  placeholder={t("dictionary.words.placeholder")} empty={t("dictionary.words.empty")} single={t("dictionary.words.single")} />
+                  placeholder={t("dictionary.words.placeholder")} empty={t("dictionary.words.empty")} single={t("dictionary.words.single")} maxLength={LIMITS.word} />
               </Row>
               <Row stack label={t("dictionary.shortcuts")} hint={t("dictionary.shortcuts.hint")}>
                 <RuleList rules={s.userRules} onChange={(v) => update({ userRules: v })} />

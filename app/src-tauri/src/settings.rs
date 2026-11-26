@@ -197,8 +197,27 @@ impl Default for Settings {
     }
 }
 
+/// Longest personal word or shortcut, in characters. Windows' spell checker calls any word of 64+
+/// UTF-16 units correct anyway. Keep `LIMITS` in `app/src/types.ts` the same.
+pub const MAX_WORD_CHARS: usize = 64;
+/// Longest text a shortcut becomes, in characters.
+pub const MAX_REPLACEMENT_CHARS: usize = 256;
+/// Longest excluded app name (a Windows path is at most 260).
+pub const MAX_APP_CHARS: usize = 260;
+pub const MAX_PERSONAL_WORDS: usize = 5000;
+pub const MAX_USER_RULES: usize = 1000;
+pub const MAX_EXCLUDED_APPS: usize = 500;
+
+/// `text` is 1 to `max` characters with no control characters (`allow` excepted).
+fn fits(text: &str, max: usize, allow: &[char]) -> bool {
+    !text.is_empty()
+        && text.chars().count() <= max
+        && !text.chars().any(|c| c.is_control() && !allow.contains(&c))
+}
+
 impl Settings {
-    /// Clamp values a hand-edited file could break.
+    /// Clamp values a hand-edited file could break. The lists are capped so the settings always
+    /// fit in one message to the engine (`unflub_engine::frame::MAX_FRAME`), whatever was pasted.
     pub fn sanitised(mut self) -> Self {
         self.confidence = self.confidence.clamp(0.0, 1.0);
         self.pill_opacity = self.pill_opacity.clamp(0.3, 1.0);
@@ -208,8 +227,15 @@ impl Settings {
         for app in &mut self.excluded_apps {
             *app = app.trim().to_lowercase();
         }
-        self.excluded_apps.retain(|a| !a.is_empty());
+        self.excluded_apps.retain(|a| fits(a, MAX_APP_CHARS, &[]));
         self.excluded_apps.dedup();
+        self.excluded_apps.truncate(MAX_EXCLUDED_APPS);
+        self.personal_words.retain(|w| fits(w, MAX_WORD_CHARS, &[]));
+        self.personal_words.truncate(MAX_PERSONAL_WORDS);
+        self.user_rules.retain(|(from, to)| {
+            fits(from, MAX_WORD_CHARS, &[]) && fits(to, MAX_REPLACEMENT_CHARS, &['\n', '\t'])
+        });
+        self.user_rules.truncate(MAX_USER_RULES);
         self.language = sanitised_language(&self.language);
         self
     }
@@ -648,6 +674,80 @@ mod tests {
         assert_eq!(s.confidence, 1.0);
         assert_eq!(s.pill_opacity, 0.3);
         assert_eq!(s.excluded_apps, vec!["code.exe"]);
+    }
+
+    /// Review #85: an oversized personal word or list never stops the settings reaching the
+    /// engine, which takes at most `MAX_FRAME` bytes in one message.
+    #[test]
+    fn the_largest_settings_still_fit_one_engine_message() {
+        // Four bytes in UTF-8 each, the most a character takes.
+        let wide = |n: usize, tag: usize| format!("{tag}{}", "\u{1D4B3}".repeat(n - 6));
+        let s = Settings {
+            personal_words: (0..MAX_PERSONAL_WORDS + 50)
+                .map(|i| wide(MAX_WORD_CHARS, 100_000 + i))
+                .collect(),
+            user_rules: (0..MAX_USER_RULES + 50)
+                .map(|i| {
+                    (
+                        wide(MAX_WORD_CHARS, 100_000 + i),
+                        wide(MAX_REPLACEMENT_CHARS, 100_000 + i),
+                    )
+                })
+                .collect(),
+            excluded_apps: (0..MAX_EXCLUDED_APPS + 50)
+                .map(|i| wide(MAX_APP_CHARS, 100_000 + i))
+                .collect(),
+            ..Settings::default()
+        }
+        .sanitised();
+        assert_eq!(s.personal_words.len(), MAX_PERSONAL_WORDS);
+        assert_eq!(s.user_rules.len(), MAX_USER_RULES);
+        assert_eq!(s.excluded_apps.len(), MAX_EXCLUDED_APPS);
+        // Undo counts are capped at 500 pairs (`undo_counts.rs`).
+        let undo_counts = (0..500)
+            .map(|i| {
+                (
+                    wide(MAX_WORD_CHARS, 100_000 + i),
+                    wide(MAX_WORD_CHARS, 200_000 + i),
+                    9,
+                )
+            })
+            .collect();
+        let settings = crate::engine::engine_settings(&s, &Default::default(), undo_counts);
+        let mut out = Vec::new();
+        unflub_engine::frame::write(
+            &mut out,
+            &unflub_engine::protocol::ToEngine::Configure { settings },
+        )
+        .expect("fits one message");
+
+        let s = Settings {
+            personal_words: vec![
+                "rmgn".into(),
+                "x".repeat(5 << 20),
+                "".into(),
+                "a\u{0}b".into(),
+            ],
+            user_rules: vec![
+                ("omw".into(), "on my way".into()),
+                ("addr".into(), "1 Main St\nOttawa".into()),
+                ("big".into(), "y".repeat(MAX_REPLACEMENT_CHARS + 1)),
+            ],
+            ..Settings::default()
+        }
+        .sanitised();
+        assert_eq!(s.personal_words, ["rmgn"], "a 5 MB word is dropped");
+        assert_eq!(s.user_rules.len(), 2);
+    }
+
+    /// The window's input limits match these.
+    #[test]
+    fn the_window_uses_the_same_limits() {
+        let types = include_str!("../../src/types.ts");
+        let want = format!(
+            "export const LIMITS = {{ word: {MAX_WORD_CHARS}, replacement: {MAX_REPLACEMENT_CHARS}, app: {MAX_APP_CHARS} }} as const;"
+        );
+        assert!(types.contains(&want), "{want}");
     }
 
     #[test]
