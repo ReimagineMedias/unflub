@@ -42,13 +42,20 @@ pub trait KeyLookup {
 /// The Windows 11 Notepad (11.26xx) turns `KEYEVENTF_UNICODE` packets into spaces (#33): the
 /// Backspaces landed and the fixed word came out as blanks. Real keys are what every app is
 /// built for, so they come first everywhere.
-pub fn with_keys(strokes: Vec<Stroke>, keys: &impl KeyLookup) -> Vec<Stroke> {
+///
+/// While the user holds Shift (`held`), only characters typed with Shift become keys; the rest
+/// stay packets, so the batch never touches Shift. Releasing and pressing it again around them
+/// turns the user's own Shift key-up into a lone Shift tap, and two of those in a row open
+/// JetBrains' Search Everywhere (Shift+Space after a typo did it). Vetoing those fixes instead
+/// would drop every fix ended by `?`, `!` or `:`, which are typed with Shift held.
+pub fn with_keys(strokes: Vec<Stroke>, keys: &impl KeyLookup, held: ShiftKeys) -> Vec<Stroke> {
     strokes
         .into_iter()
         .map(|s| match s {
             // Surrogates aren't chars, so astral characters stay packets.
             Stroke::Unit(u) => char::from_u32(u32::from(u))
                 .and_then(|c| keys.key_for(c))
+                .filter(|&(_, _, shift)| shift || !held.any())
                 .map_or(s, |(vk, scan, shift)| Stroke::Key { vk, scan, shift }),
             other => other,
         })
@@ -1149,7 +1156,7 @@ mod tests {
     /// (the Windows 11 Notepad) get the real word.
     #[test]
     fn characters_with_a_key_are_typed_as_keys() {
-        let strokes = with_keys(plan(3, "The é?\u{1F600}"), &Us);
+        let strokes = with_keys(plan(3, "The é?\u{1F600}"), &Us, ShiftKeys::default());
         assert_eq!(&strokes[..3], &[BACKSPACE; 3]);
         assert_eq!(
             strokes[3],
@@ -1197,18 +1204,22 @@ mod tests {
     fn shift_is_pressed_for_capitals_and_left_as_the_user_holds_it() {
         let none = ShiftKeys::default();
         // No Shift needed, none held: just the keys.
-        let events = key_events(&with_keys(plan_correction(3, "the ", Some('h')), &Us), none);
+        let events = key_events(
+            &with_keys(plan_correction(3, "the ", Some('h')), &Us, none),
+            none,
+        );
         assert_eq!(events.len(), 2 * 9);
         assert_eq!(type_into("ok teh", none, &events), ("ok the ".into(), none));
 
         // A capital: one Shift press around it.
-        let events = key_events(&with_keys(plan(3, "The "), &Us), none);
+        let events = key_events(&with_keys(plan(3, "The "), &Us, none), none);
         assert_eq!(events[6], shift_event(LSHIFT, false));
         assert_eq!(events[9], shift_event(LSHIFT, true));
         assert_eq!(type_into("Teh", none, &events), ("The ".into(), none));
 
-        // "teh?" typed with right Shift still held: the '?' and the Backspaces keep it, the
-        // letters go without it, and it is down again at the end for the user's own key-up.
+        // "teh?" or "teh " typed with Shift still held (review finding 2): Shift is never
+        // touched. The '?' is its key, the letters and the space go as packets, so the user's
+        // own Shift key-up can't become a lone Shift tap (JetBrains' Search Everywhere).
         for held in [
             ShiftKeys {
                 left: false,
@@ -1216,18 +1227,30 @@ mod tests {
             },
             ShiftKeys {
                 left: true,
+                right: false,
+            },
+            ShiftKeys {
+                left: true,
                 right: true,
             },
         ] {
-            let events = key_events(&with_keys(plan_correction(3, "the?", Some('h')), &Us), held);
-            assert_eq!(type_into("so teh", held, &events), ("so the?".into(), held));
-            let shift_events = events
-                .iter()
-                .filter(
-                    |e| matches!(e, KeyEvent::Vk { vk, .. } if *vk == LSHIFT.0 || *vk == RSHIFT.0),
-                )
-                .count();
-            assert!(shift_events <= 6, "{held:?}: {shift_events}");
+            for (insert, want) in [("the?", "so the?"), ("the ", "so the ")] {
+                let plan = with_keys(plan_correction(3, insert, Some('h')), &Us, held);
+                assert!(
+                    plan.iter()
+                        .all(|s| !matches!(s, Stroke::Key { shift: false, .. })),
+                    "{plan:?}"
+                );
+                let events = key_events(&plan, held);
+                assert_eq!(type_into("so teh", held, &events), (want.into(), held));
+                let shift_events = events
+                    .iter()
+                    .filter(|e| {
+                        matches!(e, KeyEvent::Vk { vk, .. } if *vk == LSHIFT.0 || *vk == RSHIFT.0)
+                    })
+                    .count();
+                assert_eq!(shift_events, 0, "{held:?} {insert:?}");
+            }
         }
 
         // Packets don't move Shift.
@@ -1271,7 +1294,7 @@ mod tests {
     #[test]
     fn a_partial_injection_leaves_no_key_down_and_shift_as_held() {
         let none = ShiftKeys::default();
-        let events = key_events(&with_keys(plan(3, "The"), &Us), none);
+        let events = key_events(&with_keys(plan(3, "The"), &Us, none), none);
         // BS x3 (6 events), then LShift down: SendInput stopped there.
         assert_eq!(events[6], shift_event(LSHIFT, false));
         let back = unwind_injection(&events, 7, none);
@@ -1294,7 +1317,7 @@ mod tests {
             (none, plan_correction(3, "The ", Some('h'))),
             (right, plan_correction(3, "the?", Some('h'))),
         ] {
-            let events = key_events(&with_keys(plan, &Us), held);
+            let events = key_events(&with_keys(plan, &Us, held), held);
             for stop in 0..=events.len() {
                 let mut sent = events[..stop].to_vec();
                 sent.extend(unwind_injection(&events, stop, held));

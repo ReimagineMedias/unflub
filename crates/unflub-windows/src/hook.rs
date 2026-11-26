@@ -1443,7 +1443,7 @@ impl State {
         let caps_lock = unsafe { GetKeyState(i32::from(VK_CAPITAL.0)) } & 1 != 0;
         let keys = inject::TargetLayout::new(foreground_layout(), caps_lock);
         let shift = held_shift();
-        let events = inject::key_events(&inject::with_keys(strokes, &keys), shift);
+        let events = inject::key_events(&inject::with_keys(strokes, &keys, shift), shift);
         let batch = self.pipeline.begin_undo(ev, held, events.len());
         let handed_over = Instant::now();
         let job = Job {
