@@ -60,25 +60,47 @@ fn serve_inner(
     let deadline = Instant::now() + timeout;
     let mut listener = listener;
     let mut impostors = 0;
+    // Once a client was dropped, every failure says how many (`impostors_in`), so the app can
+    // log a squatted pipe however the start then ended.
+    let with_count = |e: io::Error, impostors: u32| match impostors {
+        0 => e,
+        count => Impostors::wrap(e, count, engine_pid),
+    };
     let pipe = loop {
         let left = deadline.saturating_duration_since(Instant::now());
         let pipe =
             match listener.accept_with_cancel(left.max(Duration::from_millis(1)), cancellation) {
                 Ok(pipe) => pipe,
                 Err(e) if impostors > 0 && e.kind() == io::ErrorKind::TimedOut => {
-                    return Err(impostor_error(impostors, engine_pid))
+                    return Err(Impostors::refused(impostors, engine_pid))
                 }
-                Err(e) => return Err(e),
+                Err(e) => return Err(with_count(e, impostors)),
             };
-        if pipe.client_pid()? == engine_pid {
+        if pipe.client_pid().map_err(|e| with_count(e, impostors))? == engine_pid {
             break pipe;
         }
         impostors += 1;
         if impostors >= MAX_IMPOSTORS {
-            return Err(impostor_error(impostors, engine_pid));
+            return Err(Impostors::refused(impostors, engine_pid));
         }
-        listener = pipe.disconnect()?;
+        listener = pipe.disconnect().map_err(|e| with_count(e, impostors))?;
     };
+    welcome(pipe, app_exe, deadline, cancellation)
+        .map(|(pipe, version)| Served {
+            pipe,
+            version,
+            impostors,
+        })
+        .map_err(|e| with_count(e, impostors))
+}
+
+/// The rest of the app's handshake with the right client: its Hello, our Welcome.
+fn welcome(
+    pipe: Pipe,
+    app_exe: &str,
+    deadline: Instant,
+    cancellation: Option<Cancellation<'_>>,
+) -> io::Result<(Pipe, String)> {
     let version = match read_until(&pipe, deadline, cancellation)? {
         FromEngine::Hello { protocol, version } if protocol == PROTOCOL => version,
         FromEngine::Hello { protocol, version } => {
@@ -97,18 +119,69 @@ fn serve_inner(
         Some(cancellation) => frame::write(&mut pipe.cancellable_writer(cancellation), &welcome)?,
         None => frame::write(&mut &pipe, &welcome)?,
     }
-    Ok(Served {
-        pipe,
-        version,
-        impostors,
-    })
+    Ok((pipe, version))
 }
 
-fn impostor_error(impostors: u32, engine_pid: u32) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        format!("{impostors} pipe clients were not the engine {engine_pid}"),
-    )
+/// Inside the `io::Error` of a handshake that dropped clients which weren't the engine.
+#[derive(Debug)]
+struct Impostors {
+    count: u32,
+    engine_pid: u32,
+    /// What ended the handshake afterwards; `None` when the impostors did.
+    cause: Option<io::Error>,
+}
+
+impl Impostors {
+    /// The impostors ended it: too many, or no engine came after them.
+    fn refused(count: u32, engine_pid: u32) -> io::Error {
+        let inner = Self {
+            count,
+            engine_pid,
+            cause: None,
+        };
+        io::Error::new(io::ErrorKind::PermissionDenied, inner)
+    }
+
+    /// Something else ended it after `count` impostors; the kind stays the cause's.
+    fn wrap(cause: io::Error, count: u32, engine_pid: u32) -> io::Error {
+        let kind = cause.kind();
+        let inner = Self {
+            count,
+            engine_pid,
+            cause: Some(cause),
+        };
+        io::Error::new(kind, inner)
+    }
+}
+
+impl std::fmt::Display for Impostors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let dropped = format!(
+            "{} pipe clients were not the engine {}",
+            self.count, self.engine_pid
+        );
+        match &self.cause {
+            Some(cause) => write!(f, "{cause} ({dropped})"),
+            None => f.write_str(&dropped),
+        }
+    }
+}
+
+impl std::error::Error for Impostors {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.cause
+            .as_ref()
+            .map(|e| e as &(dyn std::error::Error + 'static))
+    }
+}
+
+/// How many clients that weren't the engine a failed [`serve`] or [`serve_cancellable`]
+/// dropped first, if any.
+pub fn impostors_in(error: &io::Error) -> Option<u32> {
+    error
+        .get_ref()?
+        .downcast_ref::<Impostors>()
+        .map(|i| i.count)
 }
 
 /// The engine's side: connect, check the server is the app (`app_pid`), say hello and wait
@@ -227,6 +300,7 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(impostors_in(&err), Some(1), "the failure says why");
         assert!(
             engine.join().unwrap().is_err(),
             "no welcome for an impostor"
@@ -256,11 +330,24 @@ mod tests {
         let err = serve(listener, 1, "unflub.exe", T).err().unwrap();
         stop.store(true, Ordering::Relaxed);
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(impostors_in(&err), Some(MAX_IMPOSTORS));
         assert!(
             started.elapsed() < Duration::from_secs(3),
             "didn't wait for the deadline"
         );
         assert_eq!(squatter.join().unwrap() as u32, MAX_IMPOSTORS);
+    }
+
+    /// Review L2: a failure after dropping clients keeps its kind and still carries the count.
+    #[test]
+    fn a_later_failure_still_says_how_many_were_dropped() {
+        let err = Impostors::wrap(io::ErrorKind::TimedOut.into(), 2, 9);
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(impostors_in(&err), Some(2));
+        assert!(err
+            .to_string()
+            .contains("2 pipe clients were not the engine 9"));
+        assert_eq!(impostors_in(&io::ErrorKind::TimedOut.into()), None);
     }
 
     #[test]
@@ -293,6 +380,7 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(impostors_in(&err), None, "no client was dropped");
         drop(fake.join());
     }
 

@@ -662,8 +662,11 @@ mod host {
                     Arc::new(served.pipe)
                 }
                 Err(e) => {
-                    // Too many impostors, or one and then no engine, arrive as
-                    // `EngineStartupFailed(PermissionDenied)` and the usual backoff.
+                    // A squatted pipe shows in the log however the start ended; the failure
+                    // itself is `EngineStartupFailed` with the usual backoff.
+                    if let Some(count) = session::impostors_in(&e) {
+                        diagnostics::record(Event::PipeImpostors(count));
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(e);
