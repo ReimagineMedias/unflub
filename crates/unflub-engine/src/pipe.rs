@@ -20,7 +20,7 @@
 use std::ffi::c_void;
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::core::{HSTRING, PWSTR};
 use windows::Win32::Foundation::{
@@ -52,6 +52,24 @@ const BUFFER: u32 = 64 * 1024;
 
 /// How long one write may wait for the peer to read.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Cancels startup I/O when the supervisor's epoch changes. Checking a token cannot unwind
+/// while Windows owns the OVERLAPPED and the I/O buffer.
+#[derive(Clone, Copy)]
+pub struct Cancellation<'a> {
+    epoch: &'a AtomicU64,
+    expected: u64,
+}
+
+impl<'a> Cancellation<'a> {
+    pub fn new(epoch: &'a AtomicU64, expected: u64) -> Self {
+        Self { epoch, expected }
+    }
+
+    pub fn is_cancelled(self) -> bool {
+        self.epoch.load(Ordering::Relaxed) != self.expected
+    }
+}
 
 /// A fresh pipe name: `\\.\pipe\unflub-engine-<pid>-<64 random bits>`.
 pub fn unique_name() -> String {
@@ -141,10 +159,18 @@ impl Listener {
 
     /// Wait up to `timeout` for the client.
     pub fn accept(self, timeout: Duration) -> io::Result<Pipe> {
+        self.accept_with_cancel(timeout, None)
+    }
+
+    pub(crate) fn accept_with_cancel(
+        self,
+        timeout: Duration,
+        cancellation: Option<Cancellation<'_>>,
+    ) -> io::Result<Pipe> {
         let pipe = self.pipe;
         let handle = pipe.handle;
         // SAFETY: the OVERLAPPED lives on `overlapped`'s stack until the operation completes.
-        let connected = pipe.overlapped(Some(timeout), |ov| unsafe {
+        let connected = pipe.overlapped(Some(timeout), cancellation, |ov| unsafe {
             ConnectNamedPipe(handle, Some(ov))
         });
         match connected {
@@ -216,15 +242,29 @@ impl Pipe {
 
     /// Read with a deadline (for the handshake). `Ok(0)` at end of stream.
     pub fn read_timeout(&self, buf: &mut [u8], timeout: Duration) -> io::Result<usize> {
-        self.read_inner(buf, Some(timeout))
+        self.read_inner(buf, Some(timeout), None)
     }
 
-    fn read_inner(&self, buf: &mut [u8], timeout: Option<Duration>) -> io::Result<usize> {
+    pub(crate) fn read_with_cancel(
+        &self,
+        buf: &mut [u8],
+        timeout: Duration,
+        cancellation: Option<Cancellation<'_>>,
+    ) -> io::Result<usize> {
+        self.read_inner(buf, Some(timeout), cancellation)
+    }
+
+    fn read_inner(
+        &self,
+        buf: &mut [u8],
+        timeout: Option<Duration>,
+        cancellation: Option<Cancellation<'_>>,
+    ) -> io::Result<usize> {
         let handle = self.handle;
         let len = buf.len().min(u32::MAX as usize);
         let ptr = buf.as_mut_ptr();
         // SAFETY: buf outlives the operation, which `overlapped` waits for.
-        let read = self.overlapped(timeout, |ov| unsafe {
+        let read = self.overlapped(timeout, cancellation, |ov| unsafe {
             ReadFile(
                 handle,
                 Some(std::slice::from_raw_parts_mut(ptr, len)),
@@ -238,12 +278,44 @@ impl Pipe {
         }
     }
 
+    /// A writer which also ends its current write when startup is cancelled.
+    pub fn cancellable_writer<'a>(&'a self, cancellation: Cancellation<'a>) -> impl Write + 'a {
+        CancellableWriter {
+            pipe: self,
+            cancellation,
+        }
+    }
+
+    fn write_inner(&self, buf: &[u8], cancellation: Option<Cancellation<'_>>) -> io::Result<usize> {
+        let handle = self.handle;
+        let len = buf.len().min(u32::MAX as usize);
+        let ptr = buf.as_ptr();
+        let timeout = match self.write_timeout_ms.load(Ordering::Relaxed) {
+            0 => None,
+            ms => Some(Duration::from_millis(ms)),
+        };
+        // SAFETY: buf outlives the operation, which `overlapped` waits for.
+        self.overlapped(timeout, cancellation, |ov| unsafe {
+            WriteFile(
+                handle,
+                Some(std::slice::from_raw_parts(ptr, len)),
+                None,
+                Some(ov),
+            )
+        })
+        .map(|n| n as usize)
+    }
+
     /// Start an overlapped operation and wait for it (up to `timeout`, then cancel it).
     fn overlapped(
         &self,
         timeout: Option<Duration>,
+        cancellation: Option<Cancellation<'_>>,
         start: impl FnOnce(*mut OVERLAPPED) -> windows::core::Result<()>,
     ) -> io::Result<u32> {
+        if cancellation.is_some_and(Cancellation::is_cancelled) {
+            return Err(io::ErrorKind::ConnectionAborted.into());
+        }
         // SAFETY: a manual-reset event, closed below.
         let event = unsafe { CreateEventW(None, true, false, None) }.map_err(win)?;
         let mut ov = OVERLAPPED {
@@ -256,22 +328,40 @@ impl Pipe {
                     return Err(win(e));
                 }
             }
-            if let Some(timeout) = timeout {
-                let ms = timeout.as_millis().min(u128::from(INFINITE - 1)) as u32;
-                // SAFETY: valid event handle.
-                let waited = unsafe { WaitForSingleObject(event, ms) };
-                if waited == WAIT_TIMEOUT {
-                    // SAFETY: cancels only this operation; we still wait for it below so the
-                    // OVERLAPPED isn't freed while the kernel holds it.
+            if timeout.is_some() || cancellation.is_some() {
+                let started = Instant::now();
+                let failure = loop {
+                    if cancellation.is_some_and(Cancellation::is_cancelled) {
+                        break Some(io::ErrorKind::ConnectionAborted.into());
+                    }
+                    let left = timeout.map_or(Duration::MAX, |limit| {
+                        limit.saturating_sub(started.elapsed())
+                    });
+                    let slice = if cancellation.is_some() {
+                        left.min(Duration::from_millis(50))
+                    } else {
+                        left
+                    };
+                    let ms = slice.as_millis().max(1).min(u128::from(INFINITE - 1)) as u32;
+                    // SAFETY: event is owned here and lives until the operation completes.
+                    match unsafe { WaitForSingleObject(event, ms) } {
+                        WAIT_OBJECT_0 => break None,
+                        WAIT_TIMEOUT if timeout.is_none_or(|limit| started.elapsed() < limit) => {
+                            continue
+                        }
+                        WAIT_TIMEOUT => break Some(io::ErrorKind::TimedOut.into()),
+                        _ => break Some(io::Error::last_os_error()),
+                    }
+                };
+                if let Some(error) = failure {
+                    // SAFETY: cancel only this operation and wait for completion before
+                    // releasing its OVERLAPPED, event and buffer.
                     unsafe {
                         let _ = CancelIoEx(self.handle, Some(&ov));
                         let mut n = 0;
                         let _ = GetOverlappedResult(self.handle, &ov, &mut n, true);
                     }
-                    return Err(io::ErrorKind::TimedOut.into());
-                }
-                if waited != WAIT_OBJECT_0 {
-                    return Err(io::Error::last_os_error());
+                    return Err(error);
                 }
             }
             let mut n = 0;
@@ -285,31 +375,30 @@ impl Pipe {
     }
 }
 
+struct CancellableWriter<'a> {
+    pipe: &'a Pipe,
+    cancellation: Cancellation<'a>,
+}
+
+impl Write for CancellableWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.pipe.write_inner(buf, Some(self.cancellation))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 impl Read for &Pipe {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read_inner(buf, None)
+        self.read_inner(buf, None, None)
     }
 }
 
 impl Write for &Pipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let handle = self.handle;
-        let len = buf.len().min(u32::MAX as usize);
-        let ptr = buf.as_ptr();
-        let timeout = match self.write_timeout_ms.load(Ordering::Relaxed) {
-            0 => None,
-            ms => Some(Duration::from_millis(ms)),
-        };
-        // SAFETY: buf outlives the operation, which `overlapped` waits for.
-        self.overlapped(timeout, |ov| unsafe {
-            WriteFile(
-                handle,
-                Some(std::slice::from_raw_parts(ptr, len)),
-                None,
-                Some(ov),
-            )
-        })
-        .map(|n| n as usize)
+        self.write_inner(buf, None)
     }
 
     fn flush(&mut self) -> io::Result<()> {

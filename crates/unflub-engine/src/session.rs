@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use std::time::{Duration, Instant};
 
 use crate::frame;
-use crate::pipe::{Listener, Pipe};
+use crate::pipe::{Cancellation, Listener, Pipe};
 use crate::protocol::{FromEngine, ToEngine, PROTOCOL};
 
 /// How long either side waits for the other during the handshake.
@@ -19,8 +19,29 @@ pub fn serve(
     app_exe: &str,
     timeout: Duration,
 ) -> io::Result<(Pipe, String)> {
+    serve_inner(listener, engine_pid, app_exe, timeout, None)
+}
+
+/// Like [serve], but interrupt a pending connection or Hello when the app stops startup.
+pub fn serve_cancellable(
+    listener: Listener,
+    engine_pid: u32,
+    app_exe: &str,
+    timeout: Duration,
+    cancellation: Cancellation<'_>,
+) -> io::Result<(Pipe, String)> {
+    serve_inner(listener, engine_pid, app_exe, timeout, Some(cancellation))
+}
+
+fn serve_inner(
+    listener: Listener,
+    engine_pid: u32,
+    app_exe: &str,
+    timeout: Duration,
+    cancellation: Option<Cancellation<'_>>,
+) -> io::Result<(Pipe, String)> {
     let deadline = Instant::now() + timeout;
-    let pipe = listener.accept(timeout)?;
+    let pipe = listener.accept_with_cancel(timeout, cancellation)?;
     let client = pipe.client_pid()?;
     if client != engine_pid {
         return Err(io::Error::new(
@@ -28,7 +49,7 @@ pub fn serve(
             format!("pipe client is process {client}, not the engine {engine_pid}"),
         ));
     }
-    let version = match read_until(&pipe, deadline)? {
+    let version = match read_until(&pipe, deadline, cancellation)? {
         FromEngine::Hello { protocol, version } if protocol == PROTOCOL => version,
         FromEngine::Hello { protocol, version } => {
             return Err(io::Error::new(
@@ -38,13 +59,14 @@ pub fn serve(
         }
         other => return Err(unexpected(&other)),
     };
-    frame::write(
-        &mut &pipe,
-        &ToEngine::Welcome {
-            protocol: PROTOCOL,
-            app_exe: app_exe.to_string(),
-        },
-    )?;
+    let welcome = ToEngine::Welcome {
+        protocol: PROTOCOL,
+        app_exe: app_exe.to_string(),
+    };
+    match cancellation {
+        Some(cancellation) => frame::write(&mut pipe.cancellable_writer(cancellation), &welcome)?,
+        None => frame::write(&mut &pipe, &welcome)?,
+    }
     Ok((pipe, version))
 }
 
@@ -67,7 +89,7 @@ pub fn join(name: &str, app_pid: u32, timeout: Duration) -> io::Result<(Pipe, St
             version: env!("CARGO_PKG_VERSION").into(),
         },
     )?;
-    match read_until(&pipe, deadline)? {
+    match read_until(&pipe, deadline, None)? {
         ToEngine::Welcome { protocol, app_exe } if protocol == PROTOCOL => Ok((pipe, app_exe)),
         ToEngine::Welcome { protocol, .. } => Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -85,8 +107,16 @@ fn unexpected(message: &impl std::fmt::Debug) -> io::Error {
 }
 
 /// One message, read before `deadline`.
-fn read_until<T: serde::de::DeserializeOwned>(pipe: &Pipe, deadline: Instant) -> io::Result<T> {
-    let mut reader = Deadline { pipe, deadline };
+fn read_until<T: serde::de::DeserializeOwned>(
+    pipe: &Pipe,
+    deadline: Instant,
+    cancellation: Option<Cancellation<'_>>,
+) -> io::Result<T> {
+    let mut reader = Deadline {
+        pipe,
+        deadline,
+        cancellation,
+    };
     let body = frame::read(&mut reader)?.ok_or(io::ErrorKind::UnexpectedEof)?;
     frame::decode(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
@@ -94,6 +124,7 @@ fn read_until<T: serde::de::DeserializeOwned>(pipe: &Pipe, deadline: Instant) ->
 struct Deadline<'a> {
     pipe: &'a Pipe,
     deadline: Instant,
+    cancellation: Option<Cancellation<'a>>,
 }
 
 impl Read for Deadline<'_> {
@@ -102,7 +133,7 @@ impl Read for Deadline<'_> {
         if left.is_zero() {
             return Err(io::ErrorKind::TimedOut.into());
         }
-        self.pipe.read_timeout(buf, left)
+        self.pipe.read_with_cancel(buf, left, self.cancellation)
     }
 }
 
@@ -110,6 +141,7 @@ impl Read for Deadline<'_> {
 mod tests {
     use super::*;
     use crate::pipe::unique_name;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
 
     const T: Duration = Duration::from_secs(5);
@@ -174,6 +206,52 @@ mod tests {
             .unwrap();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         drop(fake.join());
+    }
+
+    fn with_cancellation<T>(test: impl FnOnce(Cancellation<'_>) -> T) -> T {
+        let epoch = AtomicU64::new(0);
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                thread::sleep(Duration::from_millis(100));
+                epoch.store(1, Ordering::Relaxed);
+            });
+            test(Cancellation::new(&epoch, 0))
+        })
+    }
+
+    #[test]
+    fn a_stalled_handshake_is_cancellable_before_and_after_connect() {
+        for connect in [false, true] {
+            let name = unique_name();
+            let listener = Listener::create(&name).unwrap();
+            let _silent_peer = connect.then(|| Pipe::connect(&name).unwrap());
+            let started = Instant::now();
+            let err = with_cancellation(|cancellation| {
+                serve_cancellable(listener, std::process::id(), "unflub.exe", T, cancellation)
+                    .err()
+                    .unwrap()
+            });
+            assert_eq!(err.kind(), io::ErrorKind::ConnectionAborted);
+            assert!(started.elapsed() < Duration::from_secs(2));
+        }
+    }
+
+    #[test]
+    fn initial_settings_write_can_be_cancelled_if_the_peer_does_not_read() {
+        use std::io::Write;
+
+        let name = unique_name();
+        let listener = Listener::create(&name).unwrap();
+        let _silent_peer = Pipe::connect(&name).unwrap();
+        let pipe = listener.accept(T).unwrap();
+        let started = Instant::now();
+        let err = with_cancellation(|cancellation| {
+            pipe.cancellable_writer(cancellation)
+                .write_all(&[0; 256 * 1024])
+                .unwrap_err()
+        });
+        assert_eq!(err.kind(), io::ErrorKind::ConnectionAborted);
+        assert!(started.elapsed() < crate::pipe::WRITE_TIMEOUT);
     }
 
     #[test]
