@@ -228,6 +228,19 @@ pub fn retry_after(answer: Secure, tries: usize) -> Option<std::time::Duration> 
         .map(|ms| std::time::Duration::from_millis(*ms))
 }
 
+/// A retried query's answer. A retry runs while Chromium is still building its accessibility
+/// tree, when the focused element can be the page's document or a pane rather than the field,
+/// and a password field's letters held for #110 would then go to the engine. So a retried "not
+/// a password" counts only from a focused text input (`text_input`: keyboard focus, and an edit
+/// box or a value or text pattern); anything else stays unknown, so secure.
+pub fn accept_retried(answer: Secure, text_input: bool) -> Secure {
+    if answer == Secure::NotSecure && !text_input {
+        Secure::Unknown
+    } else {
+        answer
+    }
+}
+
 /// The UIA worker's answer about one focused element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Secure {
@@ -438,11 +451,13 @@ mod win {
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
-    use windows::Win32::UI::Accessibility::UIA_EditControlTypeId;
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
         IUIAutomationTextPattern, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
         TextUnit_Character, UIA_TextPatternId,
+    };
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationValuePattern, UIA_EditControlTypeId, UIA_ValuePatternId,
     };
     use windows::Win32::UI::WindowsAndMessaging::IsWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -715,6 +730,19 @@ mod win {
         super::password_answer(terminal, is_password, named, seen_before)
     }
 
+    /// Does `element` have keyboard focus and take text (an edit box, or a value or text
+    /// pattern)?
+    unsafe fn focused_text_input(element: &IUIAutomationElement) -> bool {
+        element.CurrentHasKeyboardFocus().is_ok_and(|b| b.as_bool())
+            && (element.CurrentControlType().ok() == Some(UIA_EditControlTypeId)
+                || element
+                    .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                    .is_ok()
+                || element
+                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                    .is_ok())
+    }
+
     fn serve(uia: &IUIAutomation, rx: &Receiver<Request>, slot: &PasswordSlot) {
         let mut seen = SeenPasswords::<Vec<i32>>::default();
         // A newer request that arrived while an answer was being retried.
@@ -772,6 +800,11 @@ mod win {
                     Err(RecvTimeoutError::Timeout) => {
                         tries += 1;
                         (answer, focused) = ask();
+                        // SAFETY: as above, for the element it returned.
+                        let text_input = focused
+                            .as_ref()
+                            .is_ok_and(|e| unsafe { focused_text_input(e) });
+                        answer = super::accept_retried(answer, text_input);
                     }
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
@@ -1080,6 +1113,19 @@ mod tests {
         f.uia_available = false;
         f.refresh(9, FieldKind::Probe, false);
         assert_eq!(f.check(), FieldCheck::Secure, "no UIA: nothing to wait for");
+    }
+
+    /// Review finding 4: a retry clears a field only from a focused text input.
+    #[test]
+    fn retried_answers_clear_only_text_inputs() {
+        assert_eq!(accept_retried(Secure::NotSecure, true), Secure::NotSecure);
+        assert_eq!(
+            accept_retried(Secure::NotSecure, false),
+            Secure::Unknown,
+            "a document or pane: fail closed"
+        );
+        assert_eq!(accept_retried(Secure::Secure, false), Secure::Secure);
+        assert_eq!(accept_retried(Secure::Unknown, true), Secure::Unknown);
     }
 
     /// #117: a timed-out query is asked twice more before the field stays secure.
