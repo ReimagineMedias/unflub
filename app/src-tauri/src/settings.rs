@@ -3,9 +3,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
-    fs, io,
+    fs,
+    io::{self, Read},
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard, PoisonError},
+    time::SystemTime,
 };
 
 /// The settings file's format. Bump it and add a step to `migrations.rs` whenever a change needs
@@ -160,6 +162,7 @@ pub struct Settings {
 }
 
 const DEFAULT_LANGUAGE: &str = "en-US";
+const MAX_SETTINGS_BYTES: u64 = 8 * 1024 * 1024;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -219,6 +222,120 @@ fn fits(text: &str, max: usize, allow: &[char]) -> bool {
 }
 
 impl Settings {
+    /// Apply only the fields supplied by the caller. Older or newer versions of the file are
+    /// handled at startup, not by the live editor.
+    pub fn patch(&mut self, mut patch: Map<String, Value>, from_file: bool) -> io::Result<()> {
+        let mut fields = serde_json::to_value(&*self)?
+            .as_object()
+            .cloned()
+            .ok_or_else(|| io::Error::other("Couldn't read the current settings."))?;
+        let known = serde_json::to_value(Self::default())?;
+        if let Some(version) = patch.remove("schemaVersion") {
+            if !from_file || version.as_u64() != Some(self.schema_version.into()) {
+                return Err(invalid(
+                    "schemaVersion cannot be changed while unflub is running.",
+                ));
+            }
+        }
+        for (key, value) in patch {
+            if known.get(&key).is_none() {
+                if !from_file {
+                    return Err(invalid("Unknown settings key."));
+                }
+            } else {
+                let field = Map::from_iter([(key.clone(), value.clone())]);
+                if serde_json::from_value::<Self>(Value::Object(field)).is_err() {
+                    return Err(invalid(format!("Invalid value for {key}.")));
+                }
+            }
+            fields.insert(key, value);
+        }
+        *self = serde_json::from_value(Value::Object(fields))?;
+        Ok(())
+    }
+
+    fn checked(mut self, previous: &Self, info: crate::AppInfo) -> io::Result<Self> {
+        // Normalise spelling before comparing with the recovery sanitizer. Losing entries or
+        // clamping a value is appropriate for startup recovery, not a live settings change.
+        self.pause_shortcut = crate::controls::normalise_shortcut(&self.pause_shortcut)
+            .ok_or_else(|| {
+                invalid("Invalid pauseShortcut. Use two modifiers and a letter or digit.")
+            })?;
+        self.language = self.language.trim().into();
+        for app in &mut self.excluded_apps {
+            *app = app.trim().to_lowercase();
+        }
+        self.excluded_apps.dedup();
+        let clean = self.clone().sanitised();
+        if clean != self {
+            let Value::Object(input) = serde_json::to_value(&self)? else {
+                return Err(io::Error::other("Couldn't read the settings."));
+            };
+            let clean = serde_json::to_value(clean)?;
+            if let Some((key, _)) = input
+                .iter()
+                .find(|(key, value)| clean.get(*key) != Some(*value))
+            {
+                return Err(invalid(format!(
+                    "Invalid value or limit exceeded for {key}."
+                )));
+            }
+            return Err(invalid("Invalid settings."));
+        }
+        if self.personal_words.iter().any(|word| {
+            word.contains(char::is_whitespace) && !previous.personal_words.contains(word)
+        }) {
+            return Err(invalid("Each personalWords entry must be a single word."));
+        }
+        if self.excluded_apps.iter().any(|app| {
+            (!app.ends_with(".exe")
+                || app.len() == 4
+                || app.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*']))
+                && !previous.excluded_apps.contains(app)
+        }) {
+            return Err(invalid(
+                "Each excludedApps entry must be an executable name ending in .exe.",
+            ));
+        }
+        let policy = info.managed;
+        for (locked, changed, key) in [
+            (
+                policy.disable_updates,
+                self.auto_update != previous.auto_update,
+                "autoUpdate",
+            ),
+            (
+                policy.disable_updates,
+                self.channel != previous.channel,
+                "channel",
+            ),
+            (
+                policy.disable_usage_stats,
+                self.share_usage_stats != previous.share_usage_stats,
+                "shareUsageStats",
+            ),
+            (
+                policy.disable_crash_reports,
+                self.send_crash_reports != previous.send_crash_reports,
+                "sendCrashReports",
+            ),
+        ] {
+            if locked && changed {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("{key} is managed by your organization."),
+                ));
+            }
+        }
+        if !info.login_allowed && self.start_at_login != previous.start_at_login {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Start at login is available in the installed version.",
+            ));
+        }
+        Ok(self)
+    }
+
     /// Clamp values a hand-edited file could break. The lists are capped so the settings always
     /// fit in one message to the engine (`unflub_engine::frame::MAX_FRAME`), whatever was pasted.
     pub fn sanitised(mut self) -> Self {
@@ -279,6 +396,10 @@ impl Settings {
     }
 }
 
+fn invalid(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
 /// A plausible BCP 47 tag (`en`, `en-US`, `sr-Latn-RS`), or the default. The tag goes to the
 /// OS spell checker, which rejects languages it has no dictionary for; the engine then falls
 /// back to the user's UI language.
@@ -329,6 +450,36 @@ struct FileState {
     unreadable: bool,
     /// What `privacy-switches.json` holds, once this run has written it.
     switches: Option<PrivacySwitches>,
+    seen: Option<FileStamp>,
+    invalid_edit: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileStamp {
+    modified: SystemTime,
+    bytes: u64,
+}
+
+fn stamp(path: &Path) -> io::Result<Option<FileStamp>> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(Some(FileStamp {
+            modified: metadata.modified()?,
+            bytes: metadata.len(),
+        })),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+fn read_bounded(path: &Path) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(MAX_SETTINGS_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_SETTINGS_BYTES {
+        return Err(invalid("settings.json exceeds 8 MiB."));
+    }
+    Ok(bytes)
 }
 
 /// The file's bytes. A file another program holds open for a moment (antivirus, a sync client)
@@ -336,8 +487,13 @@ struct FileState {
 fn read_retrying(path: &Path) -> io::Result<Vec<u8>> {
     let mut tries = 0;
     loop {
-        match fs::read(path) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound && tries < 4 => {
+        match read_bounded(path) {
+            Err(e)
+                if !matches!(
+                    e.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::InvalidData
+                ) && tries < 4 =>
+            {
                 tries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
@@ -446,6 +602,7 @@ impl Store {
         let (mut settings, migrated_from, lost) = self.read_file();
         match PrivacySwitches::read(&self.privacy_path) {
             Some(saved) => {
+                self.lock().switches = Some(saved);
                 settings.share_usage_stats &= saved.share_usage_stats;
                 settings.send_crash_reports &= saved.send_crash_reports;
             }
@@ -483,6 +640,7 @@ impl Store {
     /// The settings in the file, the schema version they were migrated from, and which privacy
     /// switches the file holds but couldn't be read (marked `true`).
     fn read_file(&self) -> (Settings, Option<u32>, PrivacySwitches) {
+        self.lock().seen = stamp(&self.path).ok().flatten();
         let none_lost = PrivacySwitches {
             share_usage_stats: false,
             send_crash_reports: false,
@@ -528,7 +686,10 @@ impl Store {
             }
             None => {
                 match self.back_up(|from, to| fs::rename(from, to)) {
-                    Ok(to) => eprintln!("settings: unreadable, moved to {}", to.display()),
+                    Ok(to) => {
+                        self.lock().seen = None;
+                        eprintln!("settings: unreadable, moved to {}", to.display());
+                    }
                     Err(e) => {
                         eprintln!("settings: unreadable, and can't move it aside yet: {e}");
                         self.lock().unreadable = true;
@@ -596,17 +757,124 @@ impl Store {
         current: &Mutex<Settings>,
         change: impl FnOnce(&mut Settings),
     ) -> io::Result<(Settings, Settings)> {
+        self.update_with(current, |_, next| {
+            change(next);
+            Ok(next.clone().sanitised())
+        })
+    }
+
+    pub fn update_checked(
+        &self,
+        current: &Mutex<Settings>,
+        info: crate::AppInfo,
+        change: impl FnOnce(&mut Settings) -> io::Result<()>,
+    ) -> io::Result<(Settings, Settings)> {
+        self.update_with(current, |prev, next| {
+            change(next)?;
+            next.clone().checked(prev, info)
+        })
+    }
+
+    fn update_with(
+        &self,
+        current: &Mutex<Settings>,
+        change: impl FnOnce(&Settings, &mut Settings) -> io::Result<Settings>,
+    ) -> io::Result<(Settings, Settings)> {
         let mut file = self.lock();
         let prev = current.lock().unwrap().clone();
         let mut next = prev.clone();
-        change(&mut next);
-        let next = next.sanitised();
+        let next = change(&prev, &mut next)?;
+        if !file.unreadable && stamp(&self.path)? != file.seen {
+            return Err(io::Error::other(
+                "settings.json has a pending edit. Try again shortly.",
+            ));
+        }
+        if file.invalid_edit {
+            return Err(invalid(
+                "Fix the invalid edit in settings.json before saving.",
+            ));
+        }
         self.write(&mut file, &next)?;
         *current.lock().unwrap() = next.clone();
         Ok((prev, next))
     }
 
+    pub fn reload_pending(&self) -> io::Result<bool> {
+        let file = self.lock();
+        Ok(stamp(&self.path)? != file.seen)
+    }
+
+    /// Accept a stable editor save. A bad edit leaves the last working settings in effect.
+    /// Remember that file revision to report the error once.
+    pub fn reload(
+        &self,
+        current: &Mutex<Settings>,
+        info: crate::AppInfo,
+    ) -> io::Result<Option<(Settings, Settings)>> {
+        let mut file = self.lock();
+        let changed = stamp(&self.path)?;
+        if changed == file.seen {
+            return Ok(None);
+        }
+        let previous_stamp = file.seen;
+        if changed.is_none() {
+            file.seen = None;
+            file.invalid_edit = false;
+            return Err(invalid("settings.json was removed."));
+        }
+        let bytes = read_bounded(&self.path);
+        if stamp(&self.path)? != changed {
+            return Ok(None);
+        }
+        let bytes = match bytes {
+            Err(e) if e.kind() != io::ErrorKind::InvalidData => return Err(e),
+            result => {
+                file.seen = changed;
+                file.invalid_edit = true;
+                result?
+            }
+        };
+        let text =
+            decode(&bytes).ok_or_else(|| invalid("settings.json must use UTF-8 or UTF-16."))?;
+        let patch: Map<String, Value> = serde_json::from_str(&text).map_err(|e| {
+            invalid(format!(
+                "Invalid settings.json at line {}, column {}.",
+                e.line(),
+                e.column()
+            ))
+        })?;
+        let prev = current.lock().unwrap().clone();
+        let mut next = prev.clone();
+        next.patch(patch.clone(), true)?;
+        let next = next.checked(&prev, info)?;
+        if stamp(&self.path)? != changed {
+            return Ok(None);
+        }
+        // A valid patch is saved as the complete settings, so omitted fields survive a restart.
+        let saved_unread = file.unread.clone();
+        let was_unreadable = file.unreadable;
+        file.unreadable = false;
+        file.unread.retain(|key, _| !patch.contains_key(key));
+        if let Err(e) = self.write(&mut file, &next) {
+            file.unread = saved_unread;
+            file.unreadable = was_unreadable;
+            file.seen = previous_stamp;
+            return Err(e);
+        }
+        file.invalid_edit = false;
+        *current.lock().unwrap() = next.clone();
+        Ok(Some((prev, next)))
+    }
+
     fn write(&self, file: &mut FileState, settings: &Settings) -> io::Result<()> {
+        let mut value = serde_json::to_value(settings)?;
+        if let Value::Object(obj) = &mut value {
+            file.restore_unread(obj);
+        }
+        let bytes = serde_json::to_vec_pretty(&value)?;
+        if bytes.len() as u64 > MAX_SETTINGS_BYTES {
+            return Err(invalid("settings.json exceeds 8 MiB."));
+        }
         if file.unreadable {
             // Never replace a file we couldn't read without a copy of it.
             match self.back_up(|from, to| fs::copy(from, to).map(drop)) {
@@ -632,11 +900,10 @@ impl Store {
                 Err(e) => eprintln!("settings: can't save the privacy switches: {e}"),
             }
         }
-        let mut value = serde_json::to_value(settings)?;
-        if let Value::Object(obj) = &mut value {
-            file.restore_unread(obj);
+        let written = crate::files::replace(&self.path, &bytes);
+        if written.is_ok() {
+            file.seen = stamp(&self.path).ok().flatten();
         }
-        let written = crate::files::replace(&self.path, &serde_json::to_vec_pretty(&value)?);
         if written.is_err() && file.switches != before {
             // The settings didn't change, so neither do the switches: the file must keep
             // matching memory, or the next save would write memory's value as a new choice.
@@ -652,6 +919,94 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn installed() -> crate::AppInfo {
+        crate::AppInfo {
+            managed: crate::managed::Managed::default(),
+            install_source: crate::install::InstallSource::Installer,
+            login_allowed: true,
+        }
+    }
+
+    #[test]
+    fn bad_live_values_never_reach_memory_or_disk() {
+        let dir = temp_dir("settings-checked");
+        let store = Store::new(dir.clone());
+        let initial = Settings::default();
+        store.save(&initial).unwrap();
+        let current = Mutex::new(initial.clone());
+        let original = fs::read(&store.path).unwrap();
+        let mut info = installed();
+        info.managed.disable_updates = true;
+        info.managed.disable_usage_stats = true;
+        for (key, value) in [
+            ("enabled", serde_json::json!("false")),
+            (
+                "personalWords",
+                serde_json::json!(["a".repeat(MAX_WORD_CHARS + 1)]),
+            ),
+            ("personalWords", serde_json::json!(["two words"])),
+            ("excludedApps", serde_json::json!(["C:\\bad.exe"])),
+            ("pillDurationMs", serde_json::json!(299)),
+            ("pauseShortcut", serde_json::json!("Ctrl+A")),
+            ("shareUsageStats", serde_json::json!(false)),
+            ("channel", serde_json::json!("beta")),
+            ("schemaVersion", serde_json::json!(SCHEMA_VERSION)),
+            ("enabeld", serde_json::json!(false)),
+        ] {
+            let patch = Map::from_iter([(key.to_owned(), value)]);
+            assert!(
+                store
+                    .update_checked(&current, info, |s| s.patch(patch, false))
+                    .is_err(),
+                "{key}"
+            );
+            assert_eq!(*current.lock().unwrap(), initial);
+            assert_eq!(fs::read(&store.path).unwrap(), original);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reload_keeps_the_last_good_settings_and_does_not_loop_on_its_own_save() {
+        let dir = temp_dir("settings-reload");
+        let store = Store::new(dir.clone());
+        let initial = Settings {
+            personal_words: vec!["unflub".into()],
+            ..Settings::default()
+        };
+        store.save(&initial).unwrap();
+        let current = Mutex::new(initial.clone());
+        let mut info = installed();
+        info.managed.disable_usage_stats = true;
+        for bytes in [
+            br#"{"enabled":"#.as_slice(),
+            br#"{"enabled":false,"shareUsageStats":false}"#,
+            br#"{"enabled":false,"pillDurationMs":6000}"#,
+        ] {
+            crate::files::replace(&store.path, bytes).unwrap();
+            assert!(store.reload_pending().unwrap());
+            assert!(store.update_checked(&current, info, |_| Ok(())).is_err());
+            assert!(store.reload(&current, info).is_err());
+            assert!(!store.reload_pending().unwrap());
+            assert!(store.update_checked(&current, info, |_| Ok(())).is_err());
+            assert_eq!(*current.lock().unwrap(), initial);
+            assert_eq!(fs::read(&store.path).unwrap(), bytes);
+        }
+
+        let edit = br#"{"enabled":false,"excludedApps":[" Code.EXE "],"newerPreference":42}"#;
+        crate::files::replace(&store.path, edit).unwrap();
+        let (before, saved) = store.reload(&current, info).unwrap().unwrap();
+        assert_eq!(before, initial);
+        assert!(!saved.enabled);
+        assert_eq!(saved.excluded_apps, ["code.exe"]);
+        assert_eq!(saved.personal_words, initial.personal_words);
+        assert_eq!(saved.extra["newerPreference"], 42);
+        assert_eq!(*current.lock().unwrap(), saved);
+        assert_eq!(Store::new(dir.clone()).load(), saved);
+        assert!(store.reload(&current, info).unwrap().is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn round_trips_and_fills_missing_fields() {

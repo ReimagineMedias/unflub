@@ -58,6 +58,8 @@ export const en = {
   "general.shortcut.invalid": "Use two or more of Ctrl, Alt and Shift, plus a letter or number. For example, Ctrl+Shift+U.",
   "general.shortcut.failed": "Couldn't save the shortcut. Try again.",
   "general.shortcut.unavailable": "Windows couldn't register this shortcut. Try a different one.",
+  "settings.fileError": "Couldn't apply the settings file edit. {message}",
+  "settings.saveError": "Couldn't save your changes. {message}",
   "general.login": "Start at login",
   "general.login.hint": "Starts quietly in the tray.",
   "general.login.unavailable": "Start at login is available in the installed version.",

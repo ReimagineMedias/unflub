@@ -1,3 +1,7 @@
+#[cfg(windows)]
+mod control_cli;
+#[cfg(windows)]
+pub use control_cli::dispatch as dispatch_cli;
 mod controls;
 mod crash;
 mod diagnostics;
@@ -57,6 +61,7 @@ const PERF_IDLE_ARG: &str = "--perf-idle";
 struct AppState {
     store: Store,
     settings: Mutex<Settings>,
+    settings_file_error: Mutex<Option<String>>,
     toggle: Mutex<Option<CheckMenuItem<tauri::Wry>>>,
     controls: controls::Controls,
     /// Hook, engine and pill. Taken out on quit.
@@ -136,59 +141,64 @@ fn get_settings(app: AppHandle) -> serde_json::Value {
 #[tauri::command]
 fn set_settings(
     app: AppHandle,
-    mut settings: Settings,
+    settings: serde_json::Map<String, serde_json::Value>,
     removed: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
-    forget_removed(
-        &mut state.pending_learned.lock().unwrap(),
-        &removed.unwrap_or_default(),
-    );
-    let added = words_added(
-        &state.settings.lock().unwrap().personal_words,
-        &settings.personal_words,
-        &state.pending_learned.lock().unwrap(),
-    );
+    let removed = removed.unwrap_or_default();
     let mut pending = Vec::new();
-    let saved = update_settings(&app, |current| {
-        // Read while no other change can land, so a word learned and saved since the window's
-        // copy is always in here.
-        pending = state.pending_learned.lock().unwrap().clone();
-        merge_learned(&mut settings.personal_words, &pending);
-        // The window doesn't set the file's schema version.
-        settings.schema_version = current.schema_version;
-        settings.pause_shortcut.clone_from(&current.pause_shortcut);
-        *current = settings;
+    let mut added = 0;
+    let changes_words = settings.contains_key("personalWords");
+    let saved = update_settings_checked(&app, |current| {
+        let before = changes_words.then(|| current.personal_words.clone());
+        current.patch(settings, false)?;
+        if let Some(before) = before {
+            pending = state.pending_learned.lock().unwrap().clone();
+            added = words_added(&before, &current.personal_words, &pending);
+            forget_removed(&mut pending, &removed);
+            merge_learned(&mut current.personal_words, &pending);
+        }
+        Ok(())
     })
     .map_err(|e| e.to_string())?;
     app.state::<Usage>().personal_words_added(added);
     // Saved to disk now; words learned during the save stay pending.
-    state
-        .pending_learned
-        .lock()
-        .unwrap()
-        .retain(|w| !pending.contains(w));
+    if changes_words {
+        let mut learned = state.pending_learned.lock().unwrap();
+        forget_removed(&mut learned, &removed);
+        learned.retain(|w| !pending.contains(w));
+    }
     Ok(for_window(&saved))
 }
 
 #[tauri::command]
 fn reset_settings(app: AppHandle) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
-    state.pending_learned.lock().unwrap().clear();
-    update_settings(&app, |current| {
+    let info = *app.state::<AppInfo>();
+    let saved = update_settings_checked(&app, |current| {
         // A reset is about preferences: the welcome isn't shown again, and usage stats and
         // crash reports stay as the user set them (an off is never turned back on).
+        let mut defaults = Settings::default();
+        if info.managed.disable_updates {
+            defaults.auto_update = current.auto_update;
+            defaults.channel = current.channel;
+        }
+        if !info.login_allowed {
+            defaults.start_at_login = current.start_at_login;
+        }
         *current = Settings {
             schema_version: current.schema_version,
             onboarded: current.onboarded,
             share_usage_stats: current.share_usage_stats,
             send_crash_reports: current.send_crash_reports,
             extra: std::mem::take(&mut current.extra),
-            ..Settings::default()
+            ..defaults
         };
+        Ok(())
     })
-    .map(|s| for_window(&s))
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    state.pending_learned.lock().unwrap().clear();
+    Ok(for_window(&saved))
 }
 
 #[tauri::command]
@@ -205,7 +215,11 @@ fn resume_autocorrect(app: AppHandle) {
 fn set_pause_shortcut(app: AppHandle, binding: String) -> Result<(), &'static str> {
     let normalised = controls::normalise_shortcut(&binding).ok_or("invalid")?;
     let retry = current_settings(&app).pause_shortcut == normalised;
-    update_settings(&app, |s| s.pause_shortcut = normalised).map_err(|_| "save")?;
+    update_settings_checked(&app, |s| {
+        s.pause_shortcut = normalised;
+        Ok(())
+    })
+    .map_err(|_| "save")?;
     #[cfg(windows)]
     if retry {
         queue_ui_refresh(&app, controls::sync_shortcut);
@@ -498,6 +512,33 @@ fn update_settings(
             diagnostics::record(diagnostics::Event::SettingsSaveFailed(e.kind()));
         })?;
 
+    settings_changed(app, &prev, &next);
+    Ok(next)
+}
+
+fn update_settings_checked(
+    app: &AppHandle,
+    change: impl FnOnce(&mut Settings) -> std::io::Result<()>,
+) -> std::io::Result<Settings> {
+    let state = app.state::<AppState>();
+    let (prev, next) = state
+        .store
+        .update_checked(&state.settings, *app.state::<AppInfo>(), change)
+        .inspect_err(|e| diagnostics::record(diagnostics::Event::SettingsSaveFailed(e.kind())))?;
+    settings_changed(app, &prev, &next);
+    Ok(next)
+}
+
+fn settings_changed(app: &AppHandle, prev: &Settings, next: &Settings) {
+    if prev.personal_words != next.personal_words {
+        app.state::<AppState>()
+            .pending_learned
+            .lock()
+            .unwrap()
+            .retain(|word| {
+                !prev.personal_words.contains(word) || next.personal_words.contains(word)
+            });
+    }
     if prev.start_at_login != next.start_at_login {
         sync_autostart(app, next.start_at_login);
     }
@@ -530,7 +571,66 @@ fn update_settings(
         apply_correction(app);
     }
     emit_settings(app, &current_settings(app));
-    Ok(next)
+}
+
+const SETTINGS_FILE_EVENT: &str = "settings-file-error";
+
+#[tauri::command]
+fn settings_file_error(app: AppHandle) -> Option<String> {
+    app.state::<AppState>()
+        .settings_file_error
+        .lock()
+        .unwrap()
+        .clone()
+}
+
+fn report_settings_file_error(app: &AppHandle, error: Option<String>) {
+    let state = app.state::<AppState>();
+    let mut current = state.settings_file_error.lock().unwrap();
+    if *current == error {
+        return;
+    }
+    if let Some(error) = &error {
+        eprintln!("settings: {error}");
+    }
+    current.clone_from(&error);
+    drop(current);
+    let _ = app.emit(SETTINGS_FILE_EVENT, error);
+}
+
+fn watch_settings(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let state = app.state::<AppState>();
+            if state.stopping.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            match state.store.reload_pending() {
+                Ok(true) => queue_ui_refresh(&app, |app| {
+                    let state = app.state::<AppState>();
+                    if state.stopping.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                    match state.store.reload(&state.settings, *app.state::<AppInfo>()) {
+                        Ok(Some((prev, next))) => {
+                            if prev != next {
+                                settings_changed(app, &prev, &next);
+                            }
+                            report_settings_file_error(app, None);
+                        }
+                        Ok(None) => {}
+                        Err(e) => report_settings_file_error(app, Some(e.to_string())),
+                    }
+                }),
+                Ok(false) => {}
+                Err(e) => report_settings_file_error(
+                    &app,
+                    Some(format!("Couldn't check settings.json. {e}")),
+                ),
+            }
+        }
+    });
 }
 
 fn correction_enabled(app: &AppHandle) -> bool {
@@ -1156,13 +1256,14 @@ pub fn run() {
                 settings.stats_keep_words,
             ));
             app.manage(counts.clone());
-            app.manage(Stats::new(local_dir));
+            app.manage(Stats::new(local_dir.clone()));
             app.manage(tour::Tour::default());
             let enabled = settings.enabled;
             let start_at_login = settings.start_at_login;
             app.manage(AppState {
                 store,
                 settings: Mutex::new(settings.clone()),
+                settings_file_error: Mutex::new(None),
                 toggle: Mutex::new(None),
                 controls: controls::Controls::default(),
                 engine: Mutex::new(None),
@@ -1203,6 +1304,13 @@ pub fn run() {
             } else {
                 sync_login_truth(handle);
             }
+            if perf_idle.is_none() {
+                watch_settings(handle.clone());
+                #[cfg(windows)]
+                if let Err(e) = control_cli::start(handle, local_dir) {
+                    eprintln!("settings CLI: {e}");
+                }
+            }
             // The engine may have crashed while unflub was closing.
             if crash::take_engine_report(handle) {
                 app.state::<Usage>().crash();
@@ -1231,6 +1339,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            settings_file_error,
             set_settings,
             reset_settings,
             pause_controls,

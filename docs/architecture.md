@@ -384,6 +384,34 @@ Releases; the only thing unflub posts is usage stats to api.rmgn.net (contract:
 - **Settings file** `settings.json` has a `schemaVersion`; `migrations.rs` upgrades older files
   step by step and keeps a `.v<N>` copy. Fields from a newer unflub are kept and written back.
 
+### Edit settings without opening the window
+
+On Windows, edit `%APPDATA%\ca.rmgn.unflub\settings.json` while unflub is running. It checks
+for saves every two seconds. A valid edit changes only the keys you provide, then unflub
+saves the full settings. An invalid edit stays in the file for you to fix. Unflub keeps the
+last working settings in memory and shows the error in Settings. Leave `schemaVersion` alone.
+
+Use the installed `unflub.exe` from a terminal. In PowerShell, pipe its output to `Out-Host`
+so the shell waits for the tray executable to finish:
+
+```powershell
+unflub.exe --get enabled | Out-Host
+unflub.exe --set enabled=true | Out-Host
+unflub.exe --set pauseShortcut=Ctrl+Shift+U | Out-Host
+unflub.exe --pause 15m | Out-Host
+unflub.exe --resume | Out-Host
+```
+
+Use the camel-case keys from the file. `--set` accepts JSON values or plain text for strings.
+`--get` prints the stored value as JSON. `--pause` without a duration pauses until restart.
+`--pause 15m` and `--pause 1h` resume automatically. `--resume` ends a temporary pause but
+does not turn on a saved `enabled=false` switch. The shortcut starts off. Set `pauseShortcut=`
+to turn it off again.
+
+Commands use a local, same-user Windows named pipe. They do not open a window or start
+autocorrect if the tray app is not running. The CLI, file edits and Settings use the same
+limits and machine policy locks. A rejected command prints an error and exits with code 1.
+
 ### Local diagnostics
 
 On Windows, open `%LOCALAPPDATA%\ca.rmgn.unflub` in File Explorer. The tray app writes
