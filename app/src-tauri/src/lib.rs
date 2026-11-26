@@ -931,20 +931,25 @@ pub fn run() {
             let (crashes, crashed_last_time) =
                 crash::install(&data_dir, &version, info.managed.disable_crash_reports);
             app.manage(crashes);
-            app.manage(Updates::new(config_dir.clone(), local_dir));
-            app.manage(net::Rollout::new(config_dir.clone()));
+            // Before 0.2 these were in the roaming folder with the settings (#120).
+            files::move_machine_state(&config_dir, &local_dir, files::MACHINE_STATE);
+            if data_dir != config_dir {
+                files::move_machine_state(&data_dir, &local_dir, files::MACHINE_STATE);
+            }
+            app.manage(Updates::new(local_dir.clone(), local_dir.clone()));
+            app.manage(net::Rollout::new(local_dir.clone()));
             let store = Store::new(config_dir.clone());
             let first_run = !store.exists();
             let settings = store.load();
             app.manage(Remote::new(
-                data_dir.clone(),
+                local_dir.clone(),
                 info.managed.disable_remote_config,
                 settings.channel.as_str(),
                 app.package_info().version.clone(),
                 app.state::<net::Rollout>().bucket(&version),
             ));
             let usage = Usage::new(
-                data_dir.clone(),
+                local_dir.clone(),
                 info.managed.effective(settings.clone()).share_usage_stats,
             );
             if crashed_last_time {
@@ -958,15 +963,15 @@ pub fn run() {
                     .map_or(0, |d| d.as_secs()),
             );
             app.manage(facts::Facts::load(
-                data_dir.clone(),
+                local_dir.clone(),
                 facts::first_run_day(first_run, &config_dir, today),
             ));
             let counts = Arc::new(undo_counts::UndoCounts::new(
-                &data_dir,
+                &local_dir,
                 settings.stats_keep_words,
             ));
             app.manage(counts.clone());
-            app.manage(Stats::new(data_dir));
+            app.manage(Stats::new(local_dir));
             app.manage(tour::Tour::default());
             let enabled = settings.enabled;
             let start_at_login = settings.start_at_login;

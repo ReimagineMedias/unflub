@@ -339,7 +339,7 @@ count as known words and are never corrected.
 The part of unflub that sees your keys has no network code. CI enforces it. Keys and words are handled in `unflub-engine.exe`, which
 has no network code (see [Two processes](#two-processes)). Nothing typed ever leaves the
 computer: words reach only the engine, the pill and, over the local pipe, the app's Stats page,
-`stats.json` in the app data folder. Updates are static downloads from dl.rmgn.net and GitHub
+`stats.json` in the local app data folder (`%LOCALAPPDATA%`, which never roams). Updates are static downloads from dl.rmgn.net and GitHub
 Releases; the only thing unflub posts is usage stats to api.rmgn.net (contract:
 `D:\Code\rmgn-api\docs\unflub-contract.md`). Nothing carries an identifier.
 

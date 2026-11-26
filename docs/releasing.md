@@ -428,8 +428,8 @@ uninstaller's confirm page; it is off by default.
 | Start at login | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\unflub` | removed | removed for the account that uninstalls only |
 | Task Manager's startup switch | `HKCU\...\Explorer\StartupApproved\Run\unflub` | removed | removed for the account that uninstalls only |
 | Installer bookkeeping | `HKCU\Software\Reimagine Media (RMGN)\unflub` (from the publisher name) | removed | n/a |
-| Settings, last update check | `%APPDATA%\ca.rmgn.unflub` | with the checkbox | kept |
-| Web view cache | `%LOCALAPPDATA%\ca.rmgn.unflub` | with the checkbox | kept |
+| Settings, privacy switches, crash report waiting | `%APPDATA%\ca.rmgn.unflub` (roams) | with the checkbox | kept |
+| Stats, undo counts, usage tally, install facts, rollout bucket, last update check, cached manifest, downloaded update, web view cache | `%LOCALAPPDATA%\ca.rmgn.unflub` (this PC only; moved there from `%APPDATA%` on first start since 0.2) | with the checkbox | kept |
 
 Updates (the updater runs the setup with `/UPDATE`) keep everything. The start-at-login and
 bookkeeping rows come from `app/src-tauri/windows/installer-hooks.nsh` (setup.exe) and
