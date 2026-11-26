@@ -96,9 +96,38 @@ const WM_APP_SENT: u32 = WM_APP + 1;
 /// keys once and stop holding or correcting until a probe comes back (see [`inject::Pipeline`]).
 const STALE_AFTER: Duration = Duration::from_millis(500);
 const STALE_CHECK_MS: u32 = 100;
-/// The first degraded spell probes after this long; each later one waits twice as long.
 const FIRST_DEGRADE_BACKOFF: Duration = Duration::from_secs(30);
 const MAX_DEGRADE_BACKOFF: Duration = Duration::from_secs(30 * 60);
+const DEGRADE_HEALTHY_RESET: Duration = Duration::from_secs(60);
+
+struct DegradeBackoff {
+    next: Duration,
+    recovered_at: Option<Instant>,
+}
+
+impl Default for DegradeBackoff {
+    fn default() -> Self {
+        Self {
+            next: FIRST_DEGRADE_BACKOFF,
+            recovered_at: None,
+        }
+    }
+}
+
+impl DegradeBackoff {
+    fn stalled(&mut self, now: Instant) -> Duration {
+        if self
+            .recovered_at
+            .take()
+            .is_some_and(|at| now.duration_since(at) >= DEGRADE_HEALTHY_RESET)
+        {
+            self.next = FIRST_DEGRADE_BACKOFF;
+        }
+        let wait = self.next;
+        self.next = (wait * 2).min(MAX_DEGRADE_BACKOFF);
+        wait
+    }
+}
 
 /// On stop, how long to wait for the injector to finish what it was handed before the held-back
 /// keys go to the app.
@@ -465,9 +494,7 @@ struct State {
     undo_deadline: Option<Instant>,
     /// While degraded: no probe before this time.
     probe_after: Option<Instant>,
-    /// How long the next degraded spell waits before probing (doubles while it keeps
-    /// happening, so a program that eats only some of our input can't make us flap).
-    degrade_backoff: Duration,
+    degrade_backoff: DegradeBackoff,
     next_probe: u16,
     usage: Option<Arc<UsageCounters>>,
     /// Which keys end a word, for counting words skipped in secure fields.
@@ -576,7 +603,7 @@ fn run(
         held: None,
         undo_deadline: None,
         probe_after: None,
-        degrade_backoff: FIRST_DEGRADE_BACKOFF,
+        degrade_backoff: DegradeBackoff::default(),
         next_probe: 0,
         usage: options.usage.clone(),
         word_ends: WordEnds::default(),
@@ -1264,6 +1291,7 @@ impl State {
             if self.pipeline.degraded() {
                 self.pipeline.recover();
                 self.probe_after = None;
+                self.degrade_backoff.recovered_at = Some(start);
                 let _ = self
                     .events
                     .send(HookEvent::InputInterference { active: false });
@@ -1678,9 +1706,9 @@ impl State {
     /// The stale-batch timer fired.
     fn on_timer(&mut self) {
         self.check_undo_deadline();
-        if self.pipeline.tick(Instant::now(), STALE_AFTER) {
-            let wait = self.degrade_backoff;
-            self.degrade_backoff = (wait * 2).min(MAX_DEGRADE_BACKOFF);
+        let now = Instant::now();
+        if self.pipeline.tick(now, STALE_AFTER) {
+            let wait = self.degrade_backoff.stalled(now);
             self.enter_degraded(wait);
         }
         self.pump();
@@ -1689,6 +1717,7 @@ impl State {
     /// The pipeline gave up waiting for our own events: stop correcting, tell the app, and
     /// probe again after `wait`.
     fn enter_degraded(&mut self, wait: Duration) {
+        self.degrade_backoff.recovered_at = None;
         self.reset();
         // Abandoned batches will never be reported.
         self.batches.clear();
@@ -1884,6 +1913,26 @@ impl State {
 #[cfg(test)]
 mod watchdog_tests {
     use super::*;
+
+    #[test]
+    fn interference_backoff_resets_after_a_healthy_minute() {
+        let mut backoff = DegradeBackoff::default();
+        let start = Instant::now();
+        assert_eq!(backoff.stalled(start), FIRST_DEGRADE_BACKOFF);
+        let mut recovered = start + FIRST_DEGRADE_BACKOFF;
+        for seconds in [60, 120, 240, 480, 960, 1800, 1800] {
+            let stall = recovered + DEGRADE_HEALTHY_RESET - Duration::from_millis(1);
+            backoff.recovered_at = Some(recovered);
+            let wait = backoff.stalled(stall);
+            assert_eq!(wait, Duration::from_secs(seconds));
+            recovered = stall + wait;
+        }
+        backoff.recovered_at = Some(recovered);
+        assert_eq!(
+            backoff.stalled(recovered + DEGRADE_HEALTHY_RESET),
+            FIRST_DEGRADE_BACKOFF
+        );
+    }
 
     #[test]
     fn a_held_backspace_survives_the_round_trip_for_the_panic_hook() {
