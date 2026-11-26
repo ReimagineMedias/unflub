@@ -984,6 +984,18 @@ fn chat_misspellings_are_fixed() {
     assert_eq!(t.type_str("ok thats it "), "ok that's it ");
 }
 
+/// #8: two words typed as one are split.
+#[test]
+fn run_together_words_are_split() {
+    let mut t = Typist::bundled();
+    assert_eq!(
+        t.type_str("ok atleast noone said thankyou, eventhough we donot "),
+        "ok at least no one said thank you, even though we do not "
+    );
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("Atleast "), "At least ");
+}
+
 /// Quality lab: possessives with a known or capitalised base are never "fixed" into plurals or
 /// bare names; a typo in a lowercase base is fixed on the base, keeping the apostrophe typed.
 #[test]
