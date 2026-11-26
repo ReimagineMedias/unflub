@@ -15,6 +15,35 @@ const MAX_COST: f32 = 2.0;
 const MAX_COST_PER_LETTER: f32 = 0.35;
 /// Weight of the bigram estimate when the previous word is known.
 const BIGRAM_WEIGHT: f32 = 0.5;
+/// Extra edit cost for a candidate that drops the plural or past ending the user typed
+/// (`jumsp` to `jump`, `happend` to `happens`): a slip rarely adds a whole inflection.
+const DROPPED_INFLECTION: f32 = 0.5;
+/// From this many typed letters such a candidate is never taken: a long word's inflected form
+/// is often missing from the list (`counterrevolutionarys`), and its stem is the wrong word.
+const NO_DROPPED_INFLECTION_FROM: usize = 12;
+
+/// Whether `cand` loses an `-s` or `-ed` that `typed` has. Plural: the candidate doesn't end in
+/// `s` but the typed word does (`returs`, not `-ss`), or has it second to last and the
+/// candidate is shorter (`jumsp`).
+/// Past: typed ends in `ed` (or a consonant and `d`, five letters or more: `happend`) and the
+/// candidate doesn't end in `d`.
+fn drops_inflection(typed: &[u8], cand: &[u8]) -> bool {
+    let n = typed.len();
+    if n < 4 {
+        return false;
+    }
+    let tail = &typed[n - 2..];
+    let plural = cand.last() != Some(&b's')
+        && match tail {
+            [b's', b's'] => false,
+            [_, b's'] => true,
+            [b's', _] => cand.len() < n,
+            _ => false,
+        };
+    let consonant_d = n >= 5 && tail[1] == b'd' && !b"aeiouy".contains(&tail[0]);
+    let past = (tail == b"ed" || consonant_d) && cand.last() != Some(&b'd');
+    plural || past
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Tuning {
@@ -124,9 +153,15 @@ impl Ranker {
             if room <= 0.0 {
                 continue;
             }
-            let Some(cost) = distance::weighted(&self.adj, typed, word, room) else {
+            let Some(mut cost) = distance::weighted(&self.adj, typed, word, room) else {
                 continue;
             };
+            if drops_inflection(typed, word) {
+                if typed.len() >= NO_DROPPED_INFLECTION_FROM {
+                    continue;
+                }
+                cost += DROPPED_INFLECTION;
+            }
             let score = lp - weight * cost;
             match best {
                 Some((_, b)) if score <= b => second = second.max(score),
@@ -141,5 +176,28 @@ impl Ranker {
         let (id, score) = best?;
         let margin = score - second.max(rival);
         Some(Choice { id, margin })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drops_inflection;
+
+    #[test]
+    fn dropped_inflections() {
+        let drops = |t: &str, c: &str| drops_inflection(t.as_bytes(), c.as_bytes());
+        assert!(drops("jumsp", "jump"));
+        assert!(drops("returs", "return"));
+        assert!(drops("happend", "happens"));
+        assert!(drops("happend", "happen"));
+        assert!(!drops("jumsp", "jumps"));
+        assert!(!drops("happend", "happened"));
+        assert!(
+            !drops("cast", "cart"),
+            "an s second to last needs a shorter candidate"
+        );
+        assert!(!drops("classs", "class"), "a doubled s");
+        assert!(!drops("its", "it"), "too short to tell");
+        assert!(!drops("alredad", "already"), "a vowel before the d");
     }
 }

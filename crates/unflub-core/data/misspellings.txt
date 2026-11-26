@@ -12,3 +12,30 @@ theres there's
 hes he's
 shes she's
 alot a lot
+
+# Typos where a much more frequent word one or two edits away wins the ranking (#64).
+calender calendar
+collegue colleague
+definatly definitely
+everytime every time
+florescent fluorescent
+fourty forty
+happend happened
+helo hello
+mysterius mysterious
+naturaly naturally
+neice niece
+ommision omission
+peice piece
+personell personnel
+preceed precede
+probly probably
+rember remember
+seige siege
+sieze seize
+succeded succeeded
+tounge tongue
+wierd weird
+wnat want
+yatch yacht
+waht what
