@@ -67,9 +67,37 @@ impl Gate {
 /// anything but a letter while still pending (a boundary, Backspace, a caret move): they are
 /// forgotten and the field is treated as secure, as before. Password text never reaches the
 /// corrector either way.
-#[derive(Debug, Default)]
+///
+/// Letters that may belong to a password are overwritten before they are let go (the buffer
+/// never grows past [`PendingWord::MAX`], so no copy is left behind by a reallocation either).
+#[derive(Debug)]
 pub struct PendingWord {
     letters: Vec<char>,
+}
+
+impl Default for PendingWord {
+    fn default() -> Self {
+        Self {
+            letters: Vec::with_capacity(Self::MAX),
+        }
+    }
+}
+
+impl Drop for PendingWord {
+    fn drop(&mut self) {
+        wipe(&mut self.letters);
+    }
+}
+
+/// Overwrite `letters` with NULs, in a way the compiler can't drop as a dead store, then empty
+/// it. The allocation is kept.
+pub fn wipe(letters: &mut Vec<char>) {
+    for c in letters.iter_mut() {
+        // SAFETY: `c` is a valid, aligned, exclusive reference.
+        unsafe { std::ptr::write_volatile(c, '\0') };
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    letters.clear();
 }
 
 impl PendingWord {
@@ -86,9 +114,14 @@ impl PendingWord {
                 self.letters.push(c);
                 None
             }
-            (FieldCheck::Cleared, _) => Some(std::mem::take(&mut self.letters)),
+            (FieldCheck::Cleared, _) => {
+                // Cleared: not a password, so the copy for the corrector needs no wiping.
+                let letters = self.letters.clone();
+                wipe(&mut self.letters);
+                Some(letters)
+            }
             _ => {
-                self.letters.clear();
+                wipe(&mut self.letters);
                 Some(Vec::new())
             }
         }
@@ -96,7 +129,7 @@ impl PendingWord {
 
     /// Forget kept letters (caret moved, focus changed, IME, excluded app).
     pub fn clear(&mut self) {
-        self.letters.clear();
+        wipe(&mut self.letters);
     }
 }
 
@@ -451,6 +484,26 @@ mod tests {
         w.on_key(Key::Char('a'), Pending);
         w.clear();
         assert_eq!(w.on_key(Key::Char('b'), Cleared), Some(vec![]));
+    }
+
+    /// Review finding 6: held letters are overwritten, not just forgotten.
+    #[test]
+    fn wiped_letters_leave_nothing_behind() {
+        let mut letters = Vec::with_capacity(8);
+        letters.extend("hunter2".chars());
+        let n = letters.len();
+        wipe(&mut letters);
+        assert!(letters.is_empty());
+        assert_eq!(letters.capacity(), 8, "same buffer");
+        let old: Vec<char> = letters.spare_capacity_mut()[..n]
+            .iter()
+            // SAFETY: these slots held chars and were overwritten with NULs, which are chars.
+            .map(|c| unsafe { c.assume_init_read() })
+            .collect();
+        assert_eq!(old, vec!['\0'; n]);
+
+        let w = PendingWord::default();
+        assert_eq!(w.letters.capacity(), PendingWord::MAX, "never reallocates");
     }
 
     #[test]
