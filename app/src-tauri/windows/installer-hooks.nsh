@@ -16,6 +16,10 @@
     FileOpen $R1 "$INSTDIR\install-source" w
     FileWrite $R1 $R0
     FileClose $R1
+  ${ElseIf} $UpdateMode <> 1
+    FileOpen $R1 "$INSTDIR\install-source" w
+    FileWrite $R1 "installer"
+    FileClose $R1
   ${ElseIfNot} ${FileExists} "$INSTDIR\install-source"
     FileOpen $R1 "$INSTDIR\install-source" w
     FileWrite $R1 "installer"
