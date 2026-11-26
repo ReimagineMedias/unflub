@@ -22,9 +22,11 @@
     ],
     "uninstaller": {
         "script": [
-            "# Start at login is a per-user entry the app writes itself, so Scoop doesn't know about it.",
-            "Remove-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'unflub' -ErrorAction SilentlyContinue",
-            "Remove-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run' -Name 'unflub' -ErrorAction SilentlyContinue"
+            "# Scoop also calls the old uninstaller script during update. Only uninstall removes startup entries.",
+            "if ($cmd -eq 'uninstall') {",
+                "Remove-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'unflub' -ErrorAction SilentlyContinue",
+                "Remove-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run' -Name 'unflub' -ErrorAction SilentlyContinue",
+            "}"
         ]
     },
     "shortcuts": [
