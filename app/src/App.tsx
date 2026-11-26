@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readableAccent } from "./accentContrast";
 import {
   answerCrashReport, appInfo, appVersion, checkForUpdates, crashReportPending, dismissMessage, getSettings, inTauri,
   inputInterference, onInputInterference,
@@ -167,14 +168,21 @@ export default function App() {
   }, [page]);
 
   const mode = useResolvedMode(settings?.appearance);
+  const theme = settings?.theme;
   useEffect(() => {
+    if (!theme) return;
     const root = document.documentElement;
-    if (!settings) return;
-    root.dataset.theme = settings.theme;
+    root.dataset.theme = theme;
     root.dataset.mode = mode;
     if (inTauri) root.dataset.tauri = "";
-    if (look.accent) root.style.setProperty("--os-accent", look.accent);
-  }, [settings, mode, look.accent]);
+    if (theme === "system") {
+      const dark = mode === "dark";
+      const accent = look.accent ?? (dark ? "#60cdff" : "#005fb8");
+      root.style.setProperty("--os-accent", accent);
+      root.style.setProperty("--os-action", readableAccent(accent, dark ? "#000000" : "#ffffff", dark ? 255 : 0, 5));
+      root.style.setProperty("--os-link", readableAccent(accent, dark ? "#606060" : "#9e9e9e", dark ? 255 : 0));
+    }
+  }, [theme, mode, look.accent]);
 
   // Optimistic local update, debounced persist so sliders don't write on every step.
   const update = useCallback((patch: Partial<Settings>) => {
