@@ -295,6 +295,72 @@ pub fn releases_unanswered_hold(vk: u16, swallowed: bool, held: bool) -> bool {
     held && vk == BACK && !swallowed
 }
 
+/// The element a focus WinEvent names: its window, object id and child id. Chromium and other
+/// apps that draw their own controls name every focused element by child id in one window.
+pub type FocusId = (isize, i32, i32);
+
+/// What to do with a held first Backspace now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldVerdict {
+    /// Send it on, to the element that still has focus.
+    Release,
+    /// Focus just left the element it was typed in: it can't undo anything now (end the
+    /// "Undo?" prompt), but keep it in case focus comes back before the next key.
+    Away,
+    /// Keep waiting: it is away, and nothing changed that.
+    Keep,
+    /// Throw it away: sending it would delete a character somewhere the user didn't type it.
+    Drop,
+}
+
+/// Where a held first Backspace was typed, and whether focus is still there (#66).
+///
+/// Any focus or foreground event used to drop it, losing the key to a toast that flashed by,
+/// an autocomplete list or a focus event fired again for the same field. Now an event naming
+/// the element it was typed in sends it on there, and an event naming anything else only puts
+/// it aside: focus coming back to that element sends it then, and the next key or click
+/// while focus is elsewhere drops it, as before. A click always drops it, since it may have
+/// moved the caret. Nothing ever sends it to an element it wasn't typed in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HeldFocus {
+    /// The focused element when it was held, if a focus event named one.
+    at: Option<FocusId>,
+    away: bool,
+}
+
+impl HeldFocus {
+    /// A Backspace is held while `at` has focus (`None`: not known).
+    pub fn new(at: Option<FocusId>) -> Self {
+        Self { at, away: false }
+    }
+
+    /// Focus left the element it was typed in: it is kept aside, not sent.
+    pub fn away(&self) -> bool {
+        self.away
+    }
+
+    /// A focus event naming `now` (`None`: a foreground switch, which names no element).
+    pub fn on_focus(&mut self, now: Option<FocusId>) -> HeldVerdict {
+        if self.at.is_some() && now == self.at {
+            HeldVerdict::Release
+        } else if std::mem::replace(&mut self.away, true) {
+            HeldVerdict::Keep
+        } else {
+            HeldVerdict::Away
+        }
+    }
+
+    /// A key-down that would send it on (anything but a plain second Backspace, while focus is
+    /// still where it was typed).
+    pub fn on_key(&self) -> HeldVerdict {
+        if self.away {
+            HeldVerdict::Drop
+        } else {
+            HeldVerdict::Release
+        }
+    }
+}
+
 /// May a first Backspace be held for a double-Backspace undo? Only one straight from the user:
 /// a replayed Backspace was typed while an injection was in flight, and holding it would put
 /// it behind keys already on their way to the app.
@@ -411,6 +477,55 @@ mod tests {
         }
         assert!(may_hold_backspace(false));
         assert!(!may_hold_backspace(true));
+    }
+
+    /// #66: every order of focus events, keys and clicks while a first Backspace is held.
+    #[test]
+    fn a_held_backspace_follows_focus() {
+        use HeldVerdict::*;
+        let field: FocusId = (0x100, -4, 7);
+        let popup: FocusId = (0x200, -4, 0);
+        let list: FocusId = (0x100, -4, 9);
+
+        // The same element fires focus again: sent there now.
+        let mut h = HeldFocus::new(Some(field));
+        assert_eq!(h.on_focus(Some(field)), Release);
+
+        // A toast or popup takes focus and gives it back before the next key: sent on return.
+        let mut h = HeldFocus::new(Some(field));
+        assert_eq!(h.on_focus(Some(popup)), Away);
+        assert!(h.away());
+        assert_eq!(h.on_focus(None), Keep, "the foreground switch back");
+        assert_eq!(h.on_focus(Some(field)), Release);
+
+        // Another element in the same window (an autocomplete list) keeps focus: the next key
+        // drops it.
+        let mut h = HeldFocus::new(Some(field));
+        assert_eq!(h.on_focus(Some(list)), Away);
+        assert_eq!(h.on_key(), Drop);
+
+        // Focus moves on and on: still kept aside, never sent elsewhere.
+        let mut h = HeldFocus::new(Some(field));
+        assert_eq!(h.on_focus(Some(popup)), Away);
+        assert_eq!(h.on_focus(Some(list)), Keep);
+        assert_eq!(h.on_focus(None), Keep);
+        assert_eq!(h.on_key(), Drop);
+
+        // A foreground switch names no element: away until the element itself comes back.
+        let mut h = HeldFocus::new(Some(field));
+        assert_eq!(h.on_focus(None), Away);
+        assert_eq!(h.on_focus(Some(field)), Release);
+
+        // Where it was typed isn't known: any focus event puts it aside for good.
+        let mut h = HeldFocus::new(None);
+        assert_eq!(h.on_focus(None), Away);
+        assert_eq!(h.on_focus(Some(field)), Keep);
+        assert_eq!(h.on_key(), Drop);
+
+        // No focus event: the next key sends it on as before (a click drops it, as before).
+        let h = HeldFocus::new(Some(field));
+        assert!(!h.away());
+        assert_eq!(h.on_key(), Release);
     }
 
     /// #39: a second Backspace that went to the app instead of undoing takes the held one with

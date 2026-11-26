@@ -74,7 +74,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::focus::{self, FieldCheck, FocusState, PasswordProbe};
 use crate::inject::{self, Finished, Input, Origin, Pipeline, RawEvent, SendOutcome, Tag};
 use crate::policy::{
-    injection_veto, is_ime_language, veto_modifiers, Gate, GateDecision, PendingWord,
+    injection_veto, is_ime_language, veto_modifiers, FocusId, Gate, GateDecision, HeldFocus,
+    HeldVerdict, PendingWord,
 };
 use crate::pump::{PumpAck, PumpHealth, PumpProbe};
 use crate::stats::{LatencyHistogram, MinuteMarks, UsageCounters};
@@ -512,6 +513,11 @@ struct State {
     word_start: Option<(u64, u64)>,
     /// A first Backspace held for a double-Backspace undo ([`Action::HoldBackspace`]).
     held: Option<RawEvent>,
+    /// Where `held` was typed, and whether focus is still there (#66).
+    held_focus: HeldFocus,
+    /// The element the last focus event named (`None` after a foreground switch, until the
+    /// next focus event names one).
+    last_focus: Option<FocusId>,
     /// When the last fix stops being undoable by a double Backspace.
     undo_deadline: Option<Instant>,
     /// While degraded: no probe before this time.
@@ -625,6 +631,8 @@ fn run(
         broken: false,
         word_start: None,
         held: None,
+        held_focus: HeldFocus::default(),
+        last_focus: None,
         undo_deadline: None,
         probe_after: None,
         degrade_backoff: DegradeBackoff::default(),
@@ -1211,6 +1219,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
         )
     {
         with_state(|s| {
+            // A held Backspace is dropped: the click may have moved the caret.
             s.reset();
             // The click may have focused another field inside the same window.
             s.refresh_focus(None, INPUT_RECHECK_DELAY);
@@ -1224,7 +1233,7 @@ unsafe extern "system" fn win_event_proc(
     event: u32,
     hwnd: HWND,
     id_object: i32,
-    _id_child: i32,
+    id_child: i32,
     _event_thread: u32,
     _event_time: u32,
 ) {
@@ -1243,9 +1252,10 @@ unsafe extern "system" fn win_event_proc(
         // switch still does.
         excuse(tick_now());
     }
+    let element = (event == EVENT_OBJECT_FOCUS).then_some((hwnd.0 as isize, id_object, id_child));
     with_state(|s| {
         // Reset first: the word-start question asked by the refresh belongs to this reset.
-        s.reset();
+        s.on_focus_event(element);
         s.refresh_focus(target, Duration::ZERO);
     });
 }
@@ -1435,14 +1445,19 @@ impl State {
         // owe (#39), and the held Backspace goes out ahead of it.
         if !ev.up
             && self.held.is_some()
-            && crate::policy::releases_held_backspace(
-                vk,
-                async_down || (!replayed && self.pipeline.awaits_up(vk)),
-                !replayed && modifier_down(),
-                replayed,
-            )
+            && (self.held_focus.away()
+                || crate::policy::releases_held_backspace(
+                    vk,
+                    async_down || (!replayed && self.pipeline.awaits_up(vk)),
+                    !replayed && modifier_down(),
+                    replayed,
+                ))
         {
-            self.release_held();
+            // One put aside when focus left its element is dropped: focus is elsewhere (#66).
+            match self.held_focus.on_key() {
+                HeldVerdict::Release => self.release_held(),
+                _ => self.drop_held(),
+            }
         }
         let swallow = match self.pipeline.on_input(ev, origin, async_down) {
             Input::Queued | Input::Consumed => true,
@@ -1746,6 +1761,7 @@ impl State {
         }
         self.pipeline.hold(ev);
         self.set_held(Some(ev));
+        self.held_focus = HeldFocus::new(self.last_focus);
         // Held until answered: no timer may end it (see `check_undo_deadline`).
         self.undo_deadline = None;
         let _ = self.events.send(HookEvent::UndoPending { replacement });
@@ -1755,27 +1771,69 @@ impl State {
     /// Set or clear the held Backspace (kept in [`HELD_FOR_CRASH`] too). Returns the old one.
     fn set_held(&mut self, held: Option<RawEvent>) -> Option<RawEvent> {
         HELD_FOR_CRASH.store(held.map_or(0, encode_held), Ordering::Release);
+        if held.is_none() {
+            self.held_focus = HeldFocus::default();
+        }
         std::mem::replace(&mut self.held, held)
+    }
+
+    /// Clear the held Backspace. Returns it, and whether it was still asking "Undo?" (not put
+    /// aside by a focus change, which already ended the prompt).
+    fn take_held(&mut self) -> Option<(RawEvent, bool)> {
+        let prompting = !self.held_focus.away();
+        self.set_held(None).map(|held| (held, prompting))
     }
 
     /// Send a held Backspace on, ahead of anything typed after it, and close the undo window.
     fn release_held(&mut self) {
-        if let Some(held) = self.set_held(None) {
-            self.corrector.end_undo_window();
+        if let Some((held, prompting)) = self.take_held() {
             self.pipeline.release_held(held);
-            let _ = self.events.send(HookEvent::UndoDeclined);
+            if prompting {
+                self.corrector.end_undo_window();
+                let _ = self.events.send(HookEvent::UndoDeclined);
+            }
         }
         self.undo_deadline = None;
     }
 
-    /// A click or focus change: a held Backspace was meant for the old caret, so it is dropped
-    /// (sending it now would delete a character wherever the click put the caret).
+    /// A click, or a key while focus is on another element: a held Backspace was meant for the
+    /// old caret, so it is dropped (sending it now would delete a character wherever the click
+    /// or the focus change put the caret).
     fn drop_held(&mut self) {
-        if self.set_held(None).is_some() {
-            self.corrector.end_undo_window();
-            let _ = self.events.send(HookEvent::UndoDeclined);
+        if let Some((_, prompting)) = self.take_held() {
+            if prompting {
+                self.corrector.end_undo_window();
+                let _ = self.events.send(HookEvent::UndoDeclined);
+            }
         }
         self.undo_deadline = None;
+    }
+
+    /// A focus or foreground event (`element`: what a focus event names). A held Backspace is
+    /// sent on if focus is still on the element it was typed in, else put aside until focus
+    /// comes back or the next key or click drops it (#66). Either way it can't undo any more:
+    /// the word is forgotten.
+    fn on_focus_event(&mut self, element: Option<FocusId>) {
+        self.last_focus = element;
+        if self.held.is_some() {
+            match self.held_focus.on_focus(element) {
+                HeldVerdict::Release => {
+                    self.release_held();
+                    // Not inside a keyboard callback: hand the replay over now.
+                    self.pump();
+                }
+                HeldVerdict::Away => {
+                    // Never sent from here on unless focus comes back, not by a crash either.
+                    HELD_FOR_CRASH.store(0, Ordering::Release);
+                    self.corrector.end_undo_window();
+                    self.undo_deadline = None;
+                    let _ = self.events.send(HookEvent::UndoDeclined);
+                }
+                HeldVerdict::Keep => {}
+                HeldVerdict::Drop => self.drop_held(),
+            }
+        }
+        self.reset_word();
     }
 
     /// The time to start a double-Backspace undo ran out (the fix's pill is gone): the next
@@ -1806,7 +1864,8 @@ impl State {
             }
         }
         let mut owed = Vec::new();
-        if let Some(held) = self.set_held(None) {
+        // One put aside by a focus change (#66) belongs to an element that lost focus.
+        if let Some((held, true)) = self.take_held() {
             owed.extend([held, RawEvent { up: true, ..held }]);
         }
         owed.extend(self.pipeline.drain());
@@ -1997,10 +2056,15 @@ impl State {
         let _ = self.call(Key::Reset);
     }
 
-    /// Caret moved, focus changed, or we lost track: forget the word and start fresh.
+    /// A click, or we lost track: drop a held Backspace, forget the word and start fresh.
     fn reset(&mut self) {
-        self.translator.forget_selection();
         self.drop_held();
+        self.reset_word();
+    }
+
+    /// Caret moved or focus changed: forget the word and start fresh.
+    fn reset_word(&mut self) {
+        self.translator.forget_selection();
         self.pending_word.clear();
         self.gate.on_reset();
         self.reset_corrector();
