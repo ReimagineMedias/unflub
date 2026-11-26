@@ -93,6 +93,10 @@ impl Ranker {
         }
     }
 
+    pub(crate) fn set_adjacency(&mut self, adjacency: Adjacency) {
+        self.adj = adjacency;
+    }
+
     fn context_log_p(dict: &Dictionary, id: u32, prev: Option<u32>) -> f32 {
         match prev {
             None => dict.log_p(id),

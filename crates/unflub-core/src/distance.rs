@@ -13,6 +13,7 @@ const INF: f32 = 1.0e9;
 pub const EDIT_BASE: f32 = 0.5;
 pub const SUB: f32 = 1.0;
 pub const SUB_NEIGHBOUR: f32 = 0.5;
+const SUB_LAYOUT_SWAP: f32 = 0.25;
 pub const SUB_VOWEL: f32 = 0.5;
 pub const TRANSPOSE: f32 = 0.6;
 pub const INSERT: f32 = 0.5;
@@ -31,7 +32,9 @@ fn is_vowel(c: u8) -> bool {
 
 fn sub_cost(adj: &Adjacency, a: u8, b: u8) -> f32 {
     EDIT_BASE
-        + if adj.adjacent(a, b) {
+        + if adj.reciprocal_swap(a, b) {
+            SUB_LAYOUT_SWAP
+        } else if adj.adjacent(a, b) {
             SUB_NEIGHBOUR
         } else if is_vowel(a) && is_vowel(b) {
             SUB_VOWEL
@@ -112,7 +115,7 @@ pub fn weighted(adj: &Adjacency, typed: &[u8], cand: &[u8], limit: f32) -> Optio
                 0.0
             } else {
                 let cost = sub_cost(adj, a, b);
-                let first = i == 1 && j == 1 && cost != EDIT_BASE + SUB_NEIGHBOUR;
+                let first = i == 1 && j == 1 && cost > EDIT_BASE + SUB_NEIGHBOUR;
                 cost + if first { FIRST_LETTER } else { 0.0 }
             };
             let mut v = d[at(i - 1, j - 1)] + sub;
@@ -142,10 +145,10 @@ pub fn weighted(adj: &Adjacency, typed: &[u8], cand: &[u8], limit: f32) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{Adjacency, QWERTY};
+    use crate::layout::Adjacency;
 
     fn cost(a: &str, b: &str) -> f32 {
-        let adj = Adjacency::new(&QWERTY);
+        let adj = Adjacency::default();
         weighted(&adj, a.as_bytes(), b.as_bytes(), 10.0).unwrap()
     }
 
@@ -165,13 +168,13 @@ mod tests {
 
     #[test]
     fn cutoff_keeps_transpositions() {
-        let adj = Adjacency::new(&QWERTY);
+        let adj = Adjacency::default();
         assert!(weighted(&adj, b"hte", b"the", EDIT_BASE + TRANSPOSE).is_some());
     }
 
     #[test]
     fn limit_cuts_off() {
-        let adj = Adjacency::new(&QWERTY);
+        let adj = Adjacency::default();
         assert!(weighted(&adj, b"abcdef", b"uvwxyz", 1.5).is_none());
     }
 }

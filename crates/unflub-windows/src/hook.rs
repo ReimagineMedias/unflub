@@ -40,7 +40,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use unflub_core::{Action, Context, Key, Replacement, WordEnds};
+use unflub_core::{Action, Adjacency, Context, Key, Replacement, WordEnds};
 use windows::core::w;
 use windows::Win32::Foundation::{HANDLE, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -54,9 +54,10 @@ use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, GetLastInputInfo, ToUnicodeEx, HKL,
-    LASTINPUTINFO, VK_CAPITAL, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU,
-    VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB,
+    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, GetLastInputInfo, MapVirtualKeyExW,
+    ToUnicodeEx, VkKeyScanExW, HKL, LASTINPUTINFO, MAPVK_VK_TO_VSC, VK_CAPITAL, VK_CONTROL,
+    VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU,
+    VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
@@ -471,6 +472,7 @@ fn injector(jobs: Receiver<Job>, done: Sender<JobDone>, hook_thread: u32) {
 struct State {
     corrector: Box<dyn Corrector>,
     translator: KeyTranslator,
+    rank_layout: Option<HKL>,
     focus: FocusState,
     probe: Option<PasswordProbe>,
     excluded: Vec<String>,
@@ -582,6 +584,7 @@ fn run(
     let mut state = State {
         corrector,
         translator: KeyTranslator::new(),
+        rank_layout: None,
         focus,
         probe,
         excluded: options
@@ -1196,6 +1199,44 @@ fn foreground_layout() -> HKL {
     unsafe { GetKeyboardLayout(GetWindowThreadProcessId(focused, None)) }
 }
 
+/// Reverse-map printable ASCII through the focused thread's layout without touching the
+/// keyboard or dead-key state. Positions use the main typing area's set-1 scan codes.
+fn keyboard_adjacency(layout: HKL) -> Adjacency {
+    if layout.0.is_null() {
+        return Adjacency::default();
+    }
+    let positions = (b'a'..=b'z')
+        .chain(b"1234567890-=[];',./".iter().copied())
+        .filter_map(|ch| {
+            // SAFETY: mapping queries for the current input locale, no state changes.
+            let key = unsafe { VkKeyScanExW(u16::from(ch), layout) };
+            if !matches!(key >> 8, 0 | 1) {
+                return None; // Unmapped or requires a modifier other than Shift.
+            }
+            let scan = unsafe { MapVirtualKeyExW(u32::from(key as u8), MAPVK_VK_TO_VSC, layout) };
+            let (row, col) = match scan {
+                0x02..=0x0d => (0, scan as i8 - 0x02),
+                0x10..=0x1b => (1, scan as i8 - 0x10),
+                0x1e..=0x29 => (2, scan as i8 - 0x1e),
+                0x2c..=0x35 => (3, scan as i8 - 0x2c),
+                0x56 => (3, -1), // ISO key between left Shift and the first letter.
+                _ => return None,
+            };
+            Some((ch, row, col))
+        })
+        .collect::<Vec<_>>();
+    if positions
+        .iter()
+        .take_while(|(ch, _, _)| ch.is_ascii_lowercase())
+        .count()
+        == 26
+    {
+        Adjacency::from_key_positions(positions)
+    } else {
+        Adjacency::default()
+    }
+}
+
 /// Ctrl, Alt, Shift or Win held: a Backspace with one of these isn't a plain second Backspace.
 fn modifier_down() -> bool {
     // SAFETY: trivial queries.
@@ -1373,6 +1414,10 @@ impl State {
         let swallow = match key {
             Some(key) => {
                 let ime = is_ime_language((layout.0 as usize & 0xFFFF) as u16);
+                if !ime && self.rank_layout != Some(layout) {
+                    self.corrector.set_adjacency(keyboard_adjacency(layout));
+                    self.rank_layout = Some(layout);
+                }
                 self.handle_key(key, ev, mods, repeat, replayed, ime, start)
             }
             None => false,
