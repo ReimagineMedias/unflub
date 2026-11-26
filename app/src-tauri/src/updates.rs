@@ -57,6 +57,7 @@ const DAY_SECS: u64 = 24 * HOUR_SECS;
 const FIRST_CHECK_DELAY: Duration = Duration::from_secs(2 * 60);
 /// How often the background thread wakes to see whether a check is due.
 const POLL: Duration = Duration::from_secs(10 * 60);
+const MAX_RETRY_SECS: u64 = 40 * 60;
 /// Spread daily checks so installs don't all arrive at the same minute.
 const MAX_JITTER: Duration = Duration::from_secs(90 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -128,6 +129,7 @@ pub struct Updates {
     busy: AtomicBool,
     /// Holds the time of the last check, so restarts don't check more than once an hour.
     stamp: PathBuf,
+    retry: Mutex<Option<Retry>>,
     /// Downloaded updates.
     cache_dir: PathBuf,
     /// The last version a check offered this run, so each counts once in the usage stats.
@@ -142,6 +144,7 @@ impl Updates {
             downloaded: Mutex::new(None),
             busy: AtomicBool::new(false),
             stamp: config_dir.join("last-update-check"),
+            retry: Mutex::new(None),
             cache_dir: local_data_dir.join("updates"),
             offered: Mutex::new(None),
         }
@@ -169,6 +172,13 @@ impl Updates {
         let _ = fs::write(&self.stamp, now_secs().to_string());
     }
 
+    fn background_due(&self, now: u64, interval: u64) -> bool {
+        match *self.retry.lock().unwrap() {
+            Some(retry) => waited(Some(retry.failed_at), now, retry.delay),
+            None => waited(self.last_check(), now, interval),
+        }
+    }
+
     fn pending_path(&self) -> PathBuf {
         self.cache_dir.join("pending.json")
     }
@@ -177,6 +187,23 @@ impl Updates {
     fn discard_download(&self) {
         *self.downloaded.lock().unwrap() = None;
         let _ = fs::remove_dir_all(&self.cache_dir);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Retry {
+    failed_at: u64,
+    delay: u64,
+}
+
+impl Retry {
+    fn after_failure(previous: Option<Self>, now: u64) -> Self {
+        Self {
+            failed_at: now,
+            delay: previous.map_or(POLL.as_secs(), |retry| {
+                (retry.delay * 2).min(MAX_RETRY_SECS)
+            }),
+        }
     }
 }
 
@@ -272,7 +299,7 @@ fn updater(app: &AppHandle, version: &str) -> Result<Updater, String> {
 
 /// Fetch the channel's manifest and apply its flags and message when they changed. Skipped
 /// when both `DisableUpdates` and `DisableRemoteConfig` are set. A manifest that isn't believed
-/// is logged and the last good one stays; only a network error is an error.
+/// leaves the last good one in place and reports the failed refresh.
 pub async fn refresh_remote(app: &AppHandle) -> Result<(), String> {
     let managed = app.state::<crate::AppInfo>().managed;
     if managed.disable_updates && managed.disable_remote_config {
@@ -288,8 +315,7 @@ pub async fn refresh_remote(app: &AppHandle) -> Result<(), String> {
             Ok(())
         }
         Err(RefreshError::Rejected(why)) => {
-            eprintln!("manifest: {why}; keeping the last good one");
-            Ok(())
+            Err(format!("{why}; keeping the last good release list."))
         }
         Err(RefreshError::Network(e)) => Err(e),
     }
@@ -355,10 +381,10 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
     let min_secs = u64::from(app.state::<Remote>().flags().min_check_interval_h) * HOUR_SECS;
     let current = updates.status();
     let recent = !waited(updates.last_check(), now_secs(), min_secs);
-    if recent && !matches!(current, UpdateStatus::Idle | UpdateStatus::Error { .. }) {
+    if manual && recent && !matches!(current, UpdateStatus::Idle | UpdateStatus::Error { .. }) {
         return current;
     }
-    if !manual && recent {
+    if !manual && !updates.background_due(now_secs(), min_secs) {
         // Restarted within the hour: the background check waits for the next round.
         return current;
     }
@@ -375,7 +401,15 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
         set_status(app, UpdateStatus::Checking);
     }
     let result = find_update(app).await;
-    updates.mark_checked();
+    {
+        let mut retry = updates.retry.lock().unwrap();
+        if result.is_ok() {
+            updates.mark_checked();
+            *retry = None;
+        } else {
+            *retry = Some(Retry::after_failure(*retry, now_secs()));
+        }
+    }
     let status = match result {
         Ok(found) => found_update(app, found).await,
         Err(message) if quiet => {
@@ -695,8 +729,10 @@ pub fn spawn_background(app: AppHandle) {
             let jitter = net::jitter(MAX_JITTER).as_secs();
             loop {
                 std::thread::sleep(POLL);
-                let last = app.state::<Updates>().last_check();
-                if waited(last, now_secs(), DAY_SECS + jitter) {
+                if app
+                    .state::<Updates>()
+                    .background_due(now_secs(), DAY_SECS + jitter)
+                {
                     tauri::async_runtime::block_on(check(&app, false));
                 }
             }
@@ -709,6 +745,22 @@ pub fn spawn_background(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_checks_retry_before_the_daily_interval() {
+        let mut retry = None;
+        for delay in [600, 1200, 2400, 2400] {
+            let failure = Retry::after_failure(retry, 100);
+            assert_eq!(failure.delay, delay);
+            assert!(!waited(
+                Some(failure.failed_at),
+                100 + delay - 1,
+                failure.delay
+            ));
+            assert!(waited(Some(failure.failed_at), 100 + delay, failure.delay));
+            retry = Some(failure);
+        }
+    }
 
     /// A cached installer that changed after verification is refused before anything runs.
     #[test]
