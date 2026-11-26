@@ -52,6 +52,7 @@ export interface Settings {
 /** Mirrors `UpdateStatus` in src-tauri/src/updates.rs. */
 export type UpdateStatus =
   | { state: "idle" | "checking" | "up-to-date" }
+  | { state: "updated"; version: string }
   | { state: "available" | "ready"; version: string; notes: string; critical: boolean }
   | { state: "downloading" | "installing"; version: string }
   | { state: "error"; phase: "check" | "install"; message: string; retry: boolean };

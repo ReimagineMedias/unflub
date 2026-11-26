@@ -72,6 +72,9 @@ pub enum UpdateStatus {
     Idle,
     Checking,
     UpToDate,
+    Updated {
+        version: String,
+    },
     /// A newer version that isn't downloaded (automatic updates are off). "Restart now"
     /// downloads and installs it.
     Available {
@@ -146,9 +149,16 @@ pub struct Updates {
 }
 
 impl Updates {
-    pub fn new(config_dir: PathBuf, local_data_dir: PathBuf) -> Self {
+    pub fn new(config_dir: PathBuf, local_data_dir: PathBuf, version: &str) -> Self {
+        let status = if take_install_notice(&local_data_dir, version) {
+            UpdateStatus::Updated {
+                version: version.to_string(),
+            }
+        } else {
+            UpdateStatus::Idle
+        };
         Self {
-            status: Mutex::new(UpdateStatus::Idle),
+            status: Mutex::new(status),
             update: Mutex::new(None),
             downloaded: Mutex::new(None),
             busy: AtomicBool::new(false),
@@ -214,6 +224,15 @@ impl Retry {
             }),
         }
     }
+}
+
+/// The setup writes this marker after copying the new executable, only for a restart update.
+fn take_install_notice(local_data_dir: &std::path::Path, version: &str) -> bool {
+    let path = local_data_dir.join("updated-version");
+    let Ok(installed) = fs::read_to_string(&path) else {
+        return false;
+    };
+    fs::remove_file(path).is_ok() && installed.trim() == version
 }
 
 fn now_secs() -> u64 {
@@ -755,6 +774,20 @@ pub fn spawn_background(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installer_notice_is_consumed_once_and_requires_the_running_version() {
+        let dir = std::env::temp_dir().join(format!("unflub-notice-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("updated-version");
+        fs::write(&path, "0.2.0").unwrap();
+        assert!(!take_install_notice(&dir, "0.1.0"));
+        assert!(!path.exists());
+        fs::write(&path, "0.2.0").unwrap();
+        assert!(take_install_notice(&dir, "0.2.0"));
+        assert!(!take_install_notice(&dir, "0.2.0"));
+        fs::remove_dir(dir).unwrap();
+    }
 
     #[test]
     fn failed_checks_retry_before_the_daily_interval() {

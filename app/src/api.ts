@@ -56,6 +56,7 @@ const mockUpdate = (): UpdateStatus => {
     "",
     "[Read the release on GitHub](https://github.com/ReimagineMedias/unflub/releases)",
   ].join("\n");
+  if (v === "updated") return { state: v, version: "0.2.0" };
   if (v === "ready" || v === "available") return { state: v, version: "0.2.0", notes, critical: query().has("critical") };
   return { state: "idle" };
 };

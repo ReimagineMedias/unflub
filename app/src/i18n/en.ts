@@ -240,6 +240,7 @@ export const en = {
   // About
   "about.title": "About",
   "about.tagline": "Phone-style autocorrect for every text field.",
+  "about.updated": "Updated to v{version}",
   "about.ready": "unflub {version} is ready",
   "about.ready.hint": "It installs when you restart or quit unflub. unflub closes for a moment and opens again.",
   "about.available": "unflub {version} is available",
