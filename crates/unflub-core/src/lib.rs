@@ -26,6 +26,7 @@ use std::time::Duration;
 
 pub use config::{Config, EngineMode, UndoMode};
 pub use dict::Dictionary;
+pub use layout::Adjacency;
 pub use session::is_word_char;
 
 use case::Case;
@@ -165,6 +166,9 @@ pub trait Corrector {
     /// Feed one key. Must return within the hook budget.
     fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action;
 
+    /// Use the active keyboard's adjacency. Adapters without layout data can leave this unset.
+    fn set_adjacency(&mut self, _adjacency: Adjacency) {}
+
     /// Close the double-Backspace undo window. True if a Backspace was being held
     /// ([`Action::HoldBackspace`]); the adapter then sends it on, or drops it after a click.
     fn end_undo_window(&mut self) -> bool {
@@ -190,6 +194,10 @@ pub trait Corrector {
 impl Corrector for Engine {
     fn on_key(&mut self, key: Key, ctx: &Context<'_>) -> Action {
         Engine::on_key(self, key, ctx)
+    }
+
+    fn set_adjacency(&mut self, adjacency: Adjacency) {
+        self.ranker.set_adjacency(adjacency);
     }
 
     fn end_undo_window(&mut self) -> bool {
@@ -339,7 +347,7 @@ impl Engine {
             config,
             backend,
             dict: Dictionary::english(),
-            ranker: Ranker::new(layout::Adjacency::new(&layout::QWERTY)),
+            ranker: Ranker::new(Adjacency::default()),
             session: Session::new(),
             undo: None,
             learned: HashSet::new(),

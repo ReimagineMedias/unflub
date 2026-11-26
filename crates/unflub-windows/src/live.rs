@@ -19,7 +19,9 @@
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use unflub_core::{Action, Config, Context, Corrector, Engine, Event, Key, PreparedConfig};
+use unflub_core::{
+    Action, Adjacency, Config, Context, Corrector, Engine, Event, Key, PreparedConfig,
+};
 
 /// An [`Engine`] whose config can be replaced from another thread. See the module docs.
 pub struct LiveEngine {
@@ -99,6 +101,10 @@ impl LiveEngine {
 }
 
 impl Corrector for LiveEngine {
+    fn set_adjacency(&mut self, adjacency: Adjacency) {
+        self.engine.set_adjacency(adjacency);
+    }
+
     fn end_undo_window(&mut self) -> bool {
         self.engine.end_undo_window()
     }

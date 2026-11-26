@@ -4,9 +4,48 @@ mod common;
 
 use common::Typist;
 use unflub_core::{
-    Action, Config, Context, Corrector, Engine, EngineMode, Event, Key, Source, SpellBackend,
-    UndoMode,
+    Action, Adjacency, Config, Context, Corrector, Engine, EngineMode, Event, Key, Source,
+    SpellBackend, UndoMode,
 };
+
+#[test]
+fn keyboard_layout_changes_ranked_slips() {
+    let adjacency = |rows: [&'static [u8]; 3]| {
+        Adjacency::from_key_positions(rows.into_iter().enumerate().flat_map(|(row, keys)| {
+            keys.iter()
+                .enumerate()
+                .map(move |(col, &ch)| (ch, row + 1, col as i8))
+        }))
+    };
+    let qwertz = adjacency([b"qwertzuiop", b"asdfghjkl", b"yxcvbnm"]);
+    assert!(qwertz.adjacent(b'y', b'x'));
+    assert!(!qwertz.adjacent(b'z', b'x'));
+    let azerty = adjacency([b"azertyuiop", b"qsdfghjklm", b"wxcvbn"]);
+    assert!(azerty.adjacent(b'z', b'e'));
+    assert!(!azerty.adjacent(b'w', b'e'));
+
+    let mut t = Typist::bundled();
+    let typos = "zour anzwaz zesterdaz zhat zith ";
+    assert_eq!(t.type_str(typos), typos);
+
+    t.engine.set_adjacency(qwertz);
+    t.text.clear();
+    t.key(Key::Reset);
+    assert_eq!(
+        t.type_str("so zour anzwaz zesterdaz "),
+        "so your anyway yesterday "
+    );
+
+    t.engine.set_adjacency(azerty);
+    t.text.clear();
+    t.key(Key::Reset);
+    assert_eq!(t.type_str("so zhat zith qnd "), "so what with and ");
+
+    t.engine.set_adjacency(Adjacency::default());
+    t.text.clear();
+    t.key(Key::Reset);
+    assert_eq!(t.type_str("so zour zith "), "so zour zith ");
+}
 
 fn config() -> Config {
     Config {
