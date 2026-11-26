@@ -127,6 +127,8 @@ export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [touring, setTouring] = useState(() => new URLSearchParams(window.location.search).get("page") === "tour");
   const saveTimer = useRef<number | undefined>(undefined);
+  /** Personal words removed since the last save (see `setSettings`). */
+  const removedWords = useRef(new Set<string>());
 
   useEffect(() => {
     getSettings().then((s) => {
@@ -190,8 +192,16 @@ export default function App() {
     setLocal((prev) => {
       if (!prev) return prev;
       const next = { ...prev, ...patch };
+      if (patch.personalWords) {
+        for (const w of prev.personalWords) if (!patch.personalWords.includes(w)) removedWords.current.add(w);
+        for (const w of patch.personalWords) removedWords.current.delete(w);
+      }
       window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(() => void setSettings(next), 200);
+      saveTimer.current = window.setTimeout(() => {
+        const removed = [...removedWords.current];
+        removedWords.current.clear();
+        void setSettings(next, removed);
+      }, 200);
       return next;
     });
   }, []);
