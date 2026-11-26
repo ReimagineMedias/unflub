@@ -43,6 +43,10 @@ Repo is private until v0.1, then flipped public.
   `cargo run --release --bin unflub-cli -- --demo` (rules teh/adn/recieve). Never run it in automation on a machine someone
   is typing on, except with `--dry-run`.
 - Windows `ISpellChecker::Check` reports any word of 64+ UTF-16 units as correct.
+- Fixes type each character with its key on the focused app's layout (`inject::with_keys`: `VkKeyScanExW`, checked
+  with `ToUnicodeEx` against Shift and Caps Lock, no AltGr, no dead keys), pressing and releasing Shift around them
+  and leaving it as the user holds it (`key_events`). Only characters without such a key go as `KEYEVENTF_UNICODE`
+  packets: the Windows 11 Notepad (11.26xx) turns those into spaces (#33).
 - Two processes since 2026-11-17: `unflub-engine.exe` (`crates/unflub-engine`: hook, engine, spell checker, pill; no
   network code) and `unflub.exe` (tray, settings, tour, updater, remote config, stats, crash reports). The app spawns
   the engine beside itself (`app/src-tauri/src/engine.rs`, kill-on-close Job Object, restart backoff 1 s doubling to

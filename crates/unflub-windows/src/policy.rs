@@ -84,9 +84,10 @@ pub fn injection_veto(
     }
 }
 
-/// Virtual machine consoles and remote viewers that forward scan codes to the guest. Our fixes
-/// type text as Unicode packets, which they drop: the Backspaces would arrive and the fixed
-/// word wouldn't. Never corrected, whatever the exclude list says (review S3).
+/// Virtual machine consoles and remote viewers that forward scan codes to the guest. Fixes type
+/// characters with the host layout's keys and the rest as Unicode packets, which they drop, and
+/// the guest's layout may differ: the Backspaces would arrive and the fixed word might not.
+/// Never corrected, whatever the exclude list says (review S3).
 pub const SCANCODE_CONSOLES: &[&str] = &[
     "vmware.exe",
     "vmware-vmx.exe",

@@ -1134,6 +1134,15 @@ fn modifier_down() -> bool {
         .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk.0)) } as u16 & 0x8000 != 0)
 }
 
+/// The Shift keys held right now. Keys held back behind an injection were swallowed, so this
+/// is also the state the app has seen.
+fn held_shift() -> inject::ShiftKeys {
+    inject::ShiftKeys {
+        left: already_down(VK_LSHIFT.0),
+        right: already_down(VK_RSHIFT.0),
+    }
+}
+
 /// Is `vk` already down? Async state doesn't include the event being hooked yet, so for a
 /// key-down this is true exactly when it is an auto-repeat of a press that went through.
 fn already_down(vk: u16) -> bool {
@@ -1373,12 +1382,18 @@ impl State {
         } else {
             inject::plan_correction(replacement.delete, &replacement.insert)
         };
-        let batch = self.pipeline.begin_undo(ev, held, strokes.len() * 2);
+        // Real keys of the focused app's layout where it has them (#33).
+        // Caps Lock as Windows has it: `mods` is empty for keys another program injected.
+        // SAFETY: trivial query. Toggle state (low bit) of Caps Lock.
+        let caps_lock = unsafe { GetKeyState(i32::from(VK_CAPITAL.0)) } & 1 != 0;
+        let keys = inject::TargetLayout::new(foreground_layout(), caps_lock);
+        let events = inject::key_events(&inject::with_keys(strokes, &keys), held_shift());
+        let batch = self.pipeline.begin_undo(ev, held, events.len());
         let handed_over = Instant::now();
         let job = Job {
             kind: JobKind::Inject,
             batch,
-            inputs: inject::to_inputs(&strokes, batch),
+            inputs: inject::to_inputs(&events, batch),
             handed_over,
         };
         self.batches.push(Batch {

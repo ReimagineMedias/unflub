@@ -1,8 +1,10 @@
 //! Text injection: turn an [`Action`](unflub_core::Action)'s `delete` + `insert` into keystrokes,
 //! and keep the user's own keys in order around it.
 //!
-//! [`plan`] and [`Pipeline`] are pure and tested on every OS. On Windows, [`to_inputs`] turns a
-//! plan into one `INPUT` array (key-down then key-up per stroke) for a single `SendInput` call.
+//! [`plan`], [`with_keys`], [`key_events`] and [`Pipeline`] are pure and tested on every OS. A
+//! plan's characters become real keys of the focused app's layout where it has one
+//! ([`with_keys`]), with Shift pressed and released around them ([`key_events`]); on Windows,
+//! `to_inputs` turns those events into one `INPUT` array for a single `SendInput` call.
 //! Every event we send carries a [`Tag`] in `dwExtraInfo` so our own hook recognises it.
 //!
 //! `SendInput` never runs inside the hook callback: each injected event goes through every
@@ -17,10 +19,119 @@ use crate::policy::SwallowTracker;
 /// One keystroke to send (down then up).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stroke {
-    /// A real virtual key with its scan code (Backspace, Enter, Tab).
+    /// A real virtual key with its scan code (Backspace, Enter, Tab), sent with Shift as the
+    /// user has it.
     Vk { vk: u16, scan: u16 },
     /// One UTF-16 code unit via `KEYEVENTF_UNICODE`. Characters outside the BMP become two.
     Unit(u16),
+    /// A character typed with the key that makes it on the focused app's keyboard layout, with
+    /// Shift down (`shift`) or up ([`with_keys`]).
+    Key { vk: u16, scan: u16, shift: bool },
+}
+
+/// Finds the key that types a character on the focused app's keyboard layout.
+pub trait KeyLookup {
+    /// `(vk, scan, shift)` of a key that types exactly `c` with Shift down (`shift`) or up and
+    /// nothing else held, and isn't a dead key; `None` if there is none.
+    fn key_for(&self, c: char) -> Option<(u16, u16, bool)>;
+}
+
+/// Type every character the layout has a key for with that key, and keep Unicode packets for
+/// the rest (characters that need AltGr or a dead key, or have no key at all).
+///
+/// The Windows 11 Notepad (11.26xx) turns `KEYEVENTF_UNICODE` packets into spaces (#33): the
+/// Backspaces landed and the fixed word came out as blanks. Real keys are what every app is
+/// built for, so they come first everywhere.
+pub fn with_keys(strokes: Vec<Stroke>, keys: &impl KeyLookup) -> Vec<Stroke> {
+    strokes
+        .into_iter()
+        .map(|s| match s {
+            // Surrogates aren't chars, so astral characters stay packets.
+            Stroke::Unit(u) => char::from_u32(u32::from(u))
+                .and_then(|c| keys.key_for(c))
+                .map_or(s, |(vk, scan, shift)| Stroke::Key { vk, scan, shift }),
+            other => other,
+        })
+        .collect()
+}
+
+/// Which Shift keys are down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ShiftKeys {
+    pub left: bool,
+    pub right: bool,
+}
+
+impl ShiftKeys {
+    fn any(self) -> bool {
+        self.left || self.right
+    }
+}
+
+/// One key event to send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyEvent {
+    Vk { vk: u16, scan: u16, up: bool },
+    Unit { unit: u16, up: bool },
+}
+
+pub const LSHIFT: (u16, u16) = (0xA0, 0x2A);
+pub const RSHIFT: (u16, u16) = (0xA1, 0x36);
+
+fn shift_event((vk, scan): (u16, u16), up: bool) -> KeyEvent {
+    KeyEvent::Vk { vk, scan, up }
+}
+
+/// Down and up events for every stroke, in order, with Shift pressed or released around
+/// [`Stroke::Key`]s as each needs, starting from the Shift keys the user holds (`held`) and
+/// ending with exactly those down again, so the user's own Shift key-up still matches.
+/// Backspace, Enter and Tab go with Shift as the user has it (as they always did); Unicode
+/// packets don't care.
+pub fn key_events(strokes: &[Stroke], held: ShiftKeys) -> Vec<KeyEvent> {
+    let mut out = Vec::with_capacity(strokes.len() * 2 + 4);
+    let mut now = held;
+    for s in strokes {
+        let (want, vk, scan) = match *s {
+            Stroke::Vk { vk, scan } => (Some(held.any()), vk, scan),
+            Stroke::Key { vk, scan, shift } => (Some(shift), vk, scan),
+            Stroke::Unit(unit) => {
+                out.push(KeyEvent::Unit { unit, up: false });
+                out.push(KeyEvent::Unit { unit, up: true });
+                continue;
+            }
+        };
+        match want {
+            Some(true) if !now.any() => {
+                out.push(shift_event(LSHIFT, false));
+                now.left = true;
+            }
+            Some(false) if now.any() => {
+                if now.left {
+                    out.push(shift_event(LSHIFT, true));
+                }
+                if now.right {
+                    out.push(shift_event(RSHIFT, true));
+                }
+                now = ShiftKeys::default();
+            }
+            _ => {}
+        }
+        out.push(KeyEvent::Vk {
+            vk,
+            scan,
+            up: false,
+        });
+        out.push(KeyEvent::Vk { vk, scan, up: true });
+    }
+    for (side, was, is) in [
+        (LSHIFT, held.left, now.left),
+        (RSHIFT, held.right, now.right),
+    ] {
+        if was != is {
+            out.push(shift_event(side, !was));
+        }
+    }
+    out
 }
 
 pub const BACKSPACE: Stroke = Stroke::Vk {
@@ -578,7 +689,7 @@ impl Pipeline {
 }
 
 #[cfg(windows)]
-pub use win::{pass_inputs, probe_inputs, replay_inputs, send, to_inputs};
+pub use win::{pass_inputs, probe_inputs, replay_inputs, send, to_inputs, TargetLayout};
 
 /// The batch number no injection ever gets: events tagged `Tag::Inject(PASS_BATCH)` match no
 /// pending batch, so the hook lets them through untouched (see [`pass_inputs`]).
@@ -589,10 +700,12 @@ pub const PROBE_VK: u16 = 0xE8;
 
 #[cfg(windows)]
 mod win {
-    use super::{RawEvent, SendOutcome, Stroke, Tag};
+    use super::{KeyEvent, KeyLookup, RawEvent, SendOutcome, Tag};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-        KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_PACKET,
+        MapVirtualKeyExW, SendInput, ToUnicodeEx, VkKeyScanExW, HKL, INPUT, INPUT_0,
+        INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
+        KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_CAPITAL, VK_LSHIFT, VK_PACKET,
+        VK_SHIFT,
     };
 
     fn key(vk: u16, scan: u16, flags: KEYBD_EVENT_FLAGS, tag: usize) -> INPUT {
@@ -610,19 +723,94 @@ mod win {
         }
     }
 
-    /// Down + up for every stroke, in order, tagged as injection `batch`.
-    pub fn to_inputs(strokes: &[Stroke], batch: u16) -> Vec<INPUT> {
+    /// The events of [`key_events`](super::key_events), in order, tagged as injection `batch`.
+    pub fn to_inputs(events: &[KeyEvent], batch: u16) -> Vec<INPUT> {
         let tag = Tag::Inject(batch).encode();
-        let mut out = Vec::with_capacity(strokes.len() * 2);
-        for s in strokes {
-            let (vk, scan, flags) = match *s {
-                Stroke::Vk { vk, scan } => (vk, scan, KEYBD_EVENT_FLAGS(0)),
-                Stroke::Unit(u) => (0, u, KEYEVENTF_UNICODE),
-            };
-            out.push(key(vk, scan, flags, tag));
-            out.push(key(vk, scan, flags | KEYEVENTF_KEYUP, tag));
+        let up = |up: bool| {
+            if up {
+                KEYEVENTF_KEYUP
+            } else {
+                KEYBD_EVENT_FLAGS(0)
+            }
+        };
+        events
+            .iter()
+            .map(|e| match *e {
+                KeyEvent::Vk { vk, scan, up: u } => key(vk, scan, up(u), tag),
+                KeyEvent::Unit { unit, up: u } => key(0, unit, KEYEVENTF_UNICODE | up(u), tag),
+            })
+            .collect()
+    }
+
+    /// The focused app's keyboard layout, for [`with_keys`](super::with_keys).
+    pub struct TargetLayout {
+        layout: HKL,
+        caps_lock: bool,
+    }
+
+    impl TargetLayout {
+        /// `layout` of the foreground window's thread; `caps_lock` as it is now.
+        pub fn new(layout: HKL, caps_lock: bool) -> Self {
+            Self { layout, caps_lock }
         }
-        out
+
+        /// The one UTF-16 unit `vk` types with Shift down (`shift`) or up and Caps Lock as it
+        /// is, without touching the dead-key state. `None` for dead keys and ligatures.
+        fn types(&self, vk: u16, scan: u16, shift: bool) -> Option<u16> {
+            let mut state = [0u8; 256];
+            if shift {
+                state[usize::from(VK_SHIFT.0)] = 0x80;
+                state[usize::from(VK_LSHIFT.0)] = 0x80;
+            }
+            if self.caps_lock {
+                state[usize::from(VK_CAPITAL.0)] = 0x01;
+            }
+            let mut buf = [0u16; 4];
+            // SAFETY: valid buffers; flag 0x4 keeps the kernel keyboard state unchanged.
+            let n = unsafe {
+                ToUnicodeEx(
+                    u32::from(vk),
+                    u32::from(scan),
+                    &state,
+                    &mut buf,
+                    0x4,
+                    self.layout,
+                )
+            };
+            (n == 1).then_some(buf[0])
+        }
+    }
+
+    impl KeyLookup for TargetLayout {
+        fn key_for(&self, c: char) -> Option<(u16, u16, bool)> {
+            if c.is_control() {
+                return None;
+            }
+            let unit = u16::try_from(u32::from(c)).ok()?;
+            // SAFETY: trivial query.
+            let found = unsafe { VkKeyScanExW(unit, self.layout) } as u16;
+            if found == 0xFFFF {
+                return None;
+            }
+            let (vk, mods) = (found & 0xFF, found >> 8);
+            // Ctrl, Alt (AltGr) or Hankaku: never pressed for the user.
+            if mods & !1 != 0 {
+                return None;
+            }
+            // SAFETY: trivial query.
+            let scan =
+                unsafe { MapVirtualKeyExW(u32::from(vk), MAPVK_VK_TO_VSC, self.layout) } as u16;
+            if scan == 0 {
+                return None;
+            }
+            // Check what the key really types: Caps Lock flips some keys and not others, and a
+            // dead key types nothing until the next one.
+            let shift = mods & 1 != 0;
+            [shift, !shift]
+                .into_iter()
+                .find(|&s| self.types(vk, scan, s) == Some(unit))
+                .map(|s| (vk, scan, s))
+        }
     }
 
     /// One key-up of an unassigned key, tagged as probe `batch`. Our hook swallows it.
@@ -801,6 +989,151 @@ mod tests {
                 Stroke::Unit(0x00E9),
             ]
         );
+    }
+
+    /// A US layout: letters, digits, space and the shifted punctuation of the top row.
+    struct Us;
+
+    const US_SHIFTED: &str = "~!@#$%^&*()_+{}|:\"<>?";
+    const US_PLAIN: &str = "`1234567890-=[]\\;',./";
+
+    impl KeyLookup for Us {
+        fn key_for(&self, c: char) -> Option<(u16, u16, bool)> {
+            let shifted = |i: usize| (0x100 + i as u16, i as u16 + 1);
+            match c {
+                'a'..='z' => Some((c.to_ascii_uppercase() as u16, c as u16, false)),
+                'A'..='Z' => Some((c as u16, c as u16, true)),
+                '0'..='9' | ' ' => Some((c as u16, c as u16, false)),
+                _ => US_SHIFTED
+                    .find(c)
+                    .map(|i| (shifted(i).0, shifted(i).1, true))
+                    .or_else(|| US_PLAIN.find(c).map(|i| (0x200 + i as u16, 0x80, false))),
+            }
+        }
+    }
+
+    /// A text field that gets key events: Shift as the events leave it, Backspace deletes, keys
+    /// type what [`Us`] says they type.
+    fn type_into(text: &str, held: ShiftKeys, events: &[KeyEvent]) -> (String, ShiftKeys) {
+        let mut text = text.to_string();
+        let mut shift = held;
+        for e in events {
+            match *e {
+                KeyEvent::Vk { vk, scan, up } => {
+                    if (vk, scan) == LSHIFT {
+                        shift.left = !up;
+                    } else if (vk, scan) == RSHIFT {
+                        shift.right = !up;
+                    } else if up {
+                    } else if vk == 0x08 {
+                        text.pop();
+                    } else if vk == 0x0D {
+                        text.push('\n');
+                    } else {
+                        let typed = (0..=0x2FFFu32)
+                            .filter_map(char::from_u32)
+                            .find(|&c| Us.key_for(c) == Some((vk, scan, shift.any())))
+                            .unwrap_or_else(|| panic!("{vk:#x} types nothing (shift {shift:?})"));
+                        text.push(typed);
+                    }
+                }
+                KeyEvent::Unit { unit, up: false } => {
+                    text.push(char::from_u32(unit.into()).unwrap())
+                }
+                KeyEvent::Unit { .. } => {}
+            }
+        }
+        (text, shift)
+    }
+
+    /// #33: characters go out as their keys, so apps that turn Unicode packets into spaces
+    /// (the Windows 11 Notepad) get the real word.
+    #[test]
+    fn characters_with_a_key_are_typed_as_keys() {
+        let strokes = with_keys(plan(3, "The é?\u{1F600}"), &Us);
+        assert_eq!(&strokes[..3], &[BACKSPACE; 3]);
+        assert_eq!(
+            strokes[3],
+            Stroke::Key {
+                vk: 'T' as u16,
+                scan: 'T' as u16,
+                shift: true
+            }
+        );
+        assert_eq!(
+            strokes[4],
+            Stroke::Key {
+                vk: 'H' as u16,
+                scan: 'h' as u16,
+                shift: false
+            }
+        );
+        assert!(matches!(strokes[6], Stroke::Key { vk: 0x20, .. }));
+        assert_eq!(strokes[7], Stroke::Unit(0xE9), "no key for é: a packet");
+        assert!(matches!(strokes[8], Stroke::Key { shift: true, .. }), "?");
+        assert_eq!(
+            &strokes[9..],
+            &[Stroke::Unit(0xD83D), Stroke::Unit(0xDE00)],
+            "astral characters stay packets"
+        );
+    }
+
+    /// The real lookup on this thread's layout (a query; nothing is typed). Space is the same
+    /// key on every layout; control characters and astral ones never get a key.
+    #[cfg(windows)]
+    #[test]
+    fn the_windows_layout_finds_keys() {
+        use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
+        // SAFETY: trivial query.
+        let layout = unsafe { GetKeyboardLayout(0) };
+        for caps in [false, true] {
+            let keys = TargetLayout::new(layout, caps);
+            assert_eq!(keys.key_for(' '), Some((0x20, 0x39, false)), "caps {caps}");
+            assert_eq!(keys.key_for('\n'), None);
+            assert_eq!(keys.key_for('\u{1F600}'), None);
+        }
+    }
+
+    #[test]
+    fn shift_is_pressed_for_capitals_and_left_as_the_user_holds_it() {
+        let none = ShiftKeys::default();
+        // No Shift needed, none held: just the keys.
+        let events = key_events(&with_keys(plan_correction(3, "the "), &Us), none);
+        assert_eq!(events.len(), 2 * 9);
+        assert_eq!(type_into("ok teh", none, &events), ("ok the ".into(), none));
+
+        // A capital: one Shift press around it.
+        let events = key_events(&with_keys(plan(3, "The "), &Us), none);
+        assert_eq!(events[6], shift_event(LSHIFT, false));
+        assert_eq!(events[9], shift_event(LSHIFT, true));
+        assert_eq!(type_into("Teh", none, &events), ("The ".into(), none));
+
+        // "teh?" typed with right Shift still held: the '?' and the Backspaces keep it, the
+        // letters go without it, and it is down again at the end for the user's own key-up.
+        for held in [
+            ShiftKeys {
+                left: false,
+                right: true,
+            },
+            ShiftKeys {
+                left: true,
+                right: true,
+            },
+        ] {
+            let events = key_events(&with_keys(plan_correction(3, "the?"), &Us), held);
+            assert_eq!(type_into("so teh", held, &events), ("so the?".into(), held));
+            let shift_events = events
+                .iter()
+                .filter(
+                    |e| matches!(e, KeyEvent::Vk { vk, .. } if *vk == LSHIFT.0 || *vk == RSHIFT.0),
+                )
+                .count();
+            assert!(shift_events <= 6, "{held:?}: {shift_events}");
+        }
+
+        // Packets don't move Shift.
+        let events = key_events(&[Stroke::Unit(0xE9)], none);
+        assert_eq!(events.len(), 2);
     }
 
     #[test]
