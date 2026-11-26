@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
+    collections::{BTreeMap, HashSet},
     fs,
     io::{self, Read},
     path::{Path, PathBuf},
@@ -143,6 +144,10 @@ pub struct Settings {
     pub learn_after_undos: u8,
     pub excluded_apps: Vec<String>,
     pub personal_words: Vec<String>,
+    /// Keyed like the engine's dictionary. Null means added by the user, a day means learned.
+    /// Older entries have no record of where they came from.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub word_sources: BTreeMap<String, Option<i64>>,
     pub user_rules: Vec<(String, String)>,
     pub pill_style: PillStyle,
     pub pill_opacity: f32,
@@ -189,6 +194,7 @@ impl Default for Settings {
                 .map(|s| s.to_string())
                 .collect(),
             personal_words: Vec::new(),
+            word_sources: BTreeMap::new(),
             user_rules: Vec::new(),
             pill_style: PillStyle::UnderlineCapsule,
             pill_opacity: 0.92,
@@ -219,6 +225,10 @@ fn fits(text: &str, max: usize, allow: &[char]) -> bool {
     !text.is_empty()
         && text.chars().count() <= max
         && !text.chars().any(|c| c.is_control() && !allow.contains(&c))
+}
+
+pub(crate) fn word_key(word: &str) -> String {
+    word.trim().to_lowercase().replace('\u{2019}', "'")
 }
 
 impl Settings {
@@ -266,6 +276,14 @@ impl Settings {
             *app = app.trim().to_lowercase();
         }
         self.excluded_apps.dedup();
+        // Word sources follow the dictionary. A CLI or file edit can remove a word
+        // without updating its metadata, so prune it before checking the user fields.
+        let words: HashSet<_> = self
+            .personal_words
+            .iter()
+            .map(|word| word_key(word))
+            .collect();
+        self.word_sources.retain(|key, _| words.contains(key));
         let clean = self.clone().sanitised();
         if clean != self {
             let Value::Object(input) = serde_json::to_value(&self)? else {
@@ -352,8 +370,13 @@ impl Settings {
         self.excluded_apps.retain(|a| fits(a, MAX_APP_CHARS, &[]));
         self.excluded_apps.dedup();
         self.excluded_apps.truncate(MAX_EXCLUDED_APPS);
-        self.personal_words.retain(|w| fits(w, MAX_WORD_CHARS, &[]));
-        self.personal_words.truncate(MAX_PERSONAL_WORDS);
+        let mut words = HashSet::new();
+        self.personal_words.retain(|w| {
+            words.len() < MAX_PERSONAL_WORDS
+                && fits(w, MAX_WORD_CHARS, &[])
+                && words.insert(word_key(w))
+        });
+        self.word_sources.retain(|key, _| words.contains(key));
         self.user_rules.retain(|(from, to)| {
             fits(from, MAX_WORD_CHARS, &[]) && fits(to, MAX_REPLACEMENT_CHARS, &['\n', '\t'])
         });
@@ -968,6 +991,54 @@ mod tests {
     }
 
     #[test]
+    fn removing_words_through_cli_and_file_patches_prunes_their_sources() {
+        let dir = temp_dir("settings-remove-word-sources");
+        let store = Store::new(dir.clone());
+        let initial = Settings {
+            personal_words: vec!["CLI".into(), "Editor".into(), "O’Clock".into()],
+            word_sources: [
+                ("cli".into(), None),
+                ("editor".into(), Some(7)),
+                ("o'clock".into(), Some(42)),
+            ]
+            .into(),
+            ..Settings::default()
+        };
+        store.save(&initial).unwrap();
+        let current = Mutex::new(initial);
+        let info = installed();
+        let cli_patch = Map::from_iter([(
+            "personalWords".into(),
+            serde_json::json!(["Editor", "O’Clock"]),
+        )]);
+        let (_, saved) = store
+            .update_checked(&current, info, |s| s.patch(cli_patch, false))
+            .unwrap();
+        assert!(!saved.word_sources.contains_key("cli"));
+        assert_eq!(saved.word_sources["editor"], Some(7));
+
+        crate::files::replace(
+            &store.path,
+            br#"{"personalWords":["O'CLOCK"],"wordSources":{"editor":7,"o'clock":42}}"#,
+        )
+        .unwrap();
+        let (_, saved) = store.reload(&current, info).unwrap().unwrap();
+        assert_eq!(saved.personal_words, ["O'CLOCK"]);
+        assert_eq!(saved.word_sources, [("o'clock".into(), Some(42))].into());
+        let (_, saved) = store
+            .update_checked(&current, info, |s| {
+                s.patch(
+                    Map::from_iter([("enabled".into(), Value::Bool(false))]),
+                    false,
+                )
+            })
+            .unwrap();
+        assert!(!saved.enabled);
+        assert_eq!(Store::new(dir.clone()).load(), saved);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn reload_keeps_the_last_good_settings_and_does_not_loop_on_its_own_save() {
         let dir = temp_dir("settings-reload");
         let store = Store::new(dir.clone());
@@ -1105,7 +1176,7 @@ mod tests {
     fn the_window_uses_the_same_limits() {
         let types = include_str!("../../src/types.ts");
         let want = format!(
-            "export const LIMITS = {{ word: {MAX_WORD_CHARS}, replacement: {MAX_REPLACEMENT_CHARS}, app: {MAX_APP_CHARS} }} as const;"
+            "export const LIMITS = {{ word: {MAX_WORD_CHARS}, replacement: {MAX_REPLACEMENT_CHARS}, app: {MAX_APP_CHARS}, words: {MAX_PERSONAL_WORDS}, rules: {MAX_USER_RULES} }} as const;"
         );
         assert!(types.contains(&want), "{want}");
     }

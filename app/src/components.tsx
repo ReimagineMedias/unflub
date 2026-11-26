@@ -184,7 +184,7 @@ const X = () => (
   </svg>
 );
 
-export function ChipList({ items, onChange, placeholder, empty, maxLength, normalise = (s) => s.trim(), single, validate }: {
+export function ChipList({ items, onChange, placeholder, empty, maxLength, normalise = (s) => s.trim(), single, validate, visibleItems = items, describe }: {
   items: string[];
   onChange: (items: string[]) => void;
   placeholder: string;
@@ -194,6 +194,8 @@ export function ChipList({ items, onChange, placeholder, empty, maxLength, norma
   /** Entries are one word: a space blocks adding, with this hint. */
   single?: string;
   validate?: (value: string) => string | undefined;
+  visibleItems?: string[];
+  describe?: (item: string) => string;
 }) {
   const [draft, setDraft] = useState("");
   const hintId = useId();
@@ -201,22 +203,25 @@ export function ChipList({ items, onChange, placeholder, empty, maxLength, norma
   const warning = single && /\s/.test(draft.trim()) ? single : value ? validate?.(value) : undefined;
   const add = () => {
     if (!value || warning) return;
-    // The engine compares words without case, so RMGN is the same entry as rmgn.
     if (!items.some((x) => x.toLowerCase() === value.toLowerCase())) onChange([...items, value]);
     setDraft("");
   };
   return (
     <>
-      {items.length ? (
+      {visibleItems.length ? (
         <div className="chips">
-          {items.map((it) => (
-            <span className="chip" key={it} title={it}>
-              <span>{it}</span>
-              <button aria-label={t("common.remove", { item: it })} onClick={() => onChange(items.filter((x) => x !== it))}>
-                <X />
-              </button>
-            </span>
-          ))}
+          {visibleItems.map((it) => {
+            const description = describe?.(it);
+            return (
+              <span className="chip" key={it} title={description ? it + " · " + description : it}>
+                <span>{it}</span>
+                {description && <small>{description}</small>}
+                <button aria-label={t("common.remove", { item: it })} onClick={() => onChange(items.filter((x) => x !== it))}>
+                  <X />
+                </button>
+              </span>
+            );
+          })}
         </div>
       ) : (
         <div className="empty">{empty}</div>

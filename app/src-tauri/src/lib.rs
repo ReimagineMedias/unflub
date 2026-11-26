@@ -146,22 +146,25 @@ fn get_settings(app: AppHandle) -> serde_json::Value {
 #[tauri::command]
 fn set_settings(
     app: AppHandle,
-    settings: serde_json::Map<String, serde_json::Value>,
+    mut settings: serde_json::Map<String, serde_json::Value>,
     removed: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     let removed = removed.unwrap_or_default();
     let mut pending = Vec::new();
     let mut added = 0;
+    // Where each word came from is the app's record, never the window's.
+    settings.remove("wordSources");
     let changes_words = settings.contains_key("personalWords");
     let saved = update_settings_checked(&app, |current| {
-        let before = changes_words.then(|| current.personal_words.clone());
+        let before = changes_words.then(|| current.clone());
         current.patch(settings, false)?;
         if let Some(before) = before {
             pending = state.pending_learned.lock().unwrap().clone();
-            added = words_added(&before, &current.personal_words, &pending);
+            added = words_added(&before.personal_words, &current.personal_words, &pending);
             forget_removed(&mut pending, &removed);
             merge_learned(&mut current.personal_words, &pending);
+            sync_word_sources(&before, current, &pending);
         }
         Ok(())
     })
@@ -234,17 +237,37 @@ fn set_pause_shortcut(app: AppHandle, binding: String) -> Result<(), &'static st
     Ok(())
 }
 
+fn sync_word_sources(current: &Settings, next: &mut Settings, pending: &[String]) {
+    use settings::word_key;
+    let known: std::collections::HashSet<_> =
+        current.personal_words.iter().map(|w| word_key(w)).collect();
+    let learned: std::collections::HashSet<_> = pending.iter().map(|w| word_key(w)).collect();
+    let today = stats::today();
+    let present: std::collections::HashSet<_> =
+        next.personal_words.iter().map(|w| word_key(w)).collect();
+    next.word_sources = current.word_sources.clone();
+    // A removed word's source goes with it (a live save must already be clean).
+    next.word_sources.retain(|key, _| present.contains(key));
+    for word in &next.personal_words {
+        let key = word_key(word);
+        if !known.contains(&key) {
+            let day = learned.contains(&key).then_some(today);
+            next.word_sources.insert(key, day);
+        }
+    }
+}
+
 /// How many of `next` the user added in the window: not in `prev`, and not one of the words
 /// learned by undo that are being merged in (ignoring case).
 fn words_added(prev: &[String], next: &[String], learned: &[String]) -> u64 {
     let known: std::collections::HashSet<String> = prev
         .iter()
         .chain(learned)
-        .map(|w| w.to_lowercase())
+        .map(|w| settings::word_key(w))
         .collect();
     let mut added = std::collections::HashSet::new();
     for w in next {
-        let key = w.to_lowercase();
+        let key = settings::word_key(w);
         if !known.contains(&key) {
             added.insert(key);
         }
@@ -255,16 +278,16 @@ fn words_added(prev: &[String], next: &[String], learned: &[String]) -> u64 {
 /// Drop from `pending` every word the user removed (ignoring case).
 fn forget_removed(pending: &mut Vec<String>, removed: &[String]) {
     pending.retain(|w| {
-        let key = w.to_lowercase();
-        !removed.iter().any(|r| r.to_lowercase() == key)
+        let key = settings::word_key(w);
+        !removed.iter().any(|r| settings::word_key(r) == key)
     });
 }
 
 /// Add each of `learned` to `words` unless it is already there (ignoring case).
 fn merge_learned(words: &mut Vec<String>, learned: &[String]) {
     for word in learned {
-        let key = word.to_lowercase();
-        if !words.iter().any(|w| w.to_lowercase() == key) {
+        let key = settings::word_key(word);
+        if !words.iter().any(|w| settings::word_key(w) == key) {
             words.push(word.clone());
         }
     }
@@ -527,12 +550,23 @@ fn update_settings_checked(
 
 fn settings_changed(app: &AppHandle, prev: &Settings, next: &Settings) {
     if prev.personal_words != next.personal_words {
+        let before: std::collections::HashSet<_> = prev
+            .personal_words
+            .iter()
+            .map(|w| settings::word_key(w))
+            .collect();
+        let after: std::collections::HashSet<_> = next
+            .personal_words
+            .iter()
+            .map(|w| settings::word_key(w))
+            .collect();
         app.state::<AppState>()
             .pending_learned
             .lock()
             .unwrap()
             .retain(|word| {
-                !prev.personal_words.contains(word) || next.personal_words.contains(word)
+                let key = settings::word_key(word);
+                !before.contains(&key) || after.contains(&key)
             });
     }
     if prev.start_at_login != next.start_at_login {
@@ -682,14 +716,19 @@ fn learn_word(app: &AppHandle, word: String) {
         &mut state.pending_learned.lock().unwrap(),
         std::slice::from_ref(&word),
     );
-    let key = word.to_lowercase();
-    let known = |s: &Settings| s.personal_words.iter().any(|w| w.to_lowercase() == key);
+    let key = settings::word_key(&word);
+    let known = |s: &Settings| {
+        s.personal_words
+            .iter()
+            .any(|w| settings::word_key(w) == key)
+    };
     if known(&current_settings(app)) {
         return;
     }
     let learned = update_settings(app, |s| {
         if !known(s) {
             s.personal_words.push(word);
+            s.word_sources.insert(key.clone(), Some(stats::today()));
         }
     });
     if let Err(e) = learned {
@@ -1400,6 +1439,56 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_patch_keeps_word_sources_clean_for_the_checked_save() {
+        let before = Settings {
+            personal_words: vec!["Kept".into(), "Gone".into()],
+            word_sources: [("kept".into(), Some(7)), ("gone".into(), None)].into(),
+            ..Settings::default()
+        };
+        let mut next = before.clone();
+        let patch = serde_json::json!({ "personalWords": ["Kept", "New"] });
+        next.patch(patch.as_object().unwrap().clone(), false)
+            .unwrap();
+        sync_word_sources(&before, &mut next, &[]);
+        // The checked save refuses anything sanitising would change.
+        assert_eq!(next.clone().sanitised(), next);
+        assert_eq!(
+            next.word_sources,
+            [("kept".into(), Some(7)), ("new".into(), None)].into()
+        );
+    }
+
+    #[test]
+    fn legacy_words_keep_unknown_source_and_new_words_get_their_source() {
+        let current = Settings {
+            personal_words: vec!["Old".into(), "Learned".into(), "Removed".into()],
+            word_sources: [("learned".into(), Some(42)), ("removed".into(), None)].into(),
+            ..Settings::default()
+        };
+        let mut next = Settings {
+            personal_words: vec![
+                "old".into(),
+                "LEARNED".into(),
+                "learned".into(),
+                "Manual".into(),
+                "Pending".into(),
+            ],
+            ..Settings::default()
+        };
+        sync_word_sources(&current, &mut next, &["pending".into()]);
+        let next = next.sanitised();
+        assert_eq!(next.personal_words, ["old", "LEARNED", "Manual", "Pending"]);
+        assert_eq!(next.word_sources.get("old"), None);
+        assert_eq!(next.word_sources.get("learned"), Some(&Some(42)));
+        assert_eq!(next.word_sources.get("manual"), Some(&None));
+        assert_eq!(
+            next.word_sources.get("pending"),
+            Some(&Some(stats::today()))
+        );
+        assert_eq!(next.word_sources.get("removed"), None);
+    }
 
     #[test]
     fn a_stale_save_keeps_words_learned_since_the_window_loaded() {

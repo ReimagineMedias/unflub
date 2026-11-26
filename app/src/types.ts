@@ -38,6 +38,8 @@ export interface Settings {
   learnAfterUndos: number;
   excludedApps: string[];
   personalWords: string[];
+  /** A local day for a learned word, null for a manual entry, missing for a legacy word. */
+  wordSources?: Record<string, number | null>;
   userRules: [string, string][];
   pillStyle: PillStyle;
   pillOpacity: number;
@@ -120,7 +122,7 @@ export type CrashAnswer = "send" | "dont-send" | "always-send";
 
 /** The longest entries the window accepts. Keep in step with MAX_*_CHARS in src-tauri/src/settings.rs
  * (a test there reads this line). */
-export const LIMITS = { word: 64, replacement: 256, app: 260 } as const;
+export const LIMITS = { word: 64, replacement: 256, app: 260, words: 5000, rules: 1000 } as const;
 
 export const defaultSettings: Settings = {
   enabled: true,
