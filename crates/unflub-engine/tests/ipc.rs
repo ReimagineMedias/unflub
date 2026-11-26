@@ -22,6 +22,7 @@ fn spawn(extra: &[&str]) -> (Child, Pipe) {
             &name,
             "--app-pid",
             &std::process::id().to_string(),
+            "--test-ipc",
         ])
         .args(extra)
         .spawn()
@@ -58,7 +59,7 @@ fn configure(pipe: &Pipe) {
 
 #[test]
 fn handshake_configure_and_shutdown() {
-    let (mut child, pipe) = spawn(&["--test-ipc"]);
+    let (mut child, pipe) = spawn(&[]);
     configure(&pipe);
     assert_eq!(next(&pipe), FromEngine::Ready { hooked: false });
     frame::write(&mut &pipe, &ToEngine::Shutdown).unwrap();
@@ -66,8 +67,25 @@ fn handshake_configure_and_shutdown() {
 }
 
 #[test]
+fn the_engine_worker_answers_a_heartbeat() {
+    let (mut child, pipe) = spawn(&[]);
+    configure(&pipe);
+    assert_eq!(next(&pipe), FromEngine::Ready { hooked: false });
+    frame::write(&mut &pipe, &ToEngine::Ping { nonce: 42 }).unwrap();
+    let body = session::read_frame(&pipe, Duration::from_secs(3))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        frame::decode::<FromEngine>(&body).unwrap(),
+        FromEngine::Pong { nonce: 42 }
+    );
+    frame::write(&mut &pipe, &ToEngine::Shutdown).unwrap();
+    assert!(wait(&mut child).success());
+}
+
+#[test]
 fn closing_the_pipe_ends_the_engine() {
-    let (mut child, pipe) = spawn(&["--test-ipc"]);
+    let (mut child, pipe) = spawn(&[]);
     configure(&pipe);
     assert_eq!(next(&pipe), FromEngine::Ready { hooked: false });
     drop(pipe);
@@ -81,12 +99,7 @@ fn a_panic_leaves_a_scrubbed_marker_and_ends_the_process() {
         std::process::id()
     ));
     let _ = std::fs::remove_file(&marker);
-    let (mut child, pipe) = spawn(&[
-        "--test-ipc",
-        "--test-panic",
-        "--crash-file",
-        marker.to_str().unwrap(),
-    ]);
+    let (mut child, pipe) = spawn(&["--test-panic", "--crash-file", marker.to_str().unwrap()]);
     configure(&pipe);
     assert_eq!(next(&pipe), FromEngine::Ready { hooked: false });
     let status = wait(&mut child);

@@ -40,6 +40,7 @@ const WORDS_EVERY: Duration = Duration::from_secs(10);
 
 enum Msg {
     Configure(Box<EngineSettings>),
+    Ping(u64),
     Hook(HookEvent),
     /// A word the user taught the engine by undoing its fix.
     Learned(String),
@@ -118,7 +119,7 @@ pub fn run(args: &Args) -> i32 {
 /// Forward the app's messages until it says shutdown or the pipe closes.
 fn read_pipe(pipe: &Pipe, tx: &Sender<Msg>) {
     loop {
-        let body = match frame::read(&mut &*pipe) {
+        let body = match session::read_frame(pipe, unflub_engine::protocol::FRAME_READ_TIMEOUT) {
             Ok(Some(body)) => body,
             Ok(None) => return,
             Err(e) => {
@@ -131,6 +132,9 @@ fn read_pipe(pipe: &Pipe, tx: &Sender<Msg>) {
         match frame::decode::<ToEngine>(&body) {
             Ok(ToEngine::Configure { settings }) => {
                 let _ = tx.send(Msg::Configure(Box::new(settings)));
+            }
+            Ok(ToEngine::Ping { nonce }) => {
+                let _ = tx.send(Msg::Ping(nonce));
             }
             Ok(ToEngine::Shutdown) => return,
             // Only valid during the handshake.
@@ -179,6 +183,7 @@ impl State {
                     self.settings = Some(*next);
                     self.sync();
                 }
+                Ok(Msg::Ping(nonce)) => self.out.send(&FromEngine::Pong { nonce }),
                 Ok(Msg::Hook(event)) => self.on_hook_event(event),
                 // Only unflub's own settings learn the word; the Windows dictionary, which every
                 // app shares, is never written.

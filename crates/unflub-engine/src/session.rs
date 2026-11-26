@@ -106,19 +106,32 @@ fn unexpected(message: &impl std::fmt::Debug) -> io::Error {
     )
 }
 
-/// One message, read before `deadline`.
+/// One message, read before the deadline.
 fn read_until<T: serde::de::DeserializeOwned>(
     pipe: &Pipe,
     deadline: Instant,
     cancellation: Option<Cancellation<'_>>,
 ) -> io::Result<T> {
-    let mut reader = Deadline {
+    let body =
+        read_frame_until(pipe, deadline, cancellation)?.ok_or(io::ErrorKind::UnexpectedEof)?;
+    frame::decode(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// Read one whole frame within the time limit, including the length prefix.
+pub fn read_frame(pipe: &Pipe, timeout: Duration) -> io::Result<Option<Vec<u8>>> {
+    read_frame_until(pipe, Instant::now() + timeout, None)
+}
+
+fn read_frame_until(
+    pipe: &Pipe,
+    deadline: Instant,
+    cancellation: Option<Cancellation<'_>>,
+) -> io::Result<Option<Vec<u8>>> {
+    frame::read(&mut Deadline {
         pipe,
         deadline,
         cancellation,
-    };
-    let body = frame::read(&mut reader)?.ok_or(io::ErrorKind::UnexpectedEof)?;
-    frame::decode(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    })
 }
 
 struct Deadline<'a> {
@@ -252,6 +265,21 @@ mod tests {
         });
         assert_eq!(err.kind(), io::ErrorKind::ConnectionAborted);
         assert!(started.elapsed() < crate::pipe::WRITE_TIMEOUT);
+    }
+
+    #[test]
+    fn a_partial_frame_times_out_while_the_peer_stays_connected() {
+        use std::io::Write;
+
+        for prefix in [&[10, 0][..], &[10, 0, 0, 0, b'{'][..]] {
+            let name = unique_name();
+            let listener = Listener::create(&name).unwrap();
+            let peer = Pipe::connect(&name).unwrap();
+            let pipe = listener.accept(T).unwrap();
+            (&peer).write_all(prefix).unwrap();
+            let err = read_frame(&pipe, Duration::from_millis(100)).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        }
     }
 
     #[test]

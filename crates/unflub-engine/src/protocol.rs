@@ -22,7 +22,10 @@ use unflub_core::Config;
 pub use crate::category::AppCategory;
 
 /// Bump on any change a peer of the previous version would misread.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
+
+/// The app probes every 15 seconds. Leave room for two missed probes and a cold start.
+pub const FRAME_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// App to engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -33,6 +36,8 @@ pub enum ToEngine {
     Welcome { protocol: u32, app_exe: String },
     /// Everything the engine runs with. Sent after `Welcome` and on every change.
     Configure { settings: EngineSettings },
+    /// Confirm the engine worker is processing messages.
+    Ping { nonce: u64 },
     /// Unhook, close the pill and exit.
     Shutdown,
 }
@@ -51,6 +56,10 @@ pub enum FromEngine {
     /// again on the next settings change.
     Ready {
         hooked: bool,
+    },
+    /// Sent by the engine worker after it reaches the matching ping in its queue.
+    Pong {
+        nonce: u64,
     },
     Corrected {
         original: String,
