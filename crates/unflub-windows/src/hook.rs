@@ -227,7 +227,9 @@ pub const REINSTALL_UNLOCK: &str = "unlock";
 pub struct InjectTiming {
     /// The corrector call that decided on the fix.
     pub decide: Duration,
-    /// From handing the batch to the injector thread until `SendInput` returned.
+    /// From handing the batch to the injector thread until `SendInput` returned, or until the
+    /// last injected event came back through our hook when that happened first (it usually
+    /// does: `SendInput` runs our hook for each event before it returns).
     pub inject: Duration,
     /// From swallowing the key until the last injected event came back through our hook.
     pub end_to_end: Duration,
@@ -320,8 +322,28 @@ struct Batch {
     app: Option<String>,
     took: Duration,
     swallowed_at: Instant,
+    /// When the batch went to the injector thread.
+    handed_over: Instant,
     timing: InjectTiming,
+    /// The injector's own `SendInput` time has arrived (`timing.inject`).
+    inject_reported: bool,
     released: bool,
+}
+
+impl Batch {
+    /// Fill in the times of a batch that is over at `now`.
+    ///
+    /// `SendInput` runs every low-level hook on the system, ours included, for each event
+    /// before it returns, so the last echo normally finishes the batch while `SendInput` is
+    /// still running and the injector's report comes after the batch is gone (#139: every
+    /// inject time was 0). The time from the hand-over to that last echo stands in for it then;
+    /// `SendInput` returns microseconds later.
+    fn finish_timing(&mut self, now: Instant) {
+        self.timing.end_to_end = now.saturating_duration_since(self.swallowed_at);
+        if !self.inject_reported {
+            self.timing.inject = now.saturating_duration_since(self.handed_over);
+        }
+    }
 }
 
 enum JobKind {
@@ -1212,11 +1234,12 @@ impl State {
             inject::plan_correction(replacement.delete, &replacement.insert)
         };
         let batch = self.pipeline.begin_undo(ev, held, strokes.len() * 2);
+        let handed_over = Instant::now();
         let job = Job {
             kind: JobKind::Inject,
             batch,
             inputs: inject::to_inputs(&strokes, batch),
-            handed_over: Instant::now(),
+            handed_over,
         };
         self.batches.push(Batch {
             batch,
@@ -1224,11 +1247,13 @@ impl State {
             undo,
             app: self.focus.app.clone(),
             took: start.elapsed(),
-            swallowed_at: Instant::now(),
+            swallowed_at: handed_over,
+            handed_over,
             timing: InjectTiming {
                 decide,
                 ..InjectTiming::default()
             },
+            inject_reported: false,
             released: false,
         });
         if self.jobs.send(job).is_err() {
@@ -1247,6 +1272,7 @@ impl State {
                 JobKind::Inject => {
                     if let Some(b) = self.batches.iter_mut().find(|b| b.batch == r.batch) {
                         b.timing.inject = r.took;
+                        b.inject_reported = true;
                         b.released = r.released;
                     }
                     self.report.inject.record(r.took);
@@ -1446,7 +1472,7 @@ impl State {
             });
             return;
         }
-        b.timing.end_to_end = b.swallowed_at.elapsed();
+        b.finish_timing(Instant::now());
         self.report.decide.record(b.timing.decide);
         self.report.end_to_end.record(b.timing.end_to_end);
         let event = if b.undo {
@@ -1611,6 +1637,46 @@ mod watchdog_tests {
             assert_eq!(decode_held(encode_held(ev)), Some(ev));
         }
         assert_eq!(decode_held(0), None);
+    }
+
+    fn batch(at: Instant) -> Batch {
+        Batch {
+            batch: 1,
+            replacement: Replacement {
+                delete: 3,
+                insert: "the ".into(),
+                original: "teh".into(),
+                corrected: "the".into(),
+                source: unflub_core::Source::Bundled,
+            },
+            undo: false,
+            app: None,
+            took: Duration::ZERO,
+            swallowed_at: at,
+            handed_over: at,
+            timing: InjectTiming::default(),
+            inject_reported: false,
+            released: false,
+        }
+    }
+
+    /// #139: the echoes finish the batch before the injector's report arrives, so the report
+    /// can't be what fills in the inject time.
+    #[test]
+    fn inject_time_is_set_when_the_echoes_finish_first() {
+        let at = Instant::now();
+        let mut b = batch(at);
+        b.finish_timing(at + Duration::from_micros(900));
+        assert_eq!(b.timing.inject, Duration::from_micros(900));
+        assert_eq!(b.timing.end_to_end, Duration::from_micros(900));
+
+        // The report came first (a partial send, or a slow echo): it is kept.
+        let mut b = batch(at);
+        b.timing.inject = Duration::from_micros(400);
+        b.inject_reported = true;
+        b.finish_timing(at + Duration::from_micros(900));
+        assert_eq!(b.timing.inject, Duration::from_micros(400));
+        assert_eq!(b.timing.end_to_end, Duration::from_micros(900));
     }
 
     #[test]
