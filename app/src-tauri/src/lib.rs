@@ -63,6 +63,7 @@ struct AppState {
     interference: Mutex<Interference>,
     /// The engine couldn't install the keyboard hook and is being retried with backoff.
     hook_unavailable: std::sync::atomic::AtomicBool,
+    stopping: std::sync::atomic::AtomicBool,
 }
 
 /// See [`AppState::interference`]. Each start is also counted in the anonymous usage stats as
@@ -401,7 +402,7 @@ fn set_interference(app: &AppHandle, active: bool) {
             );
         }
     }
-    refresh_tray(app, current_settings(app).enabled);
+    refresh_tray(app);
     let _ = app.emit(INTERFERENCE_EVENT, active);
 }
 
@@ -447,8 +448,10 @@ fn update_settings(
             // Pausing ends the engine, and with it the interference.
             set_interference(app, false);
         }
-        refresh_tray(app, next.enabled);
-        refresh_window_icon(app, next.enabled);
+        refresh_tray(app);
+        queue_ui_refresh(app, |app| {
+            refresh_window_icon(app, current_settings(app).enabled)
+        });
     }
     if prev.share_usage_stats != next.share_usage_stats {
         let managed = app.state::<AppInfo>().managed;
@@ -578,7 +581,7 @@ fn observe(app: &AppHandle, event: Observed) {
             app.state::<AppState>()
                 .hook_unavailable
                 .store(active, std::sync::atomic::Ordering::Relaxed);
-            refresh_tray(app, current_settings(app).enabled);
+            refresh_tray(app);
         }
         Observed::EngineCrashed => {
             set_interference(app, false);
@@ -625,6 +628,15 @@ fn stop_engine(app: &AppHandle) {
     if let Some(usage) = app.try_state::<Usage>() {
         usage.flush();
     }
+}
+
+fn stop_on_exit(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state
+            .stopping
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    stop_engine(app);
 }
 
 fn sync_autostart(app: &AppHandle, on: bool) {
@@ -697,7 +709,12 @@ fn tooltip(enabled: bool, interference: bool, hook_unavailable: bool) -> &'stati
     }
 }
 
-fn refresh_tray(app: &AppHandle, enabled: bool) {
+fn refresh_tray(app: &AppHandle) {
+    queue_ui_refresh(app, refresh_tray_on_main_thread);
+}
+
+fn refresh_tray_on_main_thread(app: &AppHandle) {
+    let enabled = current_settings(app).enabled;
     let state = app.state::<AppState>();
     let interference = state.interference.lock().unwrap().active;
     let hook_unavailable = state
@@ -818,6 +835,20 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 
 /// Rebuild the tray menu after the update or crash-report state changed.
 fn refresh_tray_menu(app: &AppHandle) {
+    queue_ui_refresh(app, rebuild_tray_menu);
+}
+
+fn queue_ui_refresh(app: &AppHandle, refresh: impl FnOnce(&AppHandle) + Send + 'static) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        if !state.stopping.load(std::sync::atomic::Ordering::Relaxed) {
+            refresh(&handle);
+        }
+    });
+}
+
+fn rebuild_tray_menu(app: &AppHandle) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
@@ -834,7 +865,7 @@ fn quit(app: &AppHandle) {
     if updates::install_on_quit(app) {
         return;
     }
-    stop_engine(app);
+    stop_on_exit(app);
     app.exit(0);
 }
 
@@ -983,6 +1014,7 @@ pub fn run() {
                 pending_learned: Mutex::new(Vec::new()),
                 interference: Mutex::default(),
                 hook_unavailable: Default::default(),
+                stopping: Default::default(),
             });
             let handle = app.handle();
             let learner = handle.clone();
@@ -1060,7 +1092,7 @@ pub fn run() {
         RunEvent::ExitRequested {
             api, code: None, ..
         } => api.prevent_exit(),
-        RunEvent::Exit => stop_engine(app),
+        RunEvent::Exit => stop_on_exit(app),
         _ => {}
     });
 }
