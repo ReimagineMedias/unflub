@@ -363,6 +363,61 @@ fn learning_needs_repeated_undos() {
     );
 }
 
+/// #43: an undo the hook refuses to type (auto-repeat, modifier held, dry run) left the fix in
+/// place, so it is neither counted nor learned, however often it happens.
+#[test]
+fn a_refused_undo_teaches_nothing() {
+    for undo_mode in [UndoMode::Twice, UndoMode::Once] {
+        let mut t = mode(undo_mode, 2);
+        t.refuse_undos = true;
+        for _ in 0..3 {
+            t.type_str("ok teh ");
+            if undo_mode == UndoMode::Twice {
+                assert!(matches!(t.press(Key::Backspace), Action::HoldBackspace(_)));
+            }
+            assert!(matches!(t.press(Key::Backspace), Action::Undo(_)));
+        }
+        assert_eq!(t.engine.undo_count("teh", "the"), 0, "{undo_mode:?}");
+        assert!(learned(&mut t).is_empty(), "{undo_mode:?}");
+        assert!(
+            !t.engine
+                .drain_events()
+                .iter()
+                .any(|e| matches!(e, Event::Undone(_))),
+            "{undo_mode:?}"
+        );
+        t.refuse_undos = false;
+        assert!(
+            t.type_str(" teh ").ends_with(" the "),
+            "{undo_mode:?}: still fixed"
+        );
+    }
+}
+
+/// #43: only the undo just decided can be reported as landed, and only once.
+#[test]
+fn only_the_last_undo_lands_once() {
+    let mut t = mode(UndoMode::Once, 2);
+    t.refuse_undos = true;
+    t.type_str("ok teh ");
+    let Action::Undo(refused) = t.press(Key::Backspace) else {
+        panic!("undo")
+    };
+    t.refuse_undos = false;
+    // The refusal reset the engine: the first word after it is never fixed.
+    t.type_str("ok adn ");
+    let Action::Undo(landed) = t.press(Key::Backspace) else {
+        panic!("undo")
+    };
+    assert_eq!(t.engine.undo_count("adn", "and"), 1);
+    // A stale or repeated report changes nothing.
+    t.engine.undo_landed(&refused);
+    t.engine.undo_landed(&landed);
+    assert_eq!(t.engine.undo_count("teh", "the"), 0);
+    assert_eq!(t.engine.undo_count("adn", "and"), 1);
+    assert!(learned(&mut t).is_empty());
+}
+
 /// Clearing history (a new epoch from the app) empties the engine's counts.
 #[test]
 fn a_new_undo_epoch_forgets_the_counts() {
