@@ -175,6 +175,10 @@ const mockTour = (() => {
     key(key: string): TourAction {
       const undo = last;
       last = null;
+      if (key === "Reset") {
+        word = "";
+        return { kind: "pass" };
+      }
       if (key === "Backspace") {
         if (undo) {
           learned.add(undo.original.toLowerCase());
