@@ -213,6 +213,21 @@ pub fn password_answer(
     }
 }
 
+/// After a UIA query failed or timed out (`Unknown`) `tries` times already, how long to wait
+/// before asking again; `None` when the answer stands.
+///
+/// The first query on a Chromium page switches on its accessibility tree, which can take longer
+/// than the 500 ms UIA transaction timeout. That `Unknown` used to stand for the whole
+/// generation, so the field stayed secure until the next click, Tab, Enter or focus event: a
+/// whole sentence typed right after focusing a contenteditable went uncorrected (#117).
+pub fn retry_after(answer: Secure, tries: usize) -> Option<std::time::Duration> {
+    const WAITS_MS: [u64; 2] = [250, 750];
+    (answer == Secure::Unknown)
+        .then(|| WAITS_MS.get(tries))
+        .flatten()
+        .map(|ms| std::time::Duration::from_millis(*ms))
+}
+
 /// The UIA worker's answer about one focused element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Secure {
@@ -702,7 +717,16 @@ mod win {
 
     fn serve(uia: &IUIAutomation, rx: &Receiver<Request>, slot: &PasswordSlot) {
         let mut seen = SeenPasswords::<Vec<i32>>::default();
-        while let Ok(mut req) = rx.recv() {
+        // A newer request that arrived while an answer was being retried.
+        let mut next: Option<Request> = None;
+        loop {
+            let mut req = match next.take() {
+                Some(r) => r,
+                None => match rx.recv() {
+                    Ok(r) => r,
+                    Err(_) => return,
+                },
+            };
             // Coalesce to the latest request and wait until it is due.
             loop {
                 match rx.try_recv() {
@@ -725,13 +749,37 @@ mod win {
             }
             // SAFETY: a plain query on window handles.
             seen.forget_gone(|owner| unsafe { IsWindow(HWND(owner as _)) }.as_bool());
-            // SAFETY: valid interface used on the MTA thread that created it.
-            let focused = unsafe { uia.GetFocusedElement() };
-            // SAFETY: as above, for the element it returned.
-            let answer = match &focused {
-                Ok(e) => unsafe { password_field(e, req.owner, &mut seen) },
-                Err(_) => Secure::Unknown,
+            let mut ask = || {
+                // SAFETY: valid interface used on the MTA thread that created it.
+                let focused = unsafe { uia.GetFocusedElement() };
+                // SAFETY: as above, for the element it returned.
+                let answer = match &focused {
+                    Ok(e) => unsafe { password_field(e, req.owner, &mut seen) },
+                    Err(_) => Secure::Unknown,
+                };
+                (answer, focused)
             };
+            let (mut answer, mut focused) = ask();
+            // A failed or timed-out query is asked again before it counts (the field stays
+            // pending, so secure, meanwhile), unless focus moves on first.
+            let mut tries = 0;
+            while let Some(wait) = super::retry_after(answer, tries) {
+                match rx.recv_timeout(wait) {
+                    Ok(r) => {
+                        next = Some(r);
+                        break;
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        tries += 1;
+                        (answer, focused) = ask();
+                    }
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            if next.is_some() {
+                // Superseded: the hook has moved on to a newer generation.
+                continue;
+            }
             slot.publish(req.generation, answer);
             // Only worth asking where the first word may be corrected at all.
             let word_start = match (answer, focused) {
@@ -1032,6 +1080,23 @@ mod tests {
         f.uia_available = false;
         f.refresh(9, FieldKind::Probe, false);
         assert_eq!(f.check(), FieldCheck::Secure, "no UIA: nothing to wait for");
+    }
+
+    /// #117: a timed-out query is asked twice more before the field stays secure.
+    #[test]
+    fn unknown_answers_are_retried_twice() {
+        use std::time::Duration;
+        assert_eq!(
+            retry_after(Secure::Unknown, 0),
+            Some(Duration::from_millis(250))
+        );
+        assert_eq!(
+            retry_after(Secure::Unknown, 1),
+            Some(Duration::from_millis(750))
+        );
+        assert_eq!(retry_after(Secure::Unknown, 2), None);
+        assert_eq!(retry_after(Secure::NotSecure, 0), None);
+        assert_eq!(retry_after(Secure::Secure, 0), None);
     }
 
     #[test]
