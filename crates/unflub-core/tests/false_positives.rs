@@ -3,7 +3,7 @@
 mod common;
 
 use common::Typist;
-use unflub_core::{Config, EngineMode};
+use unflub_core::{Config, Engine, EngineMode, SpellBackend};
 
 fn bundled_with(personal: &[&str]) -> Typist {
     Typist::new(Config {
@@ -147,4 +147,61 @@ savour behaviour organise recognise mum";
         }
         assert!(changed.is_empty(), "{mode:?}: {}", changed.join(" | "));
     }
+}
+
+/// An OS checker whose list has none of the words: what Windows' en-US checker does for
+/// shorthand, brands and lowercase names.
+struct FlagsEverything;
+
+impl SpellBackend for FlagsEverything {
+    fn is_correct(&self, _: &str) -> bool {
+        false
+    }
+
+    fn auto_replacement(&self, _: &str) -> Option<String> {
+        None
+    }
+}
+
+/// #36: chat shorthand, lowercase names, brands, acronyms and tech words became unrelated
+/// common words (`tho` -> `the`, `lyft` -> `left`, `qa` -> `a`, `fn` -> `fun`).
+#[test]
+fn shorthand_brands_and_names_stay() {
+    let words = "tho wth smth yeet okr highkey lowkey sus ofc ty theo noor bjorn bilal matias \
+valentina sebastien dragan wechat lyft quora viber pinterest fortnite interac aws qa ints fn ssh \
+nvme saml nuxt guid buf strlen printf undervolt gpu cpu theek yaar kuch arre";
+    let modes = [
+        (EngineMode::BundledOnly, false),
+        (EngineMode::Both, true),
+        (EngineMode::Balanced, true),
+        (EngineMode::Aggressive, true),
+        (EngineMode::Aggressive, false),
+    ];
+    for (mode, checker) in modes {
+        let mut changed = Vec::new();
+        for word in words.split_ascii_whitespace() {
+            for text in [format!("ok {word} ok "), format!("so {word} today ")] {
+                let backend = checker.then(|| Box::new(FlagsEverything) as Box<dyn SpellBackend>);
+                let config = Config {
+                    mode,
+                    ..Config::default()
+                };
+                let mut t = Typist::with_engine(Engine::new(config, backend));
+                let got = t.type_str(&text).to_string();
+                if got != text {
+                    changed.push(got);
+                }
+            }
+        }
+        assert!(
+            changed.is_empty(),
+            "{mode:?} checker {checker}: {}",
+            changed.join(" | ")
+        );
+    }
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("my lyft's driver "), "my lyft's driver ");
+    // The guard is for shorthand, not typos: a slip of a common word is still fixed.
+    let mut t = Typist::bundled();
+    assert_eq!(t.type_str("teh adn thw "), "the and the ");
 }

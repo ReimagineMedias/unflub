@@ -630,6 +630,7 @@ impl Engine {
         if word.chars().count() < self.config.min_word_len
             || case == Case::Mixed
             || is_personal(&self.rules.personal, &self.lower)
+            || self.dict.is_protected(&self.lower)
             || !is_dictionary_shape(&self.lower)
         {
             return None;
@@ -638,7 +639,8 @@ impl Engine {
         // ranking the whole form only finds plurals and bare names (`sisters`, `Collins`).
         // A typo in the base (`sistr's`) is fixed on the base, keeping the `'s` as typed.
         if let Some(base_len) = self.lower.strip_suffix("'s").map(str::len) {
-            let base_known = self.dict.id(&self.lower.as_bytes()[..base_len]).is_some();
+            let base_known = self.dict.id(&self.lower.as_bytes()[..base_len]).is_some()
+                || self.dict.is_protected(&self.lower[..base_len]);
             if base_len == 0 || base_known || case != Case::Lower {
                 return None;
             }
@@ -699,7 +701,8 @@ impl Engine {
     /// Runs detection and candidate ranking for the current word per the engine mode.
     fn detect_and_rank(&mut self, cur: &session::Current) -> Option<(Source, String)> {
         let lower = self.lower.as_bytes();
-        let known = self.dict.id(lower).is_some();
+        let own = self.dict.id(lower);
+        let known = own.is_some();
         // A capitalised word mid-sentence is most likely a name (`Longbourn`, `Meryton`): no
         // fix. At a sentence start, or right after a reset where nothing was seen before it,
         // capitals say nothing (`Teh` is still fixed).
@@ -747,6 +750,11 @@ impl Engine {
             }
         };
         if !flagged {
+            return None;
+        }
+        // unflub's own lists (tech words, shorthand, regional spellings) are words on purpose,
+        // even where the OS checker's en-US list lacks them: `fn` stays, not `fun`.
+        if own.is_some_and(|id| self.dict.is_curated(id)) {
             return None;
         }
         if let Some(fix) = self.dict.misspelling(&self.lower) {

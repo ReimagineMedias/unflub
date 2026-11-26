@@ -305,7 +305,8 @@ and only the OS checker's own fixes apply (French `bien` must never become `been
 
 The bundled dictionary includes about 1,000 programming terms (`data/tech_words.txt`):
 keywords, standard types, tools and jargon. People write prose about code all day, so these
-count as known words and are never corrected.
+count as known words and are never corrected, even in modes where the OS checker flags them
+(as for the other lists unflub adds: everyday words and regional spellings).
 
 ## Never corrected
 
@@ -313,6 +314,8 @@ count as known words and are never corrected.
 - Code-looking tokens: camelCase, snake_case, paths, URLs, anything inside backticks, words with
   digits, and all-caps words (treated as acronyms).
 - The personal dictionary and words the user has undone before.
+- The protected list (`data/protected_words.txt`): chat shorthand (`tho`, `smth`), brands
+  (`lyft`), acronyms typed in lowercase (`aws`) and common first names (`theo`).
 - Words shorter than the minimum length.
 - The first word after a reset: the caret may be in the middle of text we never saw.
 - Hyphenated words, words with non-ASCII letters, and words ending in an apostrophe.

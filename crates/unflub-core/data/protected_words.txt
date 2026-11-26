@@ -1,0 +1,37 @@
+# Words people type on purpose that the ranking would otherwise "fix" into a common word (#36):
+# chat shorthand, brands and products, acronyms, romanised Hindi and lowercase first names.
+# Never corrected and never suggested. Whitespace separated, lowercase.
+#
+# Left out on purpose: shorthand that is also one slip from a very common word, where the fix
+# is usually right (amd and, ussr user, uae use, gst get, ssd sad, np no, pr or, hr he, ip up,
+# cia via, cra car, gis his, cta cat, hai hi, nas has). Two and three letter words are also
+# guarded in rank.rs: they are never cut to a shorter word (qa, okr, aws, ios, sso).
+
+# Chat shorthand
+tho wth smth yeet okr highkey lowkey sus fr idc ikr ily iykyk istg jk nvm ofc pov rofl tbf tfw
+wyd wym hbu hmu fomo yolo bae finna tryna oml tysm plz ppl bc cuz rly srsly prolly obvi abt
+bday gf bf bff afk gg ftw fyi tldr rn mhm welp oof bruh deadass periodt ty vibing
+
+# Brands and products
+lyft wechat quora viber pinterest fortnite interac uber spotify netflix tiktok youtube snapchat
+venmo zelle paypal roblox minecraft nintendo xbox playstation samsung xiaomi
+huawei lenovo asus acer nvidia ryzen radeon geforce iphone ipad macbook airpods chromebook
+gmail shopify etsy ebay airbnb doordash grubhub instacart ubereats deliveroo skype canva
+dropbox onedrive icloud waze duolingo peloton fitbit garmin rivian ikea costco walmart
+aldi lidl tesco kroger loblaws starbucks mcdonalds chipotle telus verizon tmobile comcast
+xfinity wordle chatgpt openai deepseek midjourney
+
+# Acronyms typed in lowercase
+aws gcp hst pst utc usa eu nasa fbi nhs ceo cto cfo kpi kpis roi saas faq faqs mvp poc eod eow
+ooo pto tba tbd rsvp ama nda sla rfp ml gpt nlp ocr crm erp seo
+
+# Romanised Hindi common in chat
+theek yaar kuch arre accha acha nahi bhai kya kyun matlab chalo bahut thoda abhi kaise jaldi
+haan
+
+# First names typed in lowercase (capitalised names mid-sentence are already left alone)
+theo noor bjorn bilal matias valentina sebastien dragan hassan zainab priya rohan arjun ananya
+aditya vikram neha pooja sanjay deepak mei hiroshi yuki kenji sakura haruto jiho minjun seojun
+katya mateo camila thiago joao luca giulia alessandro matteo chiara emre mehmet ayse kwame kofi
+amara chidi ngozi tunde siobhan niamh aoife cillian saoirse aiden jayden hana kai axel soren
+mathieu etienne aurelie benoit gaspard jens anouk sanne daan bram kees
