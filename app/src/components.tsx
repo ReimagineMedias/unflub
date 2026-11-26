@@ -126,11 +126,12 @@ export function PowerSwitch({ checked, onChange }: { checked: boolean; onChange:
  * screen reader users get it too. Every title shares one grid cell, so the group always reserves the
  * tallest one's height and nothing below moves while tabbing.
  */
-export function Segmented<T extends string>({ value, options, onChange, label }: {
+export function Segmented<T extends string>({ value, options, onChange, label, disabled }: {
   value: T;
   options: { value: T; label: string; title?: string }[];
   onChange: (v: T) => void;
   label: string;
+  disabled?: boolean;
 }) {
   const tipId = useId();
   const [focused, setFocused] = useState<T | null>(null);
@@ -139,7 +140,7 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
     <div className="seg-group" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(null); }}>
       <div className="seg" role="group" aria-label={label}>
         {options.map((o) => (
-          <button key={o.value} title={o.title} aria-pressed={o.value === value} aria-describedby={o.title && o.value === focused ? `${tipId}-${o.value}` : undefined}
+          <button key={o.value} title={o.title} disabled={disabled} aria-pressed={o.value === value} aria-describedby={o.title && o.value === focused ? `${tipId}-${o.value}` : undefined}
             onFocus={() => setFocused(o.value)} onClick={() => onChange(o.value)}>
             {o.label}
           </button>

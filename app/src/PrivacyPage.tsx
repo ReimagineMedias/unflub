@@ -58,8 +58,8 @@ export function PrivacyPage({ settings: s, info, update }: {
           <Switch label={t("privacy.autoUpdate")} disabled={m?.disableUpdates}
             checked={s.autoUpdate && !m?.disableUpdates} onChange={(v) => update({ autoUpdate: v })} />
         </Row>
-        <Row label={t("privacy.channel")} hint={t("privacy.channel.hint")}>
-          <Segmented label={t("privacy.channel")} value={s.channel} onChange={(v) => update({ channel: v })} options={[
+        <Row label={t("privacy.channel")} hint={m?.disableUpdates ? t("privacy.managed") : t("privacy.channel.hint")}>
+          <Segmented label={t("privacy.channel")} disabled={m?.disableUpdates} value={s.channel} onChange={(v) => update({ channel: v })} options={[
             { value: "stable", label: t("privacy.channel.stable") }, { value: "beta", label: t("privacy.channel.beta") },
           ]} />
         </Row>
