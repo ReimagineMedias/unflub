@@ -99,3 +99,39 @@ fn missing_space_is_not_fixed_wrongly() {
     let got = fix(None, "Iwant");
     assert!(got == "Iwant" || got == "I want", "Iwant became {got}");
 }
+
+/// #64: typos a much more frequent word used to win (`collegue` to `college`), and dropped
+/// inflections (`jumsp` to `jump`). Each must give the intended word, or stay as typed where
+/// the word is missing from the list.
+#[test]
+fn frequent_neighbours_do_not_win() {
+    let exact = [
+        ("collegue", "colleague"),
+        ("rember", "remember"),
+        ("sieze", "seize"),
+        ("tounge", "tongue"),
+        ("happend", "happened"),
+        ("helo", "hello"),
+        ("everytime", "every time"),
+        ("peice", "piece"),
+        ("neice", "niece"),
+        ("fourty", "forty"),
+        ("preceed", "precede"),
+        ("definatly", "definitely"),
+        ("wierd", "weird"),
+        ("calender", "calendar"),
+        ("Collegue", "Colleague"),
+    ];
+    for (typed, expected) in exact {
+        assert_eq!(fix(None, typed), expected, "{typed}");
+    }
+    assert_eq!(fix(Some("he"), "happend"), "happened");
+    for (typed, ok) in [
+        ("jumsp", "jumps"),
+        ("incomprehensibilites", "incomprehensibilities"),
+        ("counterrevolutionarys", "counterrevolutionaries"),
+    ] {
+        let got = fix(None, typed);
+        assert!(got == typed || got == ok, "{typed} became {got}");
+    }
+}
