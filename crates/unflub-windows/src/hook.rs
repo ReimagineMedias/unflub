@@ -821,11 +821,7 @@ fn input_hidden_from_hooks() -> Hidden {
     if hwnd.is_invalid() || pid == 0 {
         return Hidden::SecureDesktop;
     }
-    if hidden_by_integrity(integrity::of_process(pid), integrity::own()) {
-        Hidden::Elevated
-    } else {
-        Hidden::No
-    }
+    hidden_kind(integrity::of_process(pid), integrity::own())
 }
 
 /// Where input goes that our hooks can't see ([`input_hidden_from_hooks`]).
@@ -834,8 +830,22 @@ enum Hidden {
     No,
     /// No foreground window of ours to read: UAC prompt, lock screen, Ctrl+Alt+Del.
     SecureDesktop,
-    /// A window of a higher integrity level (an administrator app), or one we can't query.
+    /// A window whose integrity level we read and is higher than ours: an administrator app.
+    /// Only this one is reported as [`HookEvent::ElevatedWindow`].
     Elevated,
+    /// A foreground process we can't query (protected, or gone): excused like the others, but
+    /// not said to be an administrator window, since we don't know that.
+    Unqueried,
+}
+
+/// [`Hidden`] for a foreground process of integrity level `foreground` (`None`: unreadable)
+/// and our own level `own`.
+fn hidden_kind(foreground: Option<u32>, own: Option<u32>) -> Hidden {
+    match (foreground, own) {
+        (Some(f), Some(o)) if f > o => Hidden::Elevated,
+        _ if hidden_by_integrity(foreground, own) => Hidden::Unqueried,
+        _ => Hidden::No,
+    }
 }
 
 /// Input to a process of integrity level `foreground` is invisible to hooks of level `own`. A
@@ -2120,6 +2130,13 @@ mod watchdog_tests {
         );
         assert!(hidden_by_integrity(Some(SYSTEM), Some(HIGH)));
         assert!(hidden_by_integrity(None, Some(MEDIUM)), "can't query it");
+        // Review L3: only a level we read and that is higher counts as an administrator
+        // window; one we can't read is still excused, but not reported.
+        assert_eq!(hidden_kind(Some(HIGH), Some(MEDIUM)), Hidden::Elevated);
+        assert_eq!(hidden_kind(None, Some(MEDIUM)), Hidden::Unqueried);
+        assert_eq!(hidden_kind(None, None), Hidden::Unqueried);
+        assert_eq!(hidden_kind(Some(MEDIUM), Some(MEDIUM)), Hidden::No);
+        assert_eq!(hidden_kind(Some(HIGH), None), Hidden::No);
         assert!(!hidden_by_integrity(Some(MEDIUM), Some(MEDIUM)));
         assert!(
             !hidden_by_integrity(Some(LOW), Some(MEDIUM)),
