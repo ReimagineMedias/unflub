@@ -10,6 +10,7 @@ The engine embeds these files with `include_str!` and builds its index from them
 | `tech_words.txt` | unflub: about 1,000 programming terms (keywords, standard types, tools, jargon), loaded as known words with a modest count | MIT (this repository) |
 | `spelling_variants.txt` | unflub: American and British spellings of the same word; the one the frequency list lacks gets the other's count | MIT (this repository) |
 | `misspellings.txt` | unflub: common misspellings the ranking gets wrong, with their fixes; checked before ranking | MIT (this repository) |
+| `protected_words.txt` | unflub: chat shorthand, brands, acronyms and lowercase first names that are never corrected or suggested | MIT (this repository) |
 | `contractions.txt` | unflub: contractions and their expansions, used to give contractions realistic counts | MIT (this repository) |
 
 The SymSpell files were taken from commit `91fe939e9c1259813ee817e95239629c5badf8ec`

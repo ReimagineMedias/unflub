@@ -11,6 +11,7 @@ const CONTRACTIONS: &str = include_str!("../data/contractions.txt");
 const TECH_WORDS: &str = include_str!("../data/tech_words.txt");
 const SPELLING_VARIANTS: &str = include_str!("../data/spelling_variants.txt");
 const MISSPELLINGS: &str = include_str!("../data/misspellings.txt");
+const PROTECTED: &str = include_str!("../data/protected_words.txt");
 
 /// Longest dictionary word kept, in bytes.
 const MAX_WORD: usize = 32;
@@ -39,6 +40,11 @@ pub struct Dictionary {
     /// Common misspellings the ranking gets wrong, and their fixes (`collegue` to `colleague`,
     /// `alot` to `a lot`). None of them is a known word.
     misspellings: HashMap<Box<str>, Box<str>>,
+    /// Bit per word id: the word comes from unflub's own lists (extra, tech, spelling variants),
+    /// so it is a word on purpose even where the OS checker flags it.
+    curated: Vec<u64>,
+    /// Shorthand, brands, acronyms and names that are never corrected and never suggested.
+    protected: HashSet<Box<str>>,
 }
 
 fn hash(bytes: impl IntoIterator<Item = u8>) -> u32 {
@@ -90,34 +96,50 @@ fn parse_counts(text: &str) -> impl Iterator<Item = (&str, &str)> {
         .filter_map(|l| l.rsplit_once(' '))
 }
 
+/// The text of each data file the dictionary is built from (see `data/README.md`).
+#[derive(Default)]
+struct Sources<'a> {
+    unigrams: &'a str,
+    bigrams: &'a str,
+    extra: &'a str,
+    contractions: &'a str,
+    tech: &'a str,
+    variants: &'a str,
+    misspellings: &'a str,
+    protected: &'a str,
+}
+
 impl Dictionary {
     /// The bundled English dictionary, built on first use (tens of milliseconds in release).
     pub fn english() -> Arc<Dictionary> {
         static ENGLISH: OnceLock<Arc<Dictionary>> = OnceLock::new();
         ENGLISH
             .get_or_init(|| {
-                Arc::new(Dictionary::build(
-                    UNIGRAMS,
-                    BIGRAMS,
-                    EXTRA_WORDS,
-                    CONTRACTIONS,
-                    TECH_WORDS,
-                    SPELLING_VARIANTS,
-                    MISSPELLINGS,
-                ))
+                Arc::new(Dictionary::build(Sources {
+                    unigrams: UNIGRAMS,
+                    bigrams: BIGRAMS,
+                    extra: EXTRA_WORDS,
+                    contractions: CONTRACTIONS,
+                    tech: TECH_WORDS,
+                    variants: SPELLING_VARIANTS,
+                    misspellings: MISSPELLINGS,
+                    protected: PROTECTED,
+                }))
             })
             .clone()
     }
 
-    fn build<'a>(
-        unigrams: &'a str,
-        bigrams: &'a str,
-        extra: &'a str,
-        contractions: &'a str,
-        tech: &'a str,
-        variants: &'a str,
-        misspellings: &'a str,
-    ) -> Self {
+    fn build<'a>(sources: Sources<'a>) -> Self {
+        let Sources {
+            unigrams,
+            bigrams,
+            extra,
+            contractions,
+            tech,
+            variants,
+            misspellings,
+            protected,
+        } = sources;
         fn add<'a>(
             w: &'a str,
             c: f64,
@@ -148,12 +170,18 @@ impl Dictionary {
         let typos: HashSet<&str> = misspellings.keys().map(|t| &**t).collect();
         let mut counts: Vec<(&'a str, f64)> = Vec::with_capacity(90_000);
         let mut index: HashMap<&'a str, usize> = HashMap::with_capacity(90_000);
-        for (w, c) in parse_counts(unigrams).chain(parse_counts(extra)) {
-            if typos.contains(w.trim()) {
-                continue;
-            }
-            if let Ok(c) = c.trim().parse::<f64>() {
-                add(w, c, &mut counts, &mut index);
+        let mut curated: Vec<&'a str> = Vec::with_capacity(2_000);
+        for (list, is_curated) in [(unigrams, false), (extra, true)] {
+            for (w, c) in parse_counts(list) {
+                if typos.contains(w.trim()) {
+                    continue;
+                }
+                if let Ok(c) = c.trim().parse::<f64>() {
+                    add(w, c, &mut counts, &mut index);
+                    if is_curated {
+                        curated.push(w.trim());
+                    }
+                }
             }
         }
         let tech_words = tech
@@ -163,6 +191,7 @@ impl Dictionary {
             .filter(|w| !typos.contains(w));
         for w in tech_words {
             add(w, TECH_COUNT, &mut counts, &mut index);
+            curated.push(w);
         }
         // American and British spellings: the one the list lacks gets the other's count, so
         // neither is a typo of the other.
@@ -179,6 +208,7 @@ impl Dictionary {
                 (None, Some(&i)) => add(a, counts[i].1, &mut counts, &mut index),
                 _ => {}
             }
+            curated.extend([a, b]);
         }
 
         let uni_total: f64 = counts.iter().map(|&(_, c)| c).sum();
@@ -248,6 +278,17 @@ impl Dictionary {
 
         let (del_start, del_ids) = Self::build_deletes(&counts);
 
+        let mut curated_bits = vec![0u64; counts.len().div_ceil(64)];
+        for &id in curated.iter().filter_map(|w| index.get(w)) {
+            curated_bits[id / 64] |= 1 << (id % 64);
+        }
+        let protected = protected
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .flat_map(str::split_ascii_whitespace)
+            .map(Box::from)
+            .collect();
+
         let mut bigrams: Vec<(u64, f32)> = bigram_raw
             .into_iter()
             .map(|((a, b), c)| {
@@ -270,6 +311,8 @@ impl Dictionary {
             bigram_keys,
             bigram_p,
             misspellings,
+            curated: curated_bits,
+            protected,
         }
     }
 
@@ -334,6 +377,19 @@ impl Dictionary {
             }
             slot = (slot + 1) & mask;
         }
+    }
+
+    /// Whether the word comes from unflub's own lists (extra, tech, spelling variants).
+    pub(crate) fn is_curated(&self, id: u32) -> bool {
+        let id = id as usize;
+        self.curated
+            .get(id / 64)
+            .is_some_and(|bits| bits & (1 << (id % 64)) != 0)
+    }
+
+    /// Whether the word (lowercase) is on the protected list: never corrected.
+    pub(crate) fn is_protected(&self, w: &str) -> bool {
+        self.protected.contains(w)
     }
 
     /// The listed fix for a common misspelling (lowercase), if it is one.
@@ -402,16 +458,22 @@ mod tests {
 
     #[test]
     fn tiny_dictionary() {
-        let d = Dictionary::build(
-            "the 100\nthen 10\nhello 5\n",
-            "hello there 50\nthe then 7\n",
-            "ok 3\nteh 2\n",
-            "can't cannot\n",
-            "# comment\nimpl usize the\n",
-            "",
-            "# typo fix\nteh the\nalot a lot\n",
-        );
+        let d = Dictionary::build(Sources {
+            unigrams: "the 100\nthen 10\nhello 5\n",
+            bigrams: "hello there 50\nthe then 7\n",
+            extra: "ok 3\nteh 2\n",
+            contractions: "can't cannot\n",
+            tech: "# comment\nimpl usize the\n",
+            misspellings: "# typo fix\nteh the\nalot a lot\n",
+            protected: "# comment\nlyft theo\n",
+            ..Sources::default()
+        });
         assert_eq!(d.word_count(), 6, "a listed misspelling is not a word");
+        assert!(d.is_protected("lyft") && d.is_protected("theo"));
+        assert!(!d.is_protected("comment") && d.id(b"lyft").is_none());
+        assert!(d.is_curated(d.id(b"ok").unwrap()), "an extra word");
+        assert!(d.is_curated(d.id(b"usize").unwrap()), "a tech word");
+        assert!(!d.is_curated(d.id(b"hello").unwrap()));
         assert_eq!(d.misspelling("alot"), Some("a lot"));
         assert_eq!(d.misspelling("teh"), Some("the"));
         assert_eq!(d.misspelling("the"), None);
@@ -431,15 +493,11 @@ mod tests {
 
     #[test]
     fn spelling_variants_share_a_count() {
-        let d = Dictionary::build(
-            "the 100\ncolour 40\nbehavior 30\n",
-            "",
-            "",
-            "",
-            "",
-            "color colour\nbehavior behaviour\nfoo bar\n",
-            "",
-        );
+        let d = Dictionary::build(Sources {
+            unigrams: "the 100\ncolour 40\nbehavior 30\n",
+            variants: "color colour\nbehavior behaviour\nfoo bar\n",
+            ..Sources::default()
+        });
         let (us, gb) = (d.id(b"color").unwrap(), d.id(b"colour").unwrap());
         assert_eq!(d.log_p(us), d.log_p(gb));
         let (us, gb) = (d.id(b"behavior").unwrap(), d.id(b"behaviour").unwrap());

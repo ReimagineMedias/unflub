@@ -65,6 +65,13 @@ pub const TUNING: Tuning = Tuning {
     oov_per_letter: 3.0,
 };
 
+/// Two or three typed letters are more likely shorthand than a slip, so they are never cut to
+/// fewer (`qa` to `a`, `okr` to `or`, `aws` to `as`) unless a letter was doubled (`iss`).
+fn cuts_short_word(typed: &[u8], cand: &[u8]) -> bool {
+    let n = typed.len();
+    n <= 3 && cand.len() < n && !typed.windows(2).any(|w| w[0] == w[1])
+}
+
 pub struct Choice {
     pub id: u32,
     /// Score lead over the runner-up (another candidate, the typed word itself, or "leave it").
@@ -140,7 +147,7 @@ impl Ranker {
                 continue;
             }
             let word = dict.word(id).as_bytes();
-            if word.len().abs_diff(typed.len()) > 3 {
+            if word.len().abs_diff(typed.len()) > 3 || cuts_short_word(typed, word) {
                 continue;
             }
             let lp = Self::context_log_p(dict, id, prev);
@@ -199,5 +206,15 @@ mod tests {
         assert!(!drops("classs", "class"), "a doubled s");
         assert!(!drops("its", "it"), "too short to tell");
         assert!(!drops("alredad", "already"), "a vowel before the d");
+    }
+
+    #[test]
+    fn short_words_are_not_cut() {
+        let cuts = |t: &str, c: &str| super::cuts_short_word(t.as_bytes(), c.as_bytes());
+        assert!(cuts("qa", "a"));
+        assert!(cuts("okr", "or"));
+        assert!(!cuts("iss", "is"), "a doubled letter");
+        assert!(!cuts("thw", "the"), "same length");
+        assert!(!cuts("thje", "the"), "four letters");
     }
 }

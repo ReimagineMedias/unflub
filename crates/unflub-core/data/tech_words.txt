@@ -115,3 +115,7 @@ sh ps fns vars consts inits figma grafana kibana sentry
 datadog prometheus loki jaeger otel opentelemetry
 # Found by the quality corpus (examples/quality.rs) as valid words the engine "fixed".
 truthy falsy crypto implementors
+
+# Hardware, systems and C names typed in lowercase (#36).
+ints guid guids strlen printf sprintf fprintf undervolt undervolting overclocking nvme gpu gpus
+cpu cpus hdd hdds usb hdmi macos saml ldap
