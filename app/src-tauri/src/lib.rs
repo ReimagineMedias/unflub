@@ -441,7 +441,7 @@ fn tour_reset(app: AppHandle) {
 /// Async so it runs on a runtime worker, not the main thread: a panic in the practice engine
 /// then keeps only its location (`crash.rs` keeps messages from `main`).
 #[tauri::command]
-async fn tour_key(app: AppHandle, key: String) -> tour::TourAction {
+async fn tour_key(app: AppHandle, key: String) -> Vec<tour::TourAction> {
     app.state::<tour::Tour>().key(&key)
 }
 

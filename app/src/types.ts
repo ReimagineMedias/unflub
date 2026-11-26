@@ -109,6 +109,8 @@ export interface AppInfo {
 /** Mirrors `TourAction` in src-tauri/src/tour.rs. */
 export type TourAction =
   | { kind: "pass" }
+  | { kind: "release" }
+  | { kind: "hold"; original: string; corrected: string }
   | { kind: "replace" | "undo"; delete: number; insert: string; original: string; corrected: string };
 
 /** Mirrors `RemoteMessage` in src-tauri/src/remote.rs. */
