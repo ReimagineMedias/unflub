@@ -583,6 +583,12 @@ impl Pipeline {
         self.swallow.swallowed(ev.vk);
     }
 
+    /// Is `vk` a key-down we swallowed (a held Backspace) that is still down on the keyboard? A
+    /// key-down of it now is an auto-repeat, though Windows' key state says it is up.
+    pub fn awaits_up(&self, vk: u16) -> bool {
+        self.swallow.awaits_up(vk)
+    }
+
     /// Send a key held with [`Pipeline::hold`] after all, as a key-down and key-up ahead of
     /// anything held now, so the key that caused the release follows it. Call
     /// [`Pipeline::pump`] afterwards.
@@ -1645,6 +1651,52 @@ mod tests {
             Input::Queued,
             "behind the replay in flight"
         );
+    }
+
+    /// #39: Backspace held down past the repeat delay after a fix. Windows never saw the held
+    /// press, so only the owed key-up shows that the repeat is one; the held press goes out
+    /// first, the repeat behind it, and every key-down and key-up reaches the app once.
+    #[test]
+    fn an_autorepeat_of_a_held_backspace_sends_both_in_order() {
+        for repeats in 1..=3 {
+            let mut p = Pipeline::new();
+            assert_eq!(user(&mut p, down(BACK)), Input::Process { repeat: false });
+            p.hold(down(BACK));
+            let mut held = true;
+            for _ in 0..repeats {
+                // What the hook does: a repeat of the held key releases it first.
+                if held && p.awaits_up(BACK) {
+                    p.release_held(down(BACK));
+                    held = false;
+                }
+                assert_eq!(user(&mut p, down(BACK)), Input::Queued, "{repeats}");
+            }
+            assert!(!held, "the first repeat released it");
+            assert_eq!(user(&mut p, up(BACK)), Input::Queued);
+            let r = p.pump(now());
+            assert_eq!(r.len(), 1);
+            let mut want = vec![down(BACK), up(BACK)];
+            want.extend(std::iter::repeat_n(down(BACK), repeats));
+            want.push(up(BACK));
+            assert_eq!(r[0].events, want, "{repeats}");
+            // Every event comes back and goes to the app: none is eaten as a stray key-up.
+            assert!(replay(&mut p, &r[0])
+                .iter()
+                .all(|i| matches!(i, Input::Process { .. })));
+            assert!(!p.busy());
+            assert!(!p.awaits_up(BACK), "nothing owed once it went out");
+            // The next letter goes straight through, nothing hidden ahead of it.
+            assert_eq!(user(&mut p, down(N)), Input::Process { repeat: false });
+            assert_eq!(user(&mut p, up(N)), Input::Process { repeat: false });
+        }
+
+        // Pressed and let go before any repeat: the key-up is owed and eaten, nothing repeats.
+        let mut p = Pipeline::new();
+        user(&mut p, down(BACK));
+        p.hold(down(BACK));
+        assert_eq!(user(&mut p, up(BACK)), Input::Consumed);
+        assert!(!p.awaits_up(BACK), "a fresh second press is not a repeat");
+        assert_eq!(user(&mut p, down(BACK)), Input::Process { repeat: false });
     }
 
     /// Review blocker: a replayed key that releases a held Backspace waits behind it, and so
