@@ -265,4 +265,32 @@ button.link { border: 0; padding: 0; background: none; color: var(--accent); cur
 .note { margin: 10px 2px 0; color: var(--muted); font-size: 12.5px; max-width: 70ch; }
 .switch:disabled { opacity: 0.45; cursor: not-allowed; }
 
+@media (forced-colors: active) {
+  .switch, .switch[aria-checked="true"] {
+    forced-color-adjust: none;
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+  }
+  .switch::after { top: 2px; left: 2px; background: ButtonText; }
+  .switch[aria-checked="true"] { background: Highlight; }
+  .switch[aria-checked="true"]::after { background: HighlightText; }
+  .switch:disabled { opacity: 1; border-color: GrayText; }
+  .switch:disabled::after { background: GrayText; }
+  .switch:disabled[aria-checked="true"] { background: ButtonFace; }
+  .switch:focus-visible, .seg button:focus-visible, .power:focus-visible { outline-color: Highlight; }
+
+  .seg button[aria-pressed="true"] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .power, .power[aria-checked="false"] { border: 1px solid ButtonText; }
+  .power .power-knob, .power[aria-checked="false"] .power-knob {
+    border: 1px solid ButtonText;
+    filter: none;
+  }
+  .power .caret, .power[aria-checked="false"] .caret { fill: currentColor; }
+}
+
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
