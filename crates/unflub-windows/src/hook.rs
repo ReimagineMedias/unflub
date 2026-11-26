@@ -58,8 +58,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    GetWindowThreadProcessId, KillTimer, PeekMessageW, PostThreadMessageW, RegisterClassW,
-    SetTimer, SetWindowsHookExW, UnhookWindowsHookEx, DEVICE_NOTIFY_WINDOW_HANDLE,
+    GetWindowThreadProcessId, IsWindow, KillTimer, PeekMessageW, PostThreadMessageW,
+    RegisterClassW, SetTimer, SetWindowsHookExW, UnhookWindowsHookEx, DEVICE_NOTIFY_WINDOW_HANDLE,
     EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, HC_ACTION, HHOOK, HWND_MESSAGE, KBDLLHOOKSTRUCT,
     LLKHF_EXTENDED, LLKHF_INJECTED, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
     PBT_APMSUSPEND, PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_EX_STYLE, WINDOW_STYLE,
@@ -1745,8 +1745,12 @@ impl State {
         let target = target
             .filter(|h| !h.is_invalid())
             .unwrap_or_else(|| focus::focus_window(foreground));
-        (self.focus.kind, self.focus.es_password) = focus::inspect_window(target);
-        let Some(generation) = self.focus.next_generation() else {
+        let (kind, es_password) = focus::inspect_window(target);
+        // SAFETY: a plain query on window handles.
+        self.focus
+            .seen
+            .forget_gone(|hwnd| unsafe { IsWindow(HWND(hwnd as _)) }.as_bool());
+        let Some(generation) = self.focus.refresh(target.0 as isize, kind, es_password) else {
             self.word_start = None;
             return;
         };
@@ -1757,7 +1761,7 @@ impl State {
             .reset_generation()
             .map(|reset| (generation, reset));
         if let Some(probe) = &self.probe {
-            if probe.request(generation, probe_delay) {
+            if probe.request(generation, probe_delay, foreground) {
                 return;
             }
         }
