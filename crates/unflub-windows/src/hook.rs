@@ -1134,7 +1134,14 @@ impl Installed {
         self.mouse = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), module, 0).ok();
         mark_installed();
         with_state(|s| {
-            s.reset();
+            if installed && reason == REINSTALL_WATCHDOG && s.held.is_some() && !s.held_focus.away()
+            {
+                // Keep the key at its original focus, but forget what it would have undone.
+                s.held_focus.missed_input();
+                s.reset_word();
+            } else {
+                s.reset();
+            }
             let _ = s.events.send(reinstall_event(reason, keyboard.map(|_| ())));
             // Echoes of a batch in flight may have been lost with the old hook: don't wait for
             // them. A probe right away tells whether our input comes back now.
@@ -1447,7 +1454,8 @@ impl State {
         // which undoes the fix. There is no timeout: the hold ends with the next key, a click,
         // or the hook stopping. Windows never saw the held press, so its key state can't show
         // that Backspace is still down: the first auto-repeat is spotted by the key-up we still
-        // owe (#39), and the held Backspace goes out ahead of it.
+        // owe (#39), and the held Backspace goes out ahead of it. Missed input also rules out
+        // undo: queue the held key before processing the new one and resetting the word.
         if !ev.up
             && self.held.is_some()
             && (self.held_focus.away()
@@ -1456,6 +1464,7 @@ impl State {
                     async_down || (!replayed && self.pipeline.awaits_up(vk)),
                     !replayed && modifier_down(),
                     replayed,
+                    self.held_focus.input_was_missed() || MISSED.with(Cell::get),
                 ))
         {
             // One put aside when focus left its element is dropped: focus is elsewhere (#66).

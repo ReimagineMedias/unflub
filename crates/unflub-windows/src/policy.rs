@@ -282,9 +282,15 @@ pub fn is_terminal_input_class(class: &str) -> bool {
 /// and so does every replayed key (one of ours sent again after an injection), so no key ever
 /// reaches the app or the engine ahead of a Backspace typed before it. There is no timeout, and
 /// nothing else waits on the hold.
-pub fn releases_held_backspace(vk: u16, auto_repeat: bool, modifier: bool, replayed: bool) -> bool {
+pub fn releases_held_backspace(
+    vk: u16,
+    auto_repeat: bool,
+    modifier: bool,
+    replayed: bool,
+    missed_input: bool,
+) -> bool {
     const BACK: u16 = 0x08;
-    replayed || vk != BACK || auto_repeat || modifier
+    replayed || vk != BACK || auto_repeat || modifier || missed_input
 }
 
 /// After a key-down was handled while a first Backspace is `held`: must the held one be sent on
@@ -358,6 +364,10 @@ impl HeldFocus {
     /// focus can't be trusted any more.
     pub fn missed_input(&mut self) {
         self.missed = true;
+    }
+
+    pub fn input_was_missed(&self) -> bool {
+        self.missed
     }
 
     /// A focus event naming `now` (`None`: a foreground switch, which names no element), at
@@ -491,27 +501,38 @@ mod tests {
     #[test]
     fn what_releases_a_held_backspace() {
         assert!(
-            !releases_held_backspace(0x08, false, false, false),
+            !releases_held_backspace(0x08, false, false, false, false),
             "second Backspace undoes"
         );
         assert!(
-            releases_held_backspace(0x08, true, false, false),
+            releases_held_backspace(0x08, true, false, false, false),
             "auto-repeat"
         );
         assert!(
-            releases_held_backspace(0x08, false, true, false),
+            releases_held_backspace(0x08, false, true, false, false),
             "Ctrl+Backspace"
         );
         for vk in [0xBC, 0x41, 0x25, 0x10, 0x0D, 0x20] {
-            assert!(releases_held_backspace(vk, false, false, false), "{vk:#x}");
+            assert!(
+                releases_held_backspace(vk, false, false, false, false),
+                "{vk:#x}"
+            );
         }
         // Review blocker: replayed keys release it too, a plain Backspace included, and never
         // start a hold of their own.
         for vk in [0x08, 0xBC, 0x41] {
-            assert!(releases_held_backspace(vk, false, false, true), "{vk:#x}");
+            assert!(
+                releases_held_backspace(vk, false, false, true, false),
+                "{vk:#x}"
+            );
         }
         assert!(may_hold_backspace(false));
         assert!(!may_hold_backspace(true));
+    }
+
+    #[test]
+    fn a_second_backspace_after_missed_input_releases_the_hold() {
+        assert!(releases_held_backspace(0x08, false, false, false, true));
     }
 
     /// #66: every order of focus events, keys and clicks while a first Backspace is held.
