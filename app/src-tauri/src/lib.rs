@@ -853,6 +853,12 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         } => {
             menu = menu.text("update", strings::menu_update_available(&version, critical));
         }
+        UpdateStatus::Error {
+            phase: updates::UpdatePhase::Install,
+            ..
+        } => {
+            menu = menu.text("update", strings::MENU_UPDATE_ERROR);
+        }
         _ => {}
     }
     if app.state::<Crashes>().pending() {
@@ -928,6 +934,7 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
                     tauri::async_runtime::spawn(async move {
                         if let Err(e) = updates::install(&app, true).await {
                             eprintln!("update: {e}");
+                            open_settings(&app, Some("about"));
                         }
                     });
                 }

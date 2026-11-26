@@ -96,6 +96,7 @@ pub enum UpdateStatus {
     Error {
         phase: UpdatePhase,
         message: String,
+        retry: bool,
     },
 }
 
@@ -294,12 +295,13 @@ fn updater(app: &AppHandle, version: &str) -> Result<Updater, String> {
         .headers(headers)
         .configure_client(|client| client.https_only(true).redirect(redirect_policy()))
         .timeout(REQUEST_TIMEOUT)
-        // Windows installers need unflub closed: unhook and remove the tray icon first.
+        // Tauri calls this before trying to launch the installer. Leave the engine and
+        // windows running if the launch fails. Process exit closes the engine's Job Object.
         .on_before_exit(move || {
-            // The installer starts next; `stop_engine` saves the count.
-            exit_handle.state::<Usage>().update(UpdateStep::Installed);
-            crate::stop_engine(&exit_handle);
-            exit_handle.cleanup_before_exit();
+            let usage = exit_handle.state::<Usage>();
+            usage.update(UpdateStep::Installed);
+            usage.flush();
+            exit_handle.state::<crate::Stats>().flush();
         })
         .build()
         .map_err(|e| e.to_string())
@@ -383,19 +385,20 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
             app,
             UpdateStatus::Error {
                 phase: UpdatePhase::Check,
+                retry: false,
                 message: MANAGED.into(),
             },
         );
     }
     let min_secs = u64::from(app.state::<Remote>().flags().min_check_interval_h) * HOUR_SECS;
-    let current = updates.status();
     if !manual && !updates.background_due(now_secs(), min_secs) {
         // Restarted within the hour: the background check waits for the next round.
-        return current;
+        return updates.status();
     }
     if updates.busy.swap(true, Ordering::AcqRel) {
-        return current;
+        return updates.status();
     }
+    let current = updates.status();
     // A background check doesn't hide an update that is waiting for the user.
     let quiet = !manual
         && matches!(
@@ -423,11 +426,13 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
         }
         Err(message) => UpdateStatus::Error {
             phase: UpdatePhase::Check,
+            retry: false,
             message,
         },
     };
+    let status = set_status(app, status);
     updates.busy.store(false, Ordering::Release);
-    set_status(app, status)
+    status
 }
 
 /// What a successful check found. Downloads it when automatic updates are on.
@@ -684,25 +689,33 @@ pub async fn install(app: &AppHandle, restart: bool) -> Result<(), String> {
     // checks those exact bytes against the public key again before it writes and runs them.
     // Without a cached file, the download is checked against the key and the manifest first.
     let bytes = match downloaded {
-        Some((path, hash)) => read_verified(&path, &hash),
+        Some((path, hash)) => {
+            let bytes = read_verified(&path, &hash);
+            if bytes.is_err() {
+                updates.discard_download();
+            }
+            bytes
+        }
         None => fetch_verified(&found).await,
     };
     let result = bytes.and_then(|bytes| found.update.install(bytes).map_err(|e| e.to_string()));
-    updates.busy.store(false, Ordering::Release);
     if let Err(message) = result {
         app.state::<Usage>().update(UpdateStep::Failed);
-        updates.discard_download();
+        *updates.update.lock().unwrap() = Some(found);
         set_status(
             app,
             UpdateStatus::Error {
                 phase: UpdatePhase::Install,
                 message: message.clone(),
+                retry: true,
             },
         );
+        updates.busy.store(false, Ordering::Release);
         return Err(message);
     }
     // The installer ran; don't offer the same file again.
     updates.discard_download();
+    updates.busy.store(false, Ordering::Release);
     if restart {
         // Only reached on macOS and Linux; Windows has exited by now.
         app.restart()
@@ -1008,9 +1021,10 @@ mod tests {
         assert_eq!(
             json(UpdateStatus::Error {
                 phase: UpdatePhase::Check,
-                message: "offline".into()
+                message: "offline".into(),
+                retry: false,
             }),
-            r#"{"state":"error","phase":"check","message":"offline"}"#
+            r#"{"state":"error","phase":"check","message":"offline","retry":false}"#
         );
     }
 }

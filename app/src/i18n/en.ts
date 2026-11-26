@@ -254,6 +254,8 @@ export const en = {
   "about.check.button": "Check now",
   "about.check.checking": "Checking…",
   "about.check.latest": "You have the latest version.",
+  "about.install": "Install update",
+  "about.install.retry": "Try again",
   "about.install.error": "Couldn't install: {message}",
   "about.check.error": "Couldn't check: {message}",
   "about.check.auto": "unflub checks once a day.",
