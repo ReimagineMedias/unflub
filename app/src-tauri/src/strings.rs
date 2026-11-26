@@ -15,6 +15,7 @@ pub const MENU_SETTINGS: &str = "Settings…";
 pub const MENU_TOUR: &str = "Take the tour";
 pub const MENU_SUPPORT: &str = "Support unflub";
 pub const MENU_STAR: &str = "Star on GitHub";
+pub const MENU_UPDATE_ERROR: &str = "Update error…";
 pub const MENU_QUIT: &str = "Quit unflub";
 /// A crash report from the last run is waiting for the user's answer.
 pub const MENU_CRASH: &str = "unflub closed unexpectedly…";

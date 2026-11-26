@@ -256,7 +256,11 @@ export default function App() {
     else flush();
   }, [flush, show]);
 
-  const install = () => void installUpdate().catch((e) => setUpdateState({ state: "error", phase: "install", message: String(e) }));
+  const install = () => void installUpdate().catch((e) => setUpdateState((status) => (
+    (status.state === "error" && status.phase === "install") || status.state === "installing"
+      ? status
+      : { state: "error", phase: "install", message: String(e), retry: false }
+  )));
   const answerCrash = (a: "send" | "dont-send" | "always-send") => {
     setCrash(false);
     void answerCrashReport(a);
@@ -274,6 +278,7 @@ export default function App() {
   const systemName = look.platform === "macos" ? "macOS" : look.platform === "linux" ? "System" : "Windows";
   const capsule = s.pillStyle === "capsule" || s.pillStyle === "underline-capsule";
   const u = updateState;
+  const retryInstall = u.state === "error" && u.phase === "install" && u.retry;
   const pending = (u.state === "ready" || u.state === "available") && laterFor !== u.version ? u : null;
   const source = info?.installSource ?? "installer";
   const selfUpdates = source === "installer";
@@ -504,10 +509,10 @@ export default function App() {
                 </Row>
               )}
               {!pending && u.state !== "downloading" && u.state !== "installing" && (
-                <Row label={t("about.check")} hint={<span role="status">{updateHint(u, s.autoUpdate, info)}</span>}>
+                <Row label={t(retryInstall ? "about.install" : "about.check")} hint={<span role="status">{updateHint(u, s.autoUpdate, info)}</span>}>
                   <button className="btn ghost" disabled={u.state === "checking" || info?.managed.disableUpdates}
-                    onClick={() => void checkForUpdates().then(setUpdateState)}>
-                    {t("about.check.button")}
+                    onClick={retryInstall ? install : () => void checkForUpdates().then(setUpdateState)}>
+                    {t(retryInstall ? "about.install.retry" : "about.check.button")}
                   </button>
                 </Row>
               )}
