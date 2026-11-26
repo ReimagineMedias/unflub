@@ -273,6 +273,9 @@ mod win {
             }
             HookEvent::Warning(w) => eprintln!("warning: {w}"),
             HookEvent::HooksReinstalled { reason } => eprintln!("hooks reinstalled ({reason})"),
+            HookEvent::KeyboardHookLost { error } => eprintln!(
+                "the keyboard hook couldn't be installed again ({error}); retrying every 5 s"
+            ),
             HookEvent::UndoPending { replacement: r } => {
                 println!(
                     "undo?  {:?} -> {:?}  (Backspace again to undo)",

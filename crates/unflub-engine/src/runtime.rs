@@ -374,6 +374,12 @@ impl State {
                     reason: ReinstallReason::parse(reason),
                 });
             }
+            HookEvent::KeyboardHookLost { error } => {
+                // The app restarts an engine that reports no hook (a failed start), which
+                // installs everything afresh and shows it in the tray meanwhile.
+                eprintln!("unflub-engine: the keyboard hook is gone ({error})");
+                self.out.send(&FromEngine::Ready { hooked: false });
+            }
             HookEvent::CorrectorPanicked(_) => {
                 // The message may hold typed text; it stays here.
                 eprintln!("unflub-engine: the engine panicked; keys pass through");
