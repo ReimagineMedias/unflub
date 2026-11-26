@@ -53,7 +53,9 @@ pub enum FromEngine {
         version: String,
     },
     /// The hook is installed (`hooked`), or couldn't be. The engine keeps running and tries
-    /// again on the next settings change.
+    /// again on the next settings change. Sent again with `hooked: false` if the keyboard hook
+    /// is lost later (a reinstall after resume, unlock or the watchdog failed): the app treats
+    /// it as a failed start and restarts the engine.
     Ready {
         hooked: bool,
     },

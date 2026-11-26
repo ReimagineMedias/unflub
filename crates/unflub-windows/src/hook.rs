@@ -23,7 +23,9 @@
 //! they are gone, so they are installed again (backing off while that keeps happening, until a
 //! real callback arrives after the reinstall). They are also installed again once after each
 //! resume from sleep and when the session is unlocked (a message-only window receives those
-//! notifications). Each time is reported as [`HookEvent::HooksReinstalled`] with its reason.
+//! notifications). Each time is reported as [`HookEvent::HooksReinstalled`] with its reason, or
+//! as [`HookEvent::KeyboardHookLost`] when the keyboard hook couldn't be installed again; then
+//! every watchdog tick tries again.
 //!
 //! Limitation: a non-elevated process doesn't see keys typed into elevated (administrator)
 //! windows, and can't inject into them (UIPI). unflub simply does nothing there.
@@ -210,6 +212,11 @@ pub enum HookEvent {
     /// ([`REINSTALL_WATCHDOG`]), or the computer resumed or the session was unlocked
     /// ([`REINSTALL_RESUME`], [`REINSTALL_UNLOCK`]).
     HooksReinstalled { reason: &'static str },
+    /// Installing the keyboard hook again failed (`error`): nothing is seen or corrected until
+    /// a later attempt works. The hook thread tries again at every watchdog tick and reports
+    /// [`HookEvent::HooksReinstalled`] when it does; an app supervising the hook should treat
+    /// this like a failed start.
+    KeyboardHookLost { error: String },
     /// `active`: our injected input stopped coming back through our hook (another program is
     /// interfering with keyboard input, or Windows dropped the hook mid-correction). Keys now
     /// pass straight through and nothing is corrected. `!active`: a probe came back; back to
@@ -572,9 +579,16 @@ fn run(
                 WM_TIMER if msg.hwnd.is_invalid() && msg.wParam.0 == watch_timer => {
                     with_state(|s| s.maybe_probe(false));
                     let now = tick_now();
-                    let missed = hooks_missed_input(last_input(), last_callback());
-                    if watchdog.should_reinstall(now, missed, callback_seen()) {
-                        hooks.reinstall(REINSTALL_WATCHDOG);
+                    if hooks.keyboard.is_none() {
+                        // A reinstall failed: try again now, without waiting for the backoff.
+                        if hooks.reinstall(REINSTALL_WATCHDOG) {
+                            watchdog = Watchdog::new(now);
+                        }
+                    } else {
+                        let missed = hooks_missed_input(last_input(), last_callback());
+                        if watchdog.should_reinstall(now, missed, callback_seen()) {
+                            hooks.reinstall(REINSTALL_WATCHDOG);
+                        }
                     }
                 }
                 WM_TIMER if msg.hwnd.is_invalid() => {
@@ -630,7 +644,8 @@ fn take_report() -> HookReport {
 }
 
 struct Installed {
-    keyboard: HHOOK,
+    /// `None` after a reinstall failed to install it again.
+    keyboard: Option<HHOOK>,
     mouse: Option<HHOOK>,
     win_events: Vec<HWINEVENTHOOK>,
 }
@@ -672,6 +687,15 @@ fn last_input() -> u32 {
         info.dwTime
     } else {
         0
+    }
+}
+
+/// What a reinstall reports: the reason when the keyboard hook is back, otherwise that it is
+/// lost. A failed reinstall used to report success with the old, already removed hook.
+fn reinstall_event(reason: &'static str, keyboard: Result<(), String>) -> HookEvent {
+    match keyboard {
+        Ok(()) => HookEvent::HooksReinstalled { reason },
+        Err(error) => HookEvent::KeyboardHookLost { error },
     }
 }
 
@@ -839,28 +863,25 @@ unsafe extern "system" fn session_proc(
 
 impl Installed {
     /// Remove and install the keyboard and mouse hooks again. The word in progress is
-    /// forgotten: keys may have been missed.
-    unsafe fn reinstall(&mut self, reason: &'static str) {
-        let _ = UnhookWindowsHookEx(self.keyboard);
+    /// forgotten: keys may have been missed. Returns whether the keyboard hook is installed;
+    /// when it isn't, that is reported instead of a reinstall (#143).
+    unsafe fn reinstall(&mut self, reason: &'static str) -> bool {
+        if let Some(k) = self.keyboard.take() {
+            let _ = UnhookWindowsHookEx(k);
+        }
         if let Some(m) = self.mouse.take() {
             let _ = UnhookWindowsHookEx(m);
         }
         let module = GetModuleHandleW(None).unwrap_or_default();
-        match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), module, 0) {
-            Ok(k) => self.keyboard = k,
-            Err(e) => {
-                with_state(|s| {
-                    let _ = s.events.send(HookEvent::Warning(format!(
-                        "reinstalling the keyboard hook: {e}"
-                    )));
-                });
-            }
-        }
+        let keyboard = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), module, 0)
+            .map_err(|e| e.to_string());
+        self.keyboard = keyboard.as_ref().ok().copied();
+        let installed = self.keyboard.is_some();
         self.mouse = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), module, 0).ok();
         mark_installed();
         with_state(|s| {
             s.reset();
-            let _ = s.events.send(HookEvent::HooksReinstalled { reason });
+            let _ = s.events.send(reinstall_event(reason, keyboard.map(|_| ())));
             // Echoes of a batch in flight may have been lost with the old hook: don't wait for
             // them. A probe right away tells whether our input comes back now.
             if s.pipeline.busy() {
@@ -870,10 +891,13 @@ impl Installed {
             }
             s.maybe_probe(true);
         });
+        installed
     }
 
     unsafe fn uninstall(self) {
-        let _ = UnhookWindowsHookEx(self.keyboard);
+        if let Some(k) = self.keyboard {
+            let _ = UnhookWindowsHookEx(k);
+        }
         if let Some(m) = self.mouse {
             let _ = UnhookWindowsHookEx(m);
         }
@@ -916,7 +940,7 @@ unsafe fn install() -> Result<Installed, String> {
         });
     }
     Ok(Installed {
-        keyboard,
+        keyboard: Some(keyboard),
         mouse,
         win_events,
     })
@@ -1677,6 +1701,19 @@ mod watchdog_tests {
         b.finish_timing(at + Duration::from_micros(900));
         assert_eq!(b.timing.inject, Duration::from_micros(400));
         assert_eq!(b.timing.end_to_end, Duration::from_micros(900));
+    }
+
+    /// #143: a reinstall whose keyboard hook failed is not a reinstall.
+    #[test]
+    fn a_failed_keyboard_reinstall_is_reported_as_lost() {
+        assert!(matches!(
+            reinstall_event(REINSTALL_RESUME, Ok(())),
+            HookEvent::HooksReinstalled { reason: "resume" }
+        ));
+        match reinstall_event(REINSTALL_WATCHDOG, Err("access denied".into())) {
+            HookEvent::KeyboardHookLost { error } => assert_eq!(error, "access denied"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
