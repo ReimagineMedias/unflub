@@ -297,6 +297,22 @@ pub fn word_start_after(before: Option<char>) -> bool {
     })
 }
 
+/// Has a newer request arrived while the worker is busy with an optional query? A queued one
+/// moves into `next` (served next, nothing lost); a closed channel counts too, as the worker is
+/// about to stop. Checked between the word-start query's cross-process calls, so a slow app
+/// delays the next field's answer by at most the call in flight (#147).
+pub fn superseded<T>(rx: &std::sync::mpsc::Receiver<T>, next: &mut Option<T>) -> bool {
+    use std::sync::mpsc::TryRecvError;
+    if next.is_none() {
+        match rx.try_recv() {
+            Ok(request) => *next = Some(request),
+            Err(TryRecvError::Disconnected) => return true,
+            Err(TryRecvError::Empty) => {}
+        }
+    }
+    next.is_some()
+}
+
 /// Shared slot the UIA worker writes and the hook thread reads: `generation << 2 | answer`,
 /// for the password question and the word-start question.
 #[derive(Debug, Default)]
@@ -641,17 +657,35 @@ mod win {
 
     /// Is the caret at a word start in `element`? Through `TextPattern`: the selection must be
     /// one empty range (a caret), and the character before it whitespace or nothing.
-    fn caret_word_start(element: &IUIAutomationElement) -> WordStart {
+    ///
+    /// Up to eight cross-process calls, each bounded by the UIA transaction timeout. The answer
+    /// is optional (`Unknown` keeps the conservative default), so it gives up between calls as
+    /// soon as `cancelled` says a newer focus is waiting (#147).
+    fn caret_word_start(
+        element: &IUIAutomationElement,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> WordStart {
         // SAFETY: valid interfaces on the worker's MTA thread, under the UIA timeouts.
         let found = unsafe {
             (|| -> windows::core::Result<Option<bool>> {
+                macro_rules! unless_cancelled {
+                    () => {
+                        if cancelled() {
+                            return Ok(None);
+                        }
+                    };
+                }
                 let pattern: IUIAutomationTextPattern =
                     element.GetCurrentPatternAs(UIA_TextPatternId)?;
+                unless_cancelled!();
                 let selection = pattern.GetSelection()?;
+                unless_cancelled!();
                 if selection.Length()? != 1 {
                     return Ok(None);
                 }
+                unless_cancelled!();
                 let caret = selection.GetElement(0)?;
+                unless_cancelled!();
                 let empty = caret.CompareEndpoints(
                     TextPatternRangeEndpoint_Start,
                     &caret,
@@ -660,7 +694,9 @@ mod win {
                 if !empty {
                     return Ok(None);
                 }
+                unless_cancelled!();
                 let before = caret.Clone()?;
+                unless_cancelled!();
                 let moved = before.MoveEndpointByUnit(
                     TextPatternRangeEndpoint_Start,
                     TextUnit_Character,
@@ -669,6 +705,7 @@ mod win {
                 if moved == 0 {
                     return Ok(Some(true));
                 }
+                unless_cancelled!();
                 let text = before.GetText(4)?.to_string();
                 Ok(Some(crate::focus::word_start_after(text.chars().next())))
             })()
@@ -815,17 +852,26 @@ mod win {
             }
             // SAFETY: a plain query on window handles.
             seen.forget_gone(|owner| unsafe { IsWindow(HWND(owner as _)) }.as_bool());
-            let mut ask = || {
+            // `None` when a newer request arrived while the focused element was being fetched
+            // (#147): nothing about the element has been read yet, so dropping this generation
+            // (pending, so secure, until the hook moves on) loses nothing. Once the password
+            // query starts reading, it runs to the end so `seen` stays complete.
+            let mut ask = |next: &mut Option<Request>| {
                 // SAFETY: valid interface used on the MTA thread that created it.
                 let focused = unsafe { uia.GetFocusedElement() };
+                if super::superseded(rx, next) {
+                    return None;
+                }
                 // SAFETY: as above, for the element it returned.
                 let answer = match &focused {
                     Ok(e) => unsafe { password_field(e, req.owner, &mut seen) },
                     Err(_) => Secure::Unknown,
                 };
-                (answer, focused)
+                Some((answer, focused))
             };
-            let (mut answer, mut focused) = ask();
+            let Some((mut answer, mut focused)) = ask(&mut next) else {
+                continue;
+            };
             // A failed or timed-out query is asked again before it counts (the field stays
             // pending, so secure, meanwhile), unless focus moves on first.
             let mut tries = 0;
@@ -837,7 +883,10 @@ mod win {
                     }
                     Err(RecvTimeoutError::Timeout) => {
                         tries += 1;
-                        (answer, focused) = ask();
+                        let Some(asked) = ask(&mut next) else {
+                            break;
+                        };
+                        (answer, focused) = asked;
                         // SAFETY: as above, for the element it returned.
                         let text_input = focused
                             .as_ref()
@@ -851,10 +900,15 @@ mod win {
                 // Superseded: the hook has moved on to a newer generation.
                 continue;
             }
+            // The password answer goes out first and in full: it is the one that decides whether
+            // anything may be corrected, and it fails closed.
             slot.publish(req.generation, answer);
-            // Only worth asking where the first word may be corrected at all.
+            // Only worth asking where the first word may be corrected at all. Optional, so it
+            // stops early for a newer request, which then runs next.
             let word_start = match (answer, focused) {
-                (Secure::NotSecure, Ok(e)) => caret_word_start(&e),
+                (Secure::NotSecure, Ok(e)) => {
+                    caret_word_start(&e, &mut || super::superseded(rx, &mut next))
+                }
                 _ => WordStart::Unknown,
             };
             slot.publish_word_start(req.generation, word_start);
@@ -865,6 +919,26 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #147: the worker notices a newer request between calls without losing it.
+    #[test]
+    fn a_queued_request_supersedes_and_is_kept() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut next = None;
+        assert!(!superseded(&rx, &mut next));
+        tx.send(7).unwrap();
+        tx.send(8).unwrap();
+        assert!(superseded(&rx, &mut next));
+        assert_eq!(next, Some(7), "kept, to be served next");
+        assert!(superseded(&rx, &mut next));
+        assert_eq!(rx.try_recv(), Ok(8), "nothing more taken while one is kept");
+        let mut none = None;
+        drop(tx);
+        assert!(
+            superseded(&rx, &mut none),
+            "a closed channel stops the query too"
+        );
+    }
 
     /// Creates the UIA client and sets its timeouts, without querying any app (a query would
     /// touch whatever the user has focused).
